@@ -37,8 +37,11 @@ Node/Python feature parity. Node package version remains
 | Existing TypeScript examples | 7 documentation/landing-page examples compiled |
 | Fern | Local validation passed with Python page/navigation/capability changes |
 
-The Python matrix ran on macOS ARM64 with PostgreSQL in local containers. The
-configured GitHub Actions Linux matrix has **not run for these unpushed changes**.
+The local Python matrix ran on macOS ARM64 with PostgreSQL in containers. The
+GitHub Actions Linux matrix also passed for all eight Python/database combinations
+in [the first release-validation run](https://github.com/SanaanKhalid/loopiter/actions/runs/34723903355).
+All four Node/database combinations, Fern and artifact build/install checks passed.
+The upload was correctly skipped because the website dependency audit failed.
 No Windows-specific test result is claimed.
 
 The latest clean-consumer wheel was about 27 KB compressed. This is artifact size,
@@ -67,4 +70,10 @@ compatibility with the tested Twine 6.2.0 release.
   and uploads the exact wheel/sdist previously installed in clean consumers.
 - Publication and remote CI completion are pending; successful results and the
   final artifact hashes will be appended after verification, never inferred from fixtures.
+- Initial release validation exposed GHSA-rgj7-g3m4-5g8c in the website's Cloudflare
+  build-tool dependency chain. Updated `@cloudflare/vite-plugin` to `1.54.8` and
+  `wrangler` to `4.131.1`, and matching Workers types to `5.20260911.1`. Local website
+  typecheck, lint, build and audit now pass with zero reported vulnerabilities;
+  repeat the complete remote gate before uploading. Website source design and
+  Python runtime dependencies are unchanged.
 - The [maintainer procedure](python-release.md) documents release and failure recovery.
