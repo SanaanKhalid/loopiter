@@ -1,0 +1,55 @@
+import ast
+import os
+import re
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+from uuid import uuid4
+
+ROOT = Path(__file__).resolve().parents[2]
+PACKAGE = Path(__file__).resolve().parents[1]
+
+
+class DocumentationTests(unittest.TestCase):
+    def test_python_readme_examples(self):
+        content = (PACKAGE / "README.md").read_text()
+        examples = re.findall(r"```python\n(.*?)```", content, flags=re.S)
+        self.assertGreaterEqual(len(examples), 4)
+        for index, code in enumerate(examples):
+            ast.parse(code, filename=f"README-snippet-{index}")
+            # Complete examples only; receipt is an illustrative fragment with request supplied by adapter.
+            if "asyncio.run" in code:
+                needs_database = "DATABASE_URL" in code
+                database = os.environ.get("LOOPITER_PYTHON_TEST_DATABASE_URL")
+                if needs_database and not database:
+                    continue
+                env = {**os.environ, **({"DATABASE_URL": database} if database else {})}
+                namespace = f"loopiter-python-doccheck/{uuid4()}"
+                code = code.replace('"support/dev"', repr(namespace))
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "-c", code],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                finally:
+                    if needs_database:
+                        from psycopg import connect
+
+                        with connect(database) as conn:
+                            conn.execute(
+                                "DELETE FROM loopiter_python_records WHERE namespace=%s",
+                                (namespace,),
+                            )
+        # The Fern copy must stay aligned; this check also works inside an sdist (no Fern tree).
+        fern = ROOT / "fern/pages/python.mdx"
+        if fern.exists():
+            self.assertEqual(fern.read_text().split("---\n", 2)[2].strip(), content.strip())
+
+
+if __name__ == "__main__":
+    unittest.main()

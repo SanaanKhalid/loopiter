@@ -2,11 +2,17 @@
 title: Loopiter reliable alpha
 ---
 
-Loopiter is an MIT-licensed TypeScript SDK that coordinates feedback-driven AI
+Loopiter is an MIT-licensed SDK that coordinates feedback-driven AI
 improvements. It is not an LLM, trainer, hosted observability service or rollout daemon.
 The published alpha is `0.2.0-alpha.1`, supporting Node.js 22 and 24 as an ESM library
 with **zero core runtime dependencies**. Formerly Feloop; install with
 `npm install loopiter@0.2.0-alpha.1` and follow the quickstart.
+
+A native **Python 3.11+ alpha** is also available, with
+capture, analysis, reviewed deployment and an optional PostgreSQL adapter. Python
+installation via `python -m pip install 'loopiter==0.2.0a1'`. Start with the
+[Python quickstart](/get-started/python-quickstart) for installation and explicit
+language differences. The controller and OpenAI/Azure starter below remain Node-only.
 
 The useful loop is:
 

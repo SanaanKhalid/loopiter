@@ -10,3 +10,8 @@ coverage/
 .doccheck-*/
 *.tgz
 *.tsbuildinfo
+.venv*/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ruff_cache/

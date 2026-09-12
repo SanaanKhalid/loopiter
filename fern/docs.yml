@@ -58,6 +58,8 @@ navigation:
         path: pages/overview.mdx
       - page: Quickstart
         path: pages/quickstart.mdx
+      - page: Python quickstart
+        path: pages/python.mdx
       - page: Architecture
         path: pages/architecture.mdx
       - page: Classification starter

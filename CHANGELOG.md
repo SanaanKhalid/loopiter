@@ -1,5 +1,19 @@
 # Changelog
 
+## Python 0.2.0a1
+
+- Add a native async Python 3.11+ package with a dependency-free core; Node remains unchanged.
+- Port namespace-bound capture, strict validation, revisions, payload/sanitization hooks,
+  episode-weighted analysis, immutable candidates, version-bound review and explicit deployment.
+- Add persisted attempts, target reservations, inspect-only reconciliation, cancellation,
+  atomic finalization and predecessor-based rollback; no Python auto-apply controller.
+- Add an optional psycopg PostgreSQL adapter with separate Python v1 tables/locks and
+  explicit packaged migration; no cross-language shared-record compatibility is claimed.
+- Include adapter conformance, failure/concurrency regressions, offline accepted/rejected/
+  interrupted examples, wheel/sdist installation checks, Python docs and CI.
+- Add manual, exact-commit PyPI Trusted Publishing with validation gates, tested artifacts,
+  provenance attestations and a protected publishing environment. No new npm release.
+
 ## Loopiter 0.2.0-alpha.1
 
 - Rename the product, SDK package, CLI, error class and starter environment variables.
