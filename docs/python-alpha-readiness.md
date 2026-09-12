@@ -68,8 +68,7 @@ compatibility with the tested Twine 6.2.0 release.
   and disallows admin bypass. No persistent PyPI API token is used.
 - The manual workflow verifies the exact commit/version, runs all alpha CI gates,
   and uploads the exact wheel/sdist previously installed in clean consumers.
-- Publication and remote CI completion are pending; successful results and the
-  final artifact hashes will be appended after verification, never inferred from fixtures.
+- Publication and final remote CI completion are verified below, not inferred from fixtures.
 - Initial release validation exposed GHSA-rgj7-g3m4-5g8c in the website's Cloudflare
   build-tool dependency chain. Updated `@cloudflare/vite-plugin` to `1.54.8` and
   `wrangler` to `4.131.1`, and matching Workers types to `5.20260911.1`. Local website
@@ -77,3 +76,45 @@ compatibility with the tested Twine 6.2.0 release.
   repeat the complete remote gate before uploading. Website source design and
   Python runtime dependencies are unchanged.
 - The [maintainer procedure](python-release.md) documents release and failure recovery.
+
+## Publication verified (2026-09-12)
+
+- Published [Loopiter 0.2.0a1 on PyPI](https://pypi.org/project/loopiter/0.2.0a1/)
+  under maintainer `sanaanyl` at 22:57 UTC.
+- Exact release commit: `891542a82cb1b4333384b25f81c8e88381fe047a`.
+- [Publishing run 34724026169](https://github.com/SanaanKhalid/loopiter/actions/runs/34724026169)
+  completed successfully: all 17 jobs passed, including 8 Python/database jobs,
+  4 Node/database jobs, website, Fern, exact-commit gate, artifact build and upload.
+  [The separate main validation run](https://github.com/SanaanKhalid/loopiter/actions/runs/34724015645)
+  also passed.
+- The final release's CI wheel and sdist were downloaded and installed independently
+  into clean macOS consumers before approving upload. Core conformance, packaged
+  migration availability and interrupted/reconciled/rolled-back fixtures passed.
+- After upload, a new Python 3.13 virtual environment installed
+  `loopiter==0.2.0a1` directly from `https://pypi.org/simple` with caches disabled.
+  Version, dependency-free core import and conformance passed without psycopg.
+  Both rejected-candidate and interrupted/recovery fixture paths passed.
+- Installing `loopiter[postgres]==0.2.0a1` from PyPI then passed **all 38 tests**
+  against PostgreSQL 17 using the installed package, not an editable source checkout.
+- Published file hashes match the exact tested CI artifacts. Neither file is yanked.
+
+| Published file | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `loopiter-0.2.0a1-py3-none-any.whl` | 27094 | `1ab0cbbe1ec4cc280137cd702a5bd6cecc5d96419cc237b7e763f34daf24cea9` |
+| `loopiter-0.2.0a1.tar.gz` | 32779 | `db088fdef144a1f90b6a0fe1e54cdc2acbdad82080ce1b2a0f80fe661e58cd81` |
+
+- PyPI's integrity API reports publish attestations from the expected GitHub
+  repository, `python-publish.yml` and `pypi` environment. The owner-authorized
+  environment approval was recorded after all release gates passed.
+- The canonical [Python quickstart](https://loopiter.docs.buildwithfern.com/get-started/python-quickstart)
+  was published with Fern 5.113.1 and verified in the browser, including PyPI install
+  instructions and the Node/Python feature boundaries.
+- Website/root npm audit gates passed. A local pip-audit of the Python development
+  and optional PostgreSQL dependencies found no known vulnerabilities; the then-
+  editable Loopiter source itself was excluded from that registry advisory lookup.
+- Non-blocking CI notices: the pinned upload-artifact v4 action's Node 20 declaration
+  runs under GitHub's Node 24 compatibility handling; Fern reports an unauthenticated
+  deployed-redirect comparison notice in CI, which is explicitly documented in the
+  check script. Authenticated local Fern validation/publication passed separately.
+- No new npm package or Cloudflare website deployment occurred in this release.
+  Python's example remains simulated; no Python live-model success is claimed.

@@ -1,6 +1,6 @@
 # Changelog
 
-## Python 0.2.0a1
+## Python 0.2.0a1 — published 2026-09-12
 
 - Add a native async Python 3.11+ package with a dependency-free core; Node remains unchanged.
 - Port namespace-bound capture, strict validation, revisions, payload/sanitization hooks,
