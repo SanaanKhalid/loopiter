@@ -1,0 +1,69 @@
+---
+title: Python examples
+---
+
+Run a complete feedback loop using the published Python alpha and the repository's
+standalone example. No Node.js, API key, live model or database is needed for these
+**simulated offline fixtures**.
+
+```sh
+git clone https://github.com/SanaanKhalid/loopiter.git
+cd loopiter
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install 'loopiter==0.2.0a1'
+```
+
+Use any installed Python 3.11 or newer. On Windows, activate the environment with
+your shell's equivalent command. The example source is also included in the source
+distribution; it is not a CLI entry point installed by the wheel.
+
+## Accepted proposal
+
+```sh
+python python/examples/reviewed_loop.py
+```
+
+The fixture records versioned intent predictions and explicit correction signals,
+finds a recurring segment, proposes a deterministic routing change and evaluates
+it against a frozen holdout. It prints the change diff, evidence/dataset hashes,
+measured baseline/candidate metrics and gate result. The fixture then explicitly
+approves its passing candidate, changes subsequent classifier behavior, and rolls
+back to demonstrate recovery. Your application must supply its own human review;
+this fixture approval is not a runtime default.
+
+## Rejected proposal
+
+```sh
+python python/examples/reviewed_loop.py --reject
+```
+
+This exercises a proposal that fails the acceptance gate. The result is **No
+candidate passed**, with no deployment. Improvement metrics are calculated from
+the fixture predictions, not hard-coded success claims.
+
+## Interrupted deployment and reconciliation
+
+```sh
+python python/examples/reviewed_loop.py --interrupt
+```
+
+The adapter changes the fixture registry but simulates a lost response. Loopiter
+keeps the outcome pending, then uses inspection to recover the receipt and finalize
+the state. The example subsequently rolls back and checks restored behavior.
+Reconciliation does not blindly replay the ambiguous external change.
+
+## Move beyond the fixture
+
+The registry and store in this example are in-memory development tools. A real
+application must provide durable storage, authorized/verified feedback, independent
+evaluation data and an idempotent deployment adapter with inspection, version
+comparison, fencing and rollback. A model can generate your proposed change via
+application callbacks; the Python SDK does not include provider-specific generation
+or an unattended controller.
+
+Follow the [Python quickstart](/get-started/python-quickstart) for PostgreSQL and
+capture setup, then the [Python API](/reference/python-api) for method contracts.
+The live OpenAI/Azure classification starter belongs to the **Node.js** tab and is
+not a Python command. Neither the fixture nor publication establishes live-model
+quality or production performance.

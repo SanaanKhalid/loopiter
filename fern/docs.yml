@@ -41,6 +41,8 @@ theme:
   footer-nav: minimal
 
 layout:
+  # Use the layout option supported by the hosted renderer as well as the CLI.
+  tabs-placement: header
   searchbar-placement: header
   mobile-toc: true
 
@@ -51,56 +53,81 @@ navbar-links:
   - type: github
     value: https://github.com/SanaanKhalid/loopiter
 
+# Language tabs do not add URL prefixes: existing npm, PyPI and website links stay valid.
+tabs:
+  nodejs:
+    display-name: Node.js
+    icon: brands node-js
+    skip-slug: true
+  python:
+    display-name: Python
+    icon: brands python
+    skip-slug: true
+
 navigation:
-  - section: Get started
-    contents:
-      - page: Overview
-        path: pages/overview.mdx
-      - page: Quickstart
-        path: pages/quickstart.mdx
-      - page: Python quickstart
-        path: pages/python.mdx
-      - page: Architecture
-        path: pages/architecture.mdx
-      - page: Classification starter
-        path: pages/starter.mdx
-      - page: Supported capabilities
-        path: pages/supported.mdx
-  - section: Core concepts
-    contents:
-      - page: Executions and episodes
-        path: pages/executions.mdx
-      - page: Signals and outcomes
-        path: pages/signals.mdx
-      - page: Pattern analysis
-        path: pages/analysis.mdx
-      - page: Improvement candidates
-        path: pages/candidates.mdx
-  - section: Closing the loop
-    contents:
-      - page: Governed self-improvement
-        path: pages/self-improvement.mdx
-      - page: Evaluation and deployment
-        path: pages/evaluation-deployment.mdx
-      - page: Fine-tuning
-        path: pages/fine-tuning.mdx
-      - page: Agent systems
-        path: pages/agent-systems.mdx
-  - section: Operate
-    contents:
-      - page: Storage adapters
-        path: pages/storage.mdx
-      - page: Security and privacy
-        path: pages/security.mdx
-      - page: Production operation
-        path: pages/production.mdx
-      - page: Migrating from the prototype
-        path: pages/migration.mdx
-  - section: Reference
-    contents:
-      - page: TypeScript API
-        path: pages/api-reference.mdx
-      - page: Common pitfalls and FAQ
-        path: pages/faq.mdx
+  - tab: nodejs
+    layout:
+      - section: Get started
+        contents:
+          - page: Overview
+            path: pages/overview.mdx
+          - page: Quickstart
+            path: pages/quickstart.mdx
+          - page: Architecture
+            path: pages/architecture.mdx
+          - page: Classification starter
+            path: pages/starter.mdx
+          - page: Supported capabilities
+            path: pages/supported.mdx
+      - section: Core concepts
+        contents:
+          - page: Executions and episodes
+            path: pages/executions.mdx
+          - page: Signals and outcomes
+            path: pages/signals.mdx
+          - page: Pattern analysis
+            path: pages/analysis.mdx
+          - page: Improvement candidates
+            path: pages/candidates.mdx
+      - section: Closing the loop
+        contents:
+          - page: Governed self-improvement
+            path: pages/self-improvement.mdx
+          - page: Evaluation and deployment
+            path: pages/evaluation-deployment.mdx
+          - page: Fine-tuning
+            path: pages/fine-tuning.mdx
+          - page: Agent systems
+            path: pages/agent-systems.mdx
+      - section: Operate
+        contents:
+          - page: Storage adapters
+            path: pages/storage.mdx
+          - page: Security and privacy
+            path: pages/security.mdx
+          - page: Production operation
+            path: pages/production.mdx
+          - page: Migrating from the prototype
+            path: pages/migration.mdx
+      - section: Reference
+        contents:
+          - page: TypeScript API
+            path: pages/api-reference.mdx
+          - page: Common pitfalls and FAQ
+            path: pages/faq.mdx
+  - tab: python
+    layout:
+      - section: Get started
+        contents:
+          - page: Python quickstart
+            path: pages/python.mdx
+          - page: Python examples
+            path: pages/python-examples.mdx
+      - section: Reference
+        contents:
+          - page: Python API
+            path: pages/python-api.mdx
+          - link: Node.js and Python capabilities
+            href: /get-started/supported-capabilities
 
 css: styles.css

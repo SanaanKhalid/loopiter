@@ -1,0 +1,167 @@
+---
+title: Python API
+---
+
+Reference for the native async **Python `0.2.0a1`** SDK. It is not a Python wrapper
+around Node.js. Use [the Python quickstart](/get-started/python-quickstart) for
+installation, database setup and deployment recovery, and
+[the examples](/get-started/python-examples) for a complete runnable loop.
+
+The implementation in [`python/src/loopiter`](https://github.com/SanaanKhalid/loopiter/tree/main/python/src/loopiter)
+is the source of exact signatures. Records are detached JSON dictionaries, not
+objects with attributes: use `record["id"]`, `record["revision"]` and `await`.
+
+## Construct a client
+
+```python
+from loopiter import FeedbackLoop, InMemoryStore
+
+loop = FeedbackLoop(
+    store=InMemoryStore(),  # Development only; use a conforming database adapter in production.
+    namespace="support/dev",
+    maximum_payload_bytes=262144,
+    callback_timeout=120,  # Seconds, not the Node SDK's milliseconds.
+)
+```
+
+The constructor is synchronous. All public client operations in the table below
+are async. A client requires a **Python v1** store and a non-empty namespace.
+The read-only `namespace` and `store` properties expose its binding. Namespace
+selection and access control belong to the application; namespaces are not authentication.
+
+Optional `sanitize(value)` is an async hook that must return valid JSON. An error
+or timeout prevents persistence; there is no unsanitized fallback. Sanitization
+must be deterministic for idempotent retries and preserve deployment identity.
+Optional synchronous `deployments_enabled()` must return a boolean; returning
+`False` blocks new applies while leaving rollback and reconciliation available.
+
+## Client methods
+
+| Method | Result and contract |
+| --- | --- |
+| `record_execution(**input)` | Execution record; insert-only and idempotent for identical caller ID/input |
+| `complete_execution(id, expected_revision=..., **updates)` | Updated execution; revision-checked output, metadata and completion update |
+| `record_signal(**input)` | Signal record scoped to an execution or episode; source verification is application-owned |
+| `get_execution(id)` | Execution dictionary or `None` |
+| `get_candidate(id)` | Candidate dictionary or `None` |
+| `list(collection, limit=100, cursor=None, window=None)` | Page with `items` and an optional `next_cursor`; maximum page size 1,000 |
+| `analyze(**options)` | List of descriptive findings from bounded, eligible scored evidence |
+| `create_candidate(**input)` | Candidate with immutable content/evidence hashes |
+| `evaluate_candidate(id, evaluator, evaluator_name=..., version=..., dataset_hash=...)` | Updated candidate containing a new evaluation; stale callback results cannot overwrite newer state |
+| `approve_candidate(id, actor=..., evaluation_id=...)` | Updated candidate; requires the exact latest passing evaluation |
+| `reject_candidate(id, reason=...)` | Updated candidate; explicit rejection before deployment |
+| `deploy_candidate(id, adapter, expected_artifact_version=...)` | Finalized attempt when known; uncertain outcome raises `deployment_pending` |
+| `rollback_candidate(id, adapter)` | Finalized rollback attempt; restores the recorded predecessor/version |
+| `reconcile_deployment(attempt_id, adapter)` | Inspect-only reconciliation; unknown outcomes remain pending and block the target |
+| `get_active_candidate(target)` | Recorded active candidate or `None`; not a live inspection of external infrastructure |
+| `delete_namespace(confirmation=...)` | Deletes exactly the bound namespace after exact-name confirmation; stop and coordinate writers first |
+| `close()` | Closes store-owned resources; never closes an application-owned PostgreSQL pool |
+
+Supported collections are `executions`, `signals`, `candidates`, `targets`,
+`attempts` and `events`. Do not directly modify lifecycle records through the
+advanced store interface: doing so bypasses client invariants.
+
+## Paginate records
+
+This complete example uses synthetic in-memory data. Omit `cursor` when absent;
+stop when the response has no `next_cursor`.
+
+```python
+import asyncio
+from loopiter import FeedbackLoop, InMemoryStore
+
+
+async def main():
+    loop = FeedbackLoop(store=InMemoryStore(), namespace="support/dev")
+    try:
+        await loop.record_execution(id="sample-1", kind="prediction", input={"text": "Example"})
+        cursor = None
+        while True:
+            page = await loop.list("executions", limit=100, cursor=cursor)
+            for record in page["items"]:
+                print(record["id"])
+            cursor = page.get("next_cursor")
+            if cursor is None:
+                break
+    finally:
+        await loop.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Analysis options
+
+`dimensions` is required: supply 1–8 unique paths such as `metadata.intent`.
+Optional filters include `execution_kinds`, `signal_kinds` and `signal_names`.
+`execution_window` selects execution start times; `observation_window` selects
+signal observation times. Each window uses inclusive `from` and exclusive `to`
+UTC timestamps ending in `Z`. Late outcomes can score older executions when
+those executions are included in the cohort.
+
+Defaults include `minimum_support=5`, `minimum_scored_count=2`,
+`minimum_effect_size=0`, `minimum_recurrence=1`, `minimum_distinct_entities=0`,
+`maximum_dimension_depth=2`, `time_bucket="week"`, `include_episode_signals=True`
+and `maximum_records=20000`. The record limit applies separately to executions
+and signals; exceeding it raises an error rather than truncating analysis.
+
+Episodes are scoring units where available; otherwise executions are units.
+Unscored/zero-confidence signals do not become effective support. To change scoring,
+provide synchronous `score(signal)` and a versioned `scoring_version` (default
+`"default-v1"`). Scores must be finite or `None` for unscored evidence. Counts and
+effects describe evidence; they are not calibrated probabilities or causal estimates.
+
+## Evaluate and approve
+
+Your async `evaluator(candidate, cancellation_event)` returns a JSON dictionary
+with a boolean `passed` and finite numeric `metrics`. Enforce frozen independent
+holdout and guardrail gates in this callback; the proposing model must not be its
+own success criterion. Pass stable evaluator/version/dataset identities to
+`evaluate_candidate`. Its result is an updated candidate; the latest evaluation
+is `candidate["evaluations"][-1]`.
+
+Approval is a separate application action after human review. Reference that
+evaluation's exact `id` when calling `approve_candidate`. A failed or stale
+evaluation cannot authorize deployment. Capturing feedback never runs an evaluator,
+approves a proposal or deploys a change automatically.
+
+## DeploymentAdapter
+
+Implement async `apply(request)`, `inspect(request)` and `rollback(request)`.
+The request includes `attempt`, `candidate`, `restore_candidate`, a stable
+`idempotency_key` and cooperative `cancellation` event. Apply/rollback receipts
+contain `attempt_id`, `artifact_version` and `previous_artifact_version`.
+Inspection returns `applied` with a receipt, `unknown`, or **fenced** `not_applied`.
+
+Persist external idempotency records and compare versions atomically in your own
+infrastructure. A `not_applied` result guarantees the earlier operation cannot
+finish later; an absent artifact or timed-out request alone does not establish that.
+See the [full recovery contract](/get-started/python-quickstart#deployment-and-recovery-contract).
+
+## Errors and cancellation
+
+Catch `LoopiterError` from `loopiter`. Its `code` is a string, not an HTTP status.
+Examples include `invalid_input`, `conflict`, `not_found`, `invalid_transition`,
+`integrity_error`, `query_limit`, `timeout`, `deployment_disabled` and
+`deployment_pending`. An uncertain deployment exposes `error.attempt_id`; inspect
+that attempt through `reconcile_deployment`, not an unconditional new apply.
+
+Use `task.cancel()` to cancel an SDK operation. Callback cancellation is cooperative;
+it cannot kill application code or reverse external side effects. Late callback
+results are discarded and uncertain external outcomes must be reconciled.
+
+## Other exports and language boundaries
+
+- `fingerprint(json_value)` computes a stable fingerprint for versioned identities.
+- `FeedbackStore` and `StoreTransaction` describe the Python v1 adapter protocol.
+- `loopiter.postgres.PostgresStore(pool)` accepts your psycopg async pool.
+- `loopiter.postgres.migration_sql()` returns packaged SQL; construction never migrates.
+- `loopiter.testing.run_store_conformance(store)` tests an adapter using disposable,
+  randomly named namespaces. Use a test database, not a production connection.
+
+Python does not yet ship the Node controller, unattended auto-apply,
+JsonFileStore/legacy-import CLI or OpenAI/Azure classification starter. The SDKs
+use separate database tables, hashes and deployment locks; never independently
+control the same external target with both. The **Node.js** tab documents the
+TypeScript SDK, not interchangeable signatures for this package.

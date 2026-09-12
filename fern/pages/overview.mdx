@@ -5,14 +5,37 @@ title: Loopiter reliable alpha
 Loopiter is an MIT-licensed SDK that coordinates feedback-driven AI
 improvements. It is not an LLM, trainer, hosted observability service or rollout daemon.
 The published alpha is `0.2.0-alpha.1`, supporting Node.js 22 and 24 as an ESM library
-with **zero core runtime dependencies**. Formerly Feloop; install with
-`npm install loopiter@0.2.0-alpha.1` and follow the quickstart.
+with **zero core runtime dependencies**. Formerly Feloop.
 
 A native **Python 3.11+ alpha** is also available, with
 capture, analysis, reviewed deployment and an optional PostgreSQL adapter. Python
 installation via `python -m pip install 'loopiter==0.2.0a1'`. Start with the
 [Python quickstart](/get-started/python-quickstart) for installation and explicit
 language differences. The controller and OpenAI/Azure starter below remain Node-only.
+
+Use the **Node.js** and **Python** tabs at the top of the docs to switch SDK guides.
+Both packages are named `loopiter`, but npm and PyPI distribute separate SDKs.
+
+<Tabs>
+<Tab title="Node.js" language="typescript">
+
+```sh
+npm install loopiter@0.2.0-alpha.1
+```
+
+Requires Node.js 22 or 24. Follow the [Node.js quickstart](/get-started/quickstart).
+
+</Tab>
+<Tab title="Python" language="python">
+
+```sh
+python -m pip install 'loopiter==0.2.0a1'
+```
+
+Requires Python 3.11+. Follow the [Python quickstart](/get-started/python-quickstart).
+
+</Tab>
+</Tabs>
 
 The useful loop is:
 
