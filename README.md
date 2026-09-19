@@ -29,7 +29,7 @@ Loopiter is the new name of Feloop. Install with
 [Canonical documentation](https://loopiter.docs.buildwithfern.com/get-started/overview)
 · [Starter](examples/prompt-improvement/README.md)
 · [Capabilities](SUPPORTED.md) · [Migration](docs/migration.md)
-· [Release gates](docs/release-checklist.md) · [Security](SECURITY.md)
+· [Release gates](docs/autonomy-release-checklist.md) · [Security](SECURITY.md)
 
 ## Python alpha
 
