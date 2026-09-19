@@ -14,8 +14,9 @@ No packages, docs or website are published by implementing this checklist.
 - [x] Versioned package installation checks and supported runtime/database matrix.
 - [x] Retained Node live-model report for isolated proposal, evaluation, deployment, observation and injected receipt recovery (synthetic ground truth, not production evidence).
 - [x] Mock HTTP support application with real PostgreSQL and independent workers: retain, regression rollback, rejection, and missing-feedback timeout; see [report](../reports/mock-support-summary.md).
-- [ ] Review/commit the complete release candidate and require green CI on that exact revision before publication.
+- [x] Release revision `4c4533f72815ff3c241657a4ef5349b3d364439f` committed; all exact-revision CI and publication gates passed.
 - [x] User authorization for package/docs/site publication received 2026-09-19.
+- [x] npm/PyPI published, registry installs verified, Fern and Cloudflare updated. See [publication record](../reports/release-0.3.md).
 - [ ] Production enablement: application-owned, not authorized or implied by publication.
 
 Test fixtures are simulated. A baseline-only live request or a rejected proposal does not
