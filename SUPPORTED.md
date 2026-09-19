@@ -1,17 +1,30 @@
 # Supported alpha capabilities
 
+## 0.3 alpha
+
+Both SDKs now have opt-in `ImprovementController`, immediate observation/recovery,
+application-owned canary coordination, exact-target schemas, persistent budgets and
+independent audit gates. The three simulated workflows are prompt fragments, approved
+model maps and predict/abstain routing around an unchanged classifier. Optional provider
+wrappers and the scikit-learn bridge are application-side examples, not core dependencies.
+Node uses store v3; Python uses store v2. See [release gates](docs/autonomy-release-checklist.md).
+Do not treat unverified/live capabilities as demonstrated or enable production by default.
+
+The following matrix describes 0.3. Existing 0.2 installations require explicit migration.
+
 ## Language availability
 
-| Capability | Node.js 22/24 (npm alpha) | Python 3.11+ (PyPI alpha) |
+| Capability | Node.js 22/24 alpha | Python 3.11–3.14 alpha |
 | --- | --- | --- |
 | Capture, structured analysis, manual evaluate/approve/deploy/recover/rollback | Yes | Yes, native async API with snake_case dictionary records |
 | Dependency-free core / no telemetry | Yes | Yes |
-| Optional PostgreSQL 16/17 | Developer-owned `pg` pool, v2 Node contract | Developer-owned psycopg async pool, v1 Python contract, separate migration/tables/locks |
+| Optional PostgreSQL 16/17 | Developer-owned `pg` pool, v3 Node contract | Developer-owned psycopg async pool, v2 Python contract, separate migration/tables/locks |
 | In-memory development store / conformance suite | Yes | Yes |
 | JsonFileStore and legacy data migration | Yes | Not included |
-| Governed controller and experimental auto-apply | Yes | Not included; explicit application calls only |
-| OpenAI/Azure classification starter | Yes | Not ported; offline routing fixture example provided |
-| Distribution | `npm install loopiter@alpha` | `python -m pip install 'loopiter==0.2.0a1'` |
+| Durable reviewed/experiment/autonomous controller | Explicit flag + exact target policy; legacy apply removed | Equivalent async controller, native snake_case API |
+| Three autonomous workflows | Prompt, model routing, fixed-model decision routing; simulated paths | Same paths, plus optional fixed scikit-learn bridge |
+| Optional OpenAI/Azure providers | Native fetch, metered, explicitly enabled live mode | Standard-library application integration, metered, explicitly enabled live mode |
+| Distribution | Prepared `0.3.0-alpha.1`; not published by this work | Prepared `0.3.0a1`; not published by this work |
 
 Python and Node are separate lifecycle owners, not a shared-record/wire protocol.
 Do not independently deploy both SDKs to the same external target. See
@@ -24,12 +37,13 @@ Do not independently deploy both SDKs to the same external target. See
 | Runtime | ESM TypeScript/JavaScript on Node 22 and 24 | Not a browser/edge SDK; native Python alpha is described above |
 | Capture | Scoped insert-only executions/signals, revisions, validation, payload limit, sanitizer | Authentication, verified labels, semantic idempotency keys |
 | Analysis | Structured dimension segments; weighted episode/execution scores; independent cohort/observation windows | Define useful scores; no causal inference, embeddings, free-text clustering or probability of improvement |
-| Storage | v2 contract; PostgreSQL 16/17 reference; explicit SQL migration | Own `pg` pool, TLS, backups, restore tests, database permissions |
+| Storage | v3 Node/v2 Python contracts; PostgreSQL 16/17; explicit SQL migrations | Own pools, TLS, backups, restore tests, database permissions |
 | Development stores | InMemoryStore and single-process JsonFileStore | Not supported for multi-process production writes |
 | Evaluation | Versioned callback, immutable evidence/content references, finite metrics | Representative holdouts, independent gates, model drift assessment |
 | Deployment | Pending attempts, active pointer, receipts, reconciliation and rollback lineage | Real idempotent apply/inspect/rollback; fences; no out-of-band target writes |
-| Controller | Recommend default; 3 proposals/3 candidates, 10 min run, 2 min callback defaults | Scheduling, cost policy, trusted callbacks, process isolation |
-| Auto-apply | Explicit experimental low-risk prompt/routing only with metric gates | Not a guarantee of safe/universal autonomous improvement |
+| Controller | Recommend default; durable leases, reservations, 3 proposals/3 candidates, 10 min tick, 2 min callback | Application scheduling, finite cost policy, trusted callbacks, process isolation |
+| Autonomous changes | Flag + autonomous mode + exact prompt/routing policy; single winner, audit, observation/rollback | No universal improvement guarantee; adapters enforce external fencing and mature outcome attribution |
+| Canary | Stable bucket helper and inspectable promotion/withdrawal coordination | Durable cohort assignment/exposure, traffic routing and valid comparison method are application-owned |
 | Starter | OpenAI/Azure OpenAI Responses via fetch, PostgreSQL prompt registry, exact-match evaluation, CLI | User credentials/model or Azure deployment; synthetic example dataset must be replaced for customer claims |
 | Other target kinds | Represent, recommend, evaluate and manually deploy through adapters | No built-in fine-tuning/training, code deployment, agent spawning or capacity scaling |
 | Telemetry / operations | Durable lifecycle events and structured controller reasons; no Loopiter telemetry | Existing logger, alerting, jobs, retention and incident response |

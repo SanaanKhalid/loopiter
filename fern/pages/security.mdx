@@ -35,7 +35,9 @@ valid. Keep human review and independent holdouts appropriate to the risk.
 
 Callbacks are ordinary JavaScript. Timeouts are cooperative cancellation, not a
 sandbox, resource jail or forced kill. Isolate untrusted callbacks separately. Risk
-labels are supplied by trusted recipes; auto-apply is experimental and narrowly scoped.
+labels are not a security boundary. Autonomous execution requires an explicit flag,
+exact prompt/routing target policy, independent audit and production observation.
+Proposals cannot alter trusted policies, labels, safety instructions or evaluator thresholds.
 
 ## Deletion and reporting
 

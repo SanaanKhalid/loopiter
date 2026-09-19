@@ -23,10 +23,12 @@ export async function migratePostgres(pool: PgPoolLike): Promise<void> {
     new URL("../../migrations/001-feedback-store.sql", import.meta.url),
     "utf8",
   );
+  const upgrade = await readFile(new URL("../../migrations/002-autonomy.sql", import.meta.url), "utf8");
   const client = await pool.connect();
   let discard = false;
   try {
     await client.query(sql);
+    await client.query(upgrade);
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {
       discard = true;
@@ -37,7 +39,7 @@ export async function migratePostgres(pool: PgPoolLike): Promise<void> {
   }
 }
 export class PostgresStore implements FeedbackStore {
-  readonly version = 2 as const;
+  readonly version = 3 as const;
   constructor(readonly pool: PgPoolLike) {}
   async transaction<T>(
     namespace: string,
@@ -105,7 +107,7 @@ export class PostgresStore implements FeedbackStore {
         check(kind);
         validateRecord(namespace, record);
         integer(expected, "expectedRevision");
-        if (["signals", "events", "historical"].includes(kind))
+        if (["signals", "events", "historical", "observations"].includes(kind))
           fail("immutable_record", "Collection is insert-only.");
         if (record.revision !== expected + 1)
           fail("conflict", "Revision must increment by one.");
@@ -126,6 +128,11 @@ export class PostgresStore implements FeedbackStore {
     };
     try {
       await client.query("BEGIN");
+      await client.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+      const installed=await client.query("SELECT to_regclass('feloop_schema_migrations') AS installed");
+      if(!installed.rows[0]?.installed)fail('migration_required','Database is uninitialized. Explicitly run migratePostgres after reviewing migrations; construction never changes your schema.');
+      const schema=await client.query('SELECT max(version) AS version FROM feloop_schema_migrations');
+      if(schema.rows[0]?.version!==2)fail('migration_required','Store v3 requires explicit SQL migration 002-autonomy.sql. Stop old writers and back up first.');
       // Serializes Loopiter writers/read snapshots within a namespace, across processes.
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",

@@ -60,6 +60,9 @@ export interface DeploymentOptions {
   adapter: DeploymentAdapter;
   expectedArtifactVersion?: string | null;
   signal?: AbortSignal;
+  /** Stable caller operation ID. An existing attempt is inspected, never blindly replayed. */
+  attemptId?: string;
+  authorization?: { runId: string; leaseOwner: string };
 }
 export class FeedbackLoop {
   readonly namespace: string;
@@ -68,8 +71,11 @@ export class FeedbackLoop {
   private readonly options: FeedbackLoopOptions;
   constructor(options: FeedbackLoopOptions) {
     nonempty(options.namespace, "namespace");
-    if (options.store?.version !== 2)
-      fail("invalid_store", "A v2 transactional FeedbackStore is required.");
+    if (options.store?.version !== 3)
+      fail(
+        "migration_required",
+        "A v3 transactional FeedbackStore is required; explicitly migrate first.",
+      );
     this.options = { ...options };
     this.namespace = options.namespace;
     this.store = options.store;
@@ -108,6 +114,10 @@ export class FeedbackLoop {
       : clone(input);
     json(result, this.options.maximumPayloadBytes);
     return result as T;
+  }
+  /** Apply the same pre-persistence sanitizer to controller adapter payloads. */
+  async prepareControllerPayload<T>(input: T): Promise<T> {
+    return this.prepare(input);
   }
   async read<K extends Collection>(
     tx: StoreTransaction,
@@ -303,6 +313,7 @@ export class FeedbackLoop {
         proposedChange: input.proposedChange,
         risk,
         metadata: input.metadata ?? {},
+        ...(input.baseline ? { baseline: input.baseline } : {}),
       }),
       evidenceHash: hash(input.evidence),
     };
@@ -380,6 +391,7 @@ export class FeedbackLoop {
         version: context.version,
         datasetHash: context.datasetHash,
         createdAt: this.now(),
+        ...(current.baseline ? { baselineHash: hash(current.baseline) } : {}),
       });
       await tx.replace("candidates", updated, current.revision);
       await this.event(tx, "candidate.evaluated", key, {
@@ -390,13 +402,21 @@ export class FeedbackLoop {
   }
   async approveCandidate(
     key: string,
-    input: { actor: string; evaluationId: string },
+    input: {
+      actor: string;
+      evaluationId: string;
+      authorization?: { runId: string; leaseOwner: string };
+    },
   ): Promise<AdaptationCandidate> {
-    fields(input, ["actor", "evaluationId"]);
+    fields(input, ["actor", "evaluationId", "authorization"]);
     nonempty(input.actor, "actor");
     nonempty(input.evaluationId, "evaluationId");
+    const authorization = input.authorization
+      ? clone(input.authorization)
+      : undefined;
     input = { actor: input.actor, evaluationId: input.evaluationId };
     return this.store.transaction(this.namespace, async (tx) => {
+      if (authorization) await this.authorizeAutonomous(tx, key, authorization);
       const current = await this.require(tx, "candidates", key);
       await this.unlocked(tx, current);
       const e = current.evaluations.at(-1);
@@ -427,6 +447,46 @@ export class FeedbackLoop {
       });
       return updated;
     });
+  }
+  private async authorizeAutonomous(
+    tx: StoreTransaction,
+    key: string,
+    authorization: { runId: string; leaseOwner: string },
+  ) {
+    fields(authorization, ["runId", "leaseOwner"]);
+    nonempty(authorization.runId, "runId");
+    nonempty(authorization.leaseOwner, "leaseOwner");
+    const run = await this.require(tx, "runs", authorization.runId),
+      d = run.data;
+    const control = await this.read(
+      tx,
+      "coordination",
+      `workflow:${String(d.workflowId)}`,
+    );
+    const candidate = await this.require(tx, "candidates", key);
+    if (
+      typeof d.auditEvaluationId !== "string" ||
+      candidate.evaluations.at(-1)?.id !== d.auditEvaluationId
+    )
+      fail(
+        "audit_evaluation_conflict",
+        "Autonomous approval/deployment requires the exact recorded audit.",
+      );
+    if (
+      d.leaseOwner !== authorization.leaseOwner ||
+      typeof d.leaseUntil !== "string" ||
+      Date.parse(d.leaseUntil) <= Date.parse(this.now()) ||
+      d.selectedId !== key ||
+      !["selected", "deploying"].includes(String(d.state)) ||
+      control?.data.paused === true ||
+      control?.data.mode !== "autonomous" ||
+      control?.data.selfImproving !== true ||
+      control?.data.definitionHash !== d.definitionHash
+    )
+      fail(
+        "autonomy_not_authorized",
+        "Current durable controller authorization is required.",
+      );
   }
   async rejectCandidate(
     key: string,
@@ -481,6 +541,21 @@ export class FeedbackLoop {
   ): Promise<DeploymentAttempt> {
     this.checkAdapter(options.adapter);
     options.signal?.throwIfAborted();
+    if (options.attemptId !== undefined) {
+      nonempty(options.attemptId, "attemptId");
+      const previous = await this.store.transaction(this.namespace, (tx) =>
+        this.read(tx, "attempts", options.attemptId!),
+      );
+      if (previous) {
+        if (previous.candidateId !== key || previous.operation !== operation)
+          fail("conflict", "Attempt ID reused for different operation.");
+        return this.reconcileAttempt(
+          previous.id,
+          options.adapter,
+          options.signal,
+        );
+      }
+    }
     if (
       options.expectedArtifactVersion !== undefined &&
       options.expectedArtifactVersion !== null
@@ -489,8 +564,24 @@ export class FeedbackLoop {
     const attempt = await this.store.transaction(this.namespace, async (tx) => {
       options.signal?.throwIfAborted();
       if (operation === "apply") this.enabled();
+      if (operation === "apply" && options.authorization)
+        await this.authorizeAutonomous(tx, key, options.authorization);
       const candidate = await this.require(tx, "candidates", key);
       const stateId = hash(candidate.target);
+      const coordination = await this.read(
+        tx,
+        "coordination",
+        `target:${stateId}`,
+      );
+      if (
+        operation === "apply" &&
+        coordination?.data.activeRun &&
+        coordination.data.activeRun !== options.authorization?.runId
+      )
+        fail(
+          "target_busy",
+          "An improvement cycle owns this target. Finish observation or recover it before a separate deployment.",
+        );
       const existing = await this.read(tx, "targets", stateId);
       if (existing?.pendingAttemptId)
         fail(
@@ -524,14 +615,22 @@ export class FeedbackLoop {
       const expected =
         existing?.artifactVersion !== undefined
           ? existing.artifactVersion
-          : (options.expectedArtifactVersion ?? null);
+          : (options.expectedArtifactVersion ??
+            candidate.baseline?.artifactVersion ??
+            null);
+      if (
+        operation === "apply" &&
+        candidate.baseline &&
+        candidate.baseline.artifactVersion !== expected
+      )
+        fail("stale_baseline", "Evaluated baseline is no longer current.");
       if (
         options.expectedArtifactVersion !== undefined &&
         expected !== options.expectedArtifactVersion
       )
         fail("conflict", "Expected artifact version changed.");
       const value: DeploymentAttempt = {
-        ...this.base(id("attempt")),
+        ...this.base(options.attemptId ?? id("attempt")),
         target: candidate.target,
         candidateId: key,
         operation,
@@ -715,6 +814,7 @@ export class FeedbackLoop {
           nextState.activeCandidateId = candidate.id;
         } else {
           nextCandidate.status = "rolled_back";
+          nextCandidate.rollbackReceipt = clone(receipt);
           delete nextState.activeCandidateId;
           if (current.restoreCandidateId) {
             const restore = await this.require(

@@ -8,9 +8,9 @@ developer-owned `pg` pool through a structural interface; install `pg` in your a
 does not connect, migrate, create a database or change customer tables automatically.
 The reference SQL uses Loopiter-prefixed tables; review conflicts before adopting it.
 
-## v2 contract
+## v3 contract (0.3 alpha)
 
-A store exposes `version: 2`, `transaction(namespace, callback)`,
+A store exposes `version: 3`, `transaction(namespace, callback)`,
 `deleteNamespace(namespace)` and `close()`. A transaction exposes generic
 `get(collection,id)`, `list(collection,options)`, `insert(collection,record)` and
 `replace(collection,record,expectedRevision)`.
@@ -22,7 +22,7 @@ A store exposes `version: 2`, `transaction(namespace, callback)`,
 - Insert is insert-only and starts at revision 1. Duplicate IDs conflict. Client-level
   creation performs content-hash idempotency before insert.
 - Replace checks the current revision and requires exactly the next revision. Identity
-  and namespace cannot change. Signals, lifecycle events and historical records are immutable.
+  and namespace cannot change. Signals, lifecycle events, observations and historical records are immutable.
 - List defaults to 100, maximum 1,000, with an opaque nextCursor and stable ID order.
   UTC windows use execution startedAt, signal observedAt, otherwise record createdAt;
   inclusive from / exclusive to. No silent truncation or repeated cursors.
@@ -55,3 +55,8 @@ InMemoryStore and JsonFileStore are **development tools**. JSON uses restrictive
 file permissions and atomic replacement, but no cross-process coordination. Do not
 share one JSON file across production workers. No retention service is supplied.
 Own backups, TLS, access control, restore drills, pool limits and migration credentials.
+
+The new collections are `runs`, `operations`, `budgets`, `observations` and `coordination`.
+Stop old writers and explicitly apply SQL `002-autonomy.sql` before using v3. JSON development
+stores require an explicit copy-only `migrateJsonV2` call. See
+[0.3 migration](/operate/migrating-to-0-3) for backups, preserved lineage and recovery.

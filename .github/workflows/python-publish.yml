@@ -6,7 +6,7 @@ on:
       version:
         description: Exact Python version to publish (must match python/pyproject.toml)
         required: true
-        default: 0.2.0a1
+        default: 0.3.0a1
         type: string
       expected_sha:
         description: Full reviewed main commit SHA; publishing fails if main moved

@@ -26,7 +26,7 @@ export interface StoreTransaction {
   ): Promise<void>;
 }
 export interface FeedbackStore {
-  readonly version: 2;
+  readonly version: 3;
   transaction<T>(
     namespace: string,
     operation: (tx: StoreTransaction) => Promise<T>,

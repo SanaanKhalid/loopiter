@@ -169,6 +169,11 @@ export interface CreateCandidateInput {
   evidence: JsonValue;
   risk?: CandidateRisk;
   metadata?: JsonObject;
+  baseline?: ArtifactBaseline;
+}
+export interface ArtifactBaseline {
+  artifactVersion: string | null;
+  configurationHash: string;
 }
 export interface EvaluationResult {
   passed: boolean;
@@ -189,6 +194,7 @@ export interface CandidateEvaluation extends EvaluationResult {
   version: string;
   datasetHash: string;
   createdAt: string;
+  baselineHash?: string;
 }
 export interface CandidateApproval {
   actor: string;
@@ -210,6 +216,8 @@ export interface AdaptationCandidate extends RecordBase {
   approval?: CandidateApproval;
   predecessorId?: string;
   deploymentReceipt?: DeploymentReceipt;
+  rollbackReceipt?: DeploymentReceipt;
+  baseline?: ArtifactBaseline;
 }
 export type CandidateEvaluator = (
   candidate: AdaptationCandidate,
@@ -271,6 +279,16 @@ export interface Collections {
   attempts: DeploymentAttempt;
   events: LifecycleEvent;
   historical: HistoricalRecord;
+  runs: ControlRecord;
+  operations: ControlRecord;
+  budgets: ControlRecord;
+  observations: ControlRecord;
+  coordination: ControlRecord;
+}
+/** Versioned controller records. The controller additionally validates its payloads. */
+export interface ControlRecord extends RecordBase {
+  format: 1;
+  data: JsonObject;
 }
 export type Collection = keyof Collections;
 export interface PageOptions {

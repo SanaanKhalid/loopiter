@@ -10,7 +10,7 @@ The source implementation is in the repository's `src/` directory.
 ## FeedbackLoop
 
 Construct with `{store, namespace, maximumPayloadBytes?, callbackTimeoutMs?,
-sanitize?, clock?, deploymentsEnabled?}`. Required store version is 2; namespace
+sanitize?, clock?, deploymentsEnabled?}`. Required store version is 3; namespace
 must be a non-empty string. Defaults: payload 262,144 bytes, callback 120,000 ms.
 
 | Method | Contract |
@@ -38,7 +38,14 @@ Do not manually alter targets/attempts/candidate states.
 
 ## Other exports
 
-`SelfImprovementController(loop).run(input)` accepts analysis, policy, recipes and
+`ImprovementController(loop, {workflows, mode?, selfImproving?})` is the 0.3 durable
+controller. Defaults are `mode: 'recommend'` and `selfImproving: false`. Automatic
+approval/deployment requires both autonomous mode and the explicit flag, plus a valid
+exact-target policy and all adapters. Methods: `tick(workflowId, signal?)`, `getRun(runId)`,
+`listRuns(options?)`, `pause(workflowId, reason)`, and `resume(workflowId)`.
+Applications own scheduling. See [autonomous improvement](/closing-the-loop/opt-in-autonomous-improvement).
+
+The deprecated reviewed-only `SelfImprovementController(loop).run(input)` accepts analysis, policy, recipes and
 optional evaluator/evaluation identity, deploymentAdapter and signal. The default
 autonomy is recommend. See [controller policy](/closing-the-loop/governed-self-improvement).
 

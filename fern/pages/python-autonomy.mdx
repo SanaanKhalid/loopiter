@@ -1,0 +1,32 @@
+---
+title: Autonomous improvement in Python
+---
+
+The 0.3 alpha includes a native async `ImprovementController`. Read the
+[complete policy and recovery guide](/closing-the-loop/opt-in-autonomous-improvement),
+with code tabs for both SDKs. Header language tabs remain available throughout the docs.
+
+```python
+from loopiter import FeedbackLoop, ImprovementController, ImprovementWorkflow
+
+def reviewed_controller(loop: FeedbackLoop, workflow: ImprovementWorkflow):
+    return ImprovementController(loop, workflows=[workflow])
+
+def experiment_controller(loop: FeedbackLoop, workflow: ImprovementWorkflow):
+    return ImprovementController(loop, workflows=[workflow], mode="experiment")
+
+def autonomous_controller(loop: FeedbackLoop, workflow: ImprovementWorkflow):
+    return ImprovementController(
+        loop, workflows=[workflow], mode="autonomous", self_improving=True
+    )
+```
+
+Your scheduler calls `await controller.tick(workflow.id)`. Use `get_run`, paginated
+`list_runs`, `pause(workflow.id, reason)` and administrative `resume(workflow.id)`.
+Pass an `asyncio.Event` to `tick` for cooperative cancellation.
+
+Python uses store contract v2 and explicit SQL migration 002. Node uses contract v3 and
+separate tables. Behavioral parity does not mean shared records or dual ownership of
+one external serving target. Offline examples cover prompt, model and decision routing;
+the isolated live demonstration currently covers Node/Azure, not Python. Publication
+and production enablement remain separate release actions.

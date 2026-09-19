@@ -30,8 +30,9 @@ evaluation is expected and must not be rewritten as a success.
 ### Does recommend mode deploy? Is experiment sandboxed?
 
 Recommend stores proposals only. Experiment evaluates without automatic deployment,
-but callbacks are ordinary code in your process. Auto-apply needs explicit experimental
-opt-in and is limited to low-risk prompt/routing changes passing independent gates.
+but callbacks are ordinary code in your process. Autonomous mode requires the explicit
+self-improvement flag, an exact prompt/routing policy, independent audit, budgets and
+observation/rollback adapters. The old experimental apply mode is rejected.
 
 ### A deploy timed out. Should I retry?
 
@@ -53,7 +54,7 @@ Re-evaluate and approve fresh candidates against an explicit serving baseline.
 
 ### Is the alpha already published or the website public?
 
-Install `loopiter@0.2.0-alpha.1` or follow `loopiter@alpha` on npm.
+Install `loopiter@0.3.0-alpha.1` or follow `loopiter@alpha` on npm.
 The GitHub repository is public and private vulnerability reporting
 is enabled. The canonical Fern documentation is published. The landing website has
 its own deployment lifecycle; an npm release does not redeploy it.

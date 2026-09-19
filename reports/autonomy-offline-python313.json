@@ -1,0 +1,1863 @@
+{
+  "generated_at": "2026-09-19T16:00:15.038582+00:00",
+  "release": "0.3.0a1",
+  "runtime": "3.13.9",
+  "evidence": "SIMULATED: synthetic labels, in-memory registry, simulated observation clock",
+  "injected_failures": [
+    "Lost apply receipt",
+    "Wrong post-deployment predictions"
+  ],
+  "live_model_calls": 0,
+  "proves_causal_production_improvement": false,
+  "workflows": [
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "prompt",
+      "path": "accepted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "run_id": "run_75943c2c10edabd7a90495ca01378aa5782fc8aa18aeb8aa721948abe06ab293",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidate_ids": [
+          "candidate_9e5dbfefcf4348c61417c2f78b9e59b64dfd57c4731b5b8e72230af89fdec1aa"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "active_version": "f41b643767cdcff875c7dcd7d33a4730aaa04a556de74649778a39667d3f39aa",
+      "validation": {
+        "candidate_9e5dbfefcf4348c61417c2f78b9e59b64dfd57c4731b5b8e72230af89fdec1aa": {
+          "sample_count": 100,
+          "baseline_mean": 0.0,
+          "candidate_mean": 1.0,
+          "metrics": {
+            "accuracy": 1.0,
+            "errors": 0.0,
+            "latency_ms": 0,
+            "cost": 0.0,
+            "accuracy:billing": 1.0,
+            "accuracy:access": 1.0
+          },
+          "estimated_serving_cost": 0.0
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 0.0,
+        "candidate_mean": 1.0,
+        "metrics": {
+          "accuracy": 1.0,
+          "errors": 0.0,
+          "latency_ms": 0,
+          "cost": 0.0,
+          "accuracy:billing": 1.0,
+          "accuracy:access": 1.0
+        },
+        "estimated_serving_cost": 0.0
+      },
+      "observations": [
+        {
+          "artifact_version": "f41b643767cdcff875c7dcd7d33a4730aaa04a556de74649778a39667d3f39aa",
+          "configuration_hash": "5c87eeac4bb8408c9e16383c250943297bf334b7fe3e8729a94bcaa2636fec63",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "prompt",
+      "path": "rejected",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "no_improvement",
+          "reason": "validation_failed"
+        }
+      ],
+      "result": {
+        "run_id": "run_7ad06984ab3efa7f5c4d13f3a3f657be6af5a3ae88130a65d8e6b8defc26a6de",
+        "state": "no_improvement",
+        "reason": "validation_failed",
+        "candidate_ids": [
+          "candidate_0dc7834492aaada0768bf97e9f2f30490c421bcf73cd0b52190e37549487ed16"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "active_version": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "validation": {
+        "candidate_0dc7834492aaada0768bf97e9f2f30490c421bcf73cd0b52190e37549487ed16": {
+          "sample_count": 100,
+          "baseline_mean": 0.0,
+          "candidate_mean": 0.0,
+          "metrics": {
+            "accuracy": 0.0,
+            "errors": 1.0,
+            "latency_ms": 0,
+            "cost": 0.0,
+            "accuracy:billing": 0.0,
+            "accuracy:access": 0.0
+          },
+          "estimated_serving_cost": 0.0
+        }
+      },
+      "audit": null,
+      "observations": []
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "prompt",
+      "path": "insufficient",
+      "transitions": [
+        {
+          "state": "waiting_for_evidence",
+          "reason": "insufficient_evidence"
+        }
+      ],
+      "result": {
+        "run_id": null,
+        "state": "waiting_for_evidence",
+        "reason": "insufficient_evidence",
+        "candidate_ids": [],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "active_version": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "validation": {},
+      "audit": null,
+      "observations": []
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "prompt",
+      "path": "interrupted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "reconciliation_required",
+          "reason": "deployment_pending"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "run_id": "run_cce62b8518bbc0e76dacb5aa9938163b64dfca12ebe2540f8556e677ff17e2c7",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidate_ids": [
+          "candidate_e8d85f4855aa18fd99744e0e5169b1a668e3427713ed0a488f20644f082629b2"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "active_version": "fd5cf64afd67c284303c87135943ad688f30d299c5cd8de3b3b4a56093a57be5",
+      "validation": {
+        "candidate_e8d85f4855aa18fd99744e0e5169b1a668e3427713ed0a488f20644f082629b2": {
+          "sample_count": 100,
+          "baseline_mean": 0.0,
+          "candidate_mean": 1.0,
+          "metrics": {
+            "accuracy": 1.0,
+            "errors": 0.0,
+            "latency_ms": 0,
+            "cost": 0.0,
+            "accuracy:billing": 1.0,
+            "accuracy:access": 1.0
+          },
+          "estimated_serving_cost": 0.0
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 0.0,
+        "candidate_mean": 1.0,
+        "metrics": {
+          "accuracy": 1.0,
+          "errors": 0.0,
+          "latency_ms": 0,
+          "cost": 0.0,
+          "accuracy:billing": 1.0,
+          "accuracy:access": 1.0
+        },
+        "estimated_serving_cost": 0.0
+      },
+      "observations": [
+        {
+          "artifact_version": "fd5cf64afd67c284303c87135943ad688f30d299c5cd8de3b3b4a56093a57be5",
+          "configuration_hash": "5c87eeac4bb8408c9e16383c250943297bf334b7fe3e8729a94bcaa2636fec63",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "prompt",
+      "path": "regression",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "rolling_back",
+          "reason": "production_guardrail_failed"
+        },
+        {
+          "state": "rolled_back",
+          "reason": "previous_version_restored"
+        }
+      ],
+      "result": {
+        "run_id": "run_dd48cc8b03f785ce98d81364ee32f751f6f71480a6c5b4260731fafe760574b0",
+        "state": "rolled_back",
+        "reason": "previous_version_restored",
+        "candidate_ids": [
+          "candidate_355753d81b03830bf3d2bbb22968f4f7a767690b7e6fa82e1eab36b7e761b6b3"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "active_version": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "validation": {
+        "candidate_355753d81b03830bf3d2bbb22968f4f7a767690b7e6fa82e1eab36b7e761b6b3": {
+          "sample_count": 100,
+          "baseline_mean": 0.0,
+          "candidate_mean": 1.0,
+          "metrics": {
+            "accuracy": 1.0,
+            "errors": 0.0,
+            "latency_ms": 0,
+            "cost": 0.0,
+            "accuracy:billing": 1.0,
+            "accuracy:access": 1.0
+          },
+          "estimated_serving_cost": 0.0
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 0.0,
+        "candidate_mean": 1.0,
+        "metrics": {
+          "accuracy": 1.0,
+          "errors": 0.0,
+          "latency_ms": 0,
+          "cost": 0.0,
+          "accuracy:billing": 1.0,
+          "accuracy:access": 1.0
+        },
+        "estimated_serving_cost": 0.0
+      },
+      "observations": [
+        {
+          "artifact_version": "1e0db8b7e7afe026fbead2d8f3db822267748cdf2020c236de224c18978c2995",
+          "configuration_hash": "5c87eeac4bb8408c9e16383c250943297bf334b7fe3e8729a94bcaa2636fec63",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "models",
+      "path": "accepted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "run_id": "run_7324daa650866c8167661f0d5d4610552b007328a22109ae8d7df0707a3ec7d4",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidate_ids": [
+          "candidate_201f996a1f7366f19c120487d30e2587429c9560625b11fface47eb05bd6347c"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "active_version": "6db7efaa2f53f247d39fa1332f129b45beda5969d5ab1289ea9a58cf572181ab",
+      "validation": {
+        "candidate_201f996a1f7366f19c120487d30e2587429c9560625b11fface47eb05bd6347c": {
+          "sample_count": 100,
+          "baseline_mean": 1.0,
+          "candidate_mean": 0.1,
+          "metrics": {
+            "accuracy": 1.0,
+            "errors": 0.0,
+            "latency_ms": 10,
+            "cost": 0.1,
+            "accuracy:billing": 1.0,
+            "accuracy:access": 1.0,
+            "accuracy:complex": 1.0,
+            "latency_ms:complex": 10,
+            "samples:complex": 50,
+            "accuracy:simple": 1.0,
+            "latency_ms:simple": 10,
+            "samples:simple": 50
+          },
+          "estimated_serving_cost": 0.1
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 1.0,
+        "candidate_mean": 0.1,
+        "metrics": {
+          "accuracy": 1.0,
+          "errors": 0.0,
+          "latency_ms": 10,
+          "cost": 0.1,
+          "accuracy:billing": 1.0,
+          "accuracy:access": 1.0,
+          "accuracy:complex": 1.0,
+          "latency_ms:complex": 10,
+          "samples:complex": 100,
+          "accuracy:simple": 1.0,
+          "latency_ms:simple": 10,
+          "samples:simple": 100
+        },
+        "estimated_serving_cost": 0.1
+      },
+      "observations": [
+        {
+          "artifact_version": "6db7efaa2f53f247d39fa1332f129b45beda5969d5ab1289ea9a58cf572181ab",
+          "configuration_hash": "96c7afd641651ea6f30d1ab2237a43d502d9a20943275b371137c88ed3e5ecfc",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "models",
+      "path": "rejected",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "no_improvement",
+          "reason": "validation_failed"
+        }
+      ],
+      "result": {
+        "run_id": "run_ab9a76a8437ca590426c7d7856809324a797e64f91ce84e64bbe68cba0a57f9a",
+        "state": "no_improvement",
+        "reason": "validation_failed",
+        "candidate_ids": [
+          "candidate_2ea824f915be583f5c2bb2379a480ccde0a88838626e8f7b85c76062c862e15e"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "active_version": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "validation": {
+        "candidate_2ea824f915be583f5c2bb2379a480ccde0a88838626e8f7b85c76062c862e15e": {
+          "sample_count": 100,
+          "baseline_mean": 1.0,
+          "candidate_mean": 1.0,
+          "metrics": {
+            "accuracy": 1.0,
+            "errors": 0.0,
+            "latency_ms": 20,
+            "cost": 1.0,
+            "accuracy:billing": 1.0,
+            "accuracy:access": 1.0,
+            "accuracy:complex": 1.0,
+            "latency_ms:complex": 20,
+            "samples:complex": 50,
+            "accuracy:simple": 1.0,
+            "latency_ms:simple": 20,
+            "samples:simple": 50
+          },
+          "estimated_serving_cost": 1.0
+        }
+      },
+      "audit": null,
+      "observations": []
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "models",
+      "path": "insufficient",
+      "transitions": [
+        {
+          "state": "waiting_for_evidence",
+          "reason": "insufficient_evidence"
+        }
+      ],
+      "result": {
+        "run_id": null,
+        "state": "waiting_for_evidence",
+        "reason": "insufficient_evidence",
+        "candidate_ids": [],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "active_version": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "validation": {},
+      "audit": null,
+      "observations": []
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "models",
+      "path": "interrupted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "reconciliation_required",
+          "reason": "deployment_pending"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "run_id": "run_cda023812ad8c6ccc5f4b680b3bb3be08f0a9f0dee6f0f8b5ef8db91956c413c",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidate_ids": [
+          "candidate_293cad7e9616d43eaca61484512b212e26888aa0310df0584a8ce30f9855a23b"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "active_version": "c6b0068f17889230ee086627b125e1e8096b835f1d224ad0146883ff365f3763",
+      "validation": {
+        "candidate_293cad7e9616d43eaca61484512b212e26888aa0310df0584a8ce30f9855a23b": {
+          "sample_count": 100,
+          "baseline_mean": 1.0,
+          "candidate_mean": 0.1,
+          "metrics": {
+            "accuracy": 1.0,
+            "errors": 0.0,
+            "latency_ms": 10,
+            "cost": 0.1,
+            "accuracy:billing": 1.0,
+            "accuracy:access": 1.0,
+            "accuracy:complex": 1.0,
+            "latency_ms:complex": 10,
+            "samples:complex": 50,
+            "accuracy:simple": 1.0,
+            "latency_ms:simple": 10,
+            "samples:simple": 50
+          },
+          "estimated_serving_cost": 0.1
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 1.0,
+        "candidate_mean": 0.1,
+        "metrics": {
+          "accuracy": 1.0,
+          "errors": 0.0,
+          "latency_ms": 10,
+          "cost": 0.1,
+          "accuracy:billing": 1.0,
+          "accuracy:access": 1.0,
+          "accuracy:complex": 1.0,
+          "latency_ms:complex": 10,
+          "samples:complex": 100,
+          "accuracy:simple": 1.0,
+          "latency_ms:simple": 10,
+          "samples:simple": 100
+        },
+        "estimated_serving_cost": 0.1
+      },
+      "observations": [
+        {
+          "artifact_version": "c6b0068f17889230ee086627b125e1e8096b835f1d224ad0146883ff365f3763",
+          "configuration_hash": "96c7afd641651ea6f30d1ab2237a43d502d9a20943275b371137c88ed3e5ecfc",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "models",
+      "path": "regression",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "rolling_back",
+          "reason": "production_guardrail_failed"
+        },
+        {
+          "state": "rolled_back",
+          "reason": "previous_version_restored"
+        }
+      ],
+      "result": {
+        "run_id": "run_626b03dc85180ca65e3ba2ab9503f4bb8b611b914b54d2a66cf00f659f2e3350",
+        "state": "rolled_back",
+        "reason": "previous_version_restored",
+        "candidate_ids": [
+          "candidate_d69268867f48e81159a873b30c653f300de3c9da4413a5ca8cc6adb1e6d4dbe3"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "active_version": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "validation": {
+        "candidate_d69268867f48e81159a873b30c653f300de3c9da4413a5ca8cc6adb1e6d4dbe3": {
+          "sample_count": 100,
+          "baseline_mean": 1.0,
+          "candidate_mean": 0.1,
+          "metrics": {
+            "accuracy": 1.0,
+            "errors": 0.0,
+            "latency_ms": 10,
+            "cost": 0.1,
+            "accuracy:billing": 1.0,
+            "accuracy:access": 1.0,
+            "accuracy:complex": 1.0,
+            "latency_ms:complex": 10,
+            "samples:complex": 50,
+            "accuracy:simple": 1.0,
+            "latency_ms:simple": 10,
+            "samples:simple": 50
+          },
+          "estimated_serving_cost": 0.1
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 1.0,
+        "candidate_mean": 0.1,
+        "metrics": {
+          "accuracy": 1.0,
+          "errors": 0.0,
+          "latency_ms": 10,
+          "cost": 0.1,
+          "accuracy:billing": 1.0,
+          "accuracy:access": 1.0,
+          "accuracy:complex": 1.0,
+          "latency_ms:complex": 10,
+          "samples:complex": 100,
+          "accuracy:simple": 1.0,
+          "latency_ms:simple": 10,
+          "samples:simple": 100
+        },
+        "estimated_serving_cost": 0.1
+      },
+      "observations": [
+        {
+          "artifact_version": "7acd415b4eeb58410a1018a6e8df7df2ca27be1dc5980e0ac716f8ad2b8d3bd0",
+          "configuration_hash": "96c7afd641651ea6f30d1ab2237a43d502d9a20943275b371137c88ed3e5ecfc",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "decision",
+      "path": "accepted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "run_id": "run_0a92f2a23b53fda577489d9f629b3e6b15e49e90e01259462df8ce952129fd14",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidate_ids": [
+          "candidate_585b26e302a2edd67508d93986207eca72e19df7af76c6d164a42947ec1df26e",
+          "candidate_d1f2c3e16431f188ee066afabe0d8a758d0c594e6fff59a2c320147cf90ecff3",
+          "candidate_c49f6d2edba443359e6b815184df939f3527985927a1854033909a8d261dcc10"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "active_version": "a5a533e1e7537b6ea42ed9cc23f18ccc3084fba665393497d5db0b5ef3c68470",
+      "validation": {
+        "candidate_585b26e302a2edd67508d93986207eca72e19df7af76c6d164a42947ec1df26e": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1.0,
+            "errors": 0.6,
+            "abstention_cost": 0.0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimated_serving_cost": 0.0
+        },
+        "candidate_d1f2c3e16431f188ee066afabe0d8a758d0c594e6fff59a2c320147cf90ecff3": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.8199999999999998,
+          "metrics": {
+            "utility": 0.8200000000000008,
+            "coverage": 0.4,
+            "errors": 0.0,
+            "abstention_cost": 0.18,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.18
+        },
+        "candidate_c49f6d2edba443359e6b815184df939f3527985927a1854033909a8d261dcc10": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.7,
+          "metrics": {
+            "utility": 0.7000000000000013,
+            "coverage": 0.0,
+            "errors": 0.0,
+            "abstention_cost": 0.3,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.3
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 0.4,
+        "candidate_mean": 0.82,
+        "metrics": {
+          "utility": 0.8199999999999994,
+          "coverage": 0.4,
+          "errors": 0.0,
+          "abstention_cost": 0.18,
+          "errors:access": 0.0,
+          "errors:billing": 0.0
+        },
+        "estimated_serving_cost": 0.18
+      },
+      "observations": [
+        {
+          "artifact_version": "a5a533e1e7537b6ea42ed9cc23f18ccc3084fba665393497d5db0b5ef3c68470",
+          "configuration_hash": "744cba0be913b8a5a4b9b99844824f2c6b89f8f46c1425a6c25f3933909c96fc",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "decision",
+      "path": "rejected",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "no_improvement",
+          "reason": "validation_failed"
+        }
+      ],
+      "result": {
+        "run_id": "run_cf1d9b6fd17c84eac023e9219d5ce59cc33ddc127e60fec2089e14ea10c2b6bd",
+        "state": "no_improvement",
+        "reason": "validation_failed",
+        "candidate_ids": [
+          "candidate_76ea597cc6f0dea3062c478d3725eeeae2a8ab630c9b1b6367cc0866c15e7436"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "active_version": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "validation": {
+        "candidate_76ea597cc6f0dea3062c478d3725eeeae2a8ab630c9b1b6367cc0866c15e7436": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1.0,
+            "errors": 0.6,
+            "abstention_cost": 0.0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimated_serving_cost": 0.0
+        }
+      },
+      "audit": null,
+      "observations": []
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "decision",
+      "path": "insufficient",
+      "transitions": [
+        {
+          "state": "waiting_for_evidence",
+          "reason": "insufficient_evidence"
+        }
+      ],
+      "result": {
+        "run_id": null,
+        "state": "waiting_for_evidence",
+        "reason": "insufficient_evidence",
+        "candidate_ids": [],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "active_version": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "validation": {},
+      "audit": null,
+      "observations": []
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "decision",
+      "path": "interrupted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "reconciliation_required",
+          "reason": "deployment_pending"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "run_id": "run_66f0a88ea7e869f7d7605a2ccc4c1b7ba31814a0836fff15ecfd673e2be40845",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidate_ids": [
+          "candidate_d0284df5ba8d34f3ca39ddfae531480050043054d5dcbbb0170115e10728a8d4",
+          "candidate_12050a5c8d8748ff9d6b80c0bec31ea576168630a629dff2fc3218372aedf157",
+          "candidate_89479a13b4e9171f5a20aabf764e27d40e6632e96e95aba3ed6b68b9d9b43301"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "active_version": "738deb4e17de161c36a9e4fa33a42ae765abc8b65e43cbb365193fd0f45c7820",
+      "validation": {
+        "candidate_d0284df5ba8d34f3ca39ddfae531480050043054d5dcbbb0170115e10728a8d4": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1.0,
+            "errors": 0.6,
+            "abstention_cost": 0.0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimated_serving_cost": 0.0
+        },
+        "candidate_12050a5c8d8748ff9d6b80c0bec31ea576168630a629dff2fc3218372aedf157": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.8199999999999998,
+          "metrics": {
+            "utility": 0.8200000000000008,
+            "coverage": 0.4,
+            "errors": 0.0,
+            "abstention_cost": 0.18,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.18
+        },
+        "candidate_89479a13b4e9171f5a20aabf764e27d40e6632e96e95aba3ed6b68b9d9b43301": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.7,
+          "metrics": {
+            "utility": 0.7000000000000013,
+            "coverage": 0.0,
+            "errors": 0.0,
+            "abstention_cost": 0.3,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.3
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 0.4,
+        "candidate_mean": 0.82,
+        "metrics": {
+          "utility": 0.8199999999999994,
+          "coverage": 0.4,
+          "errors": 0.0,
+          "abstention_cost": 0.18,
+          "errors:access": 0.0,
+          "errors:billing": 0.0
+        },
+        "estimated_serving_cost": 0.18
+      },
+      "observations": [
+        {
+          "artifact_version": "738deb4e17de161c36a9e4fa33a42ae765abc8b65e43cbb365193fd0f45c7820",
+          "configuration_hash": "744cba0be913b8a5a4b9b99844824f2c6b89f8f46c1425a6c25f3933909c96fc",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "decision",
+      "path": "regression",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "rolling_back",
+          "reason": "production_guardrail_failed"
+        },
+        {
+          "state": "rolled_back",
+          "reason": "previous_version_restored"
+        }
+      ],
+      "result": {
+        "run_id": "run_e04d5e731a717607f18a4a85625592f312b98c95e2048808b78fc058895f568c",
+        "state": "rolled_back",
+        "reason": "previous_version_restored",
+        "candidate_ids": [
+          "candidate_c55f74f245e97b5d6a954195ebffa263507ef4cd09e20f8642204135b1da7005",
+          "candidate_2a72406aeeaf834da496e1ed270635b50c607fd7b8477743ad6fd4821523b425",
+          "candidate_c37b1123e42346c7f70c33f8e9f21dad02b849f60bcdbae727bac5af8d367b74"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "active_version": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "validation": {
+        "candidate_c55f74f245e97b5d6a954195ebffa263507ef4cd09e20f8642204135b1da7005": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1.0,
+            "errors": 0.6,
+            "abstention_cost": 0.0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimated_serving_cost": 0.0
+        },
+        "candidate_2a72406aeeaf834da496e1ed270635b50c607fd7b8477743ad6fd4821523b425": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.8199999999999998,
+          "metrics": {
+            "utility": 0.8200000000000008,
+            "coverage": 0.4,
+            "errors": 0.0,
+            "abstention_cost": 0.18,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.18
+        },
+        "candidate_c37b1123e42346c7f70c33f8e9f21dad02b849f60bcdbae727bac5af8d367b74": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.7,
+          "metrics": {
+            "utility": 0.7000000000000013,
+            "coverage": 0.0,
+            "errors": 0.0,
+            "abstention_cost": 0.3,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.3
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 0.4,
+        "candidate_mean": 0.82,
+        "metrics": {
+          "utility": 0.8199999999999994,
+          "coverage": 0.4,
+          "errors": 0.0,
+          "abstention_cost": 0.18,
+          "errors:access": 0.0,
+          "errors:billing": 0.0
+        },
+        "estimated_serving_cost": 0.18
+      },
+      "observations": [
+        {
+          "artifact_version": "4277b7c86574c7b439cb5450b8ba64d931597b05c79d06f282472ea202a9c534",
+          "configuration_hash": "744cba0be913b8a5a4b9b99844824f2c6b89f8f46c1425a6c25f3933909c96fc",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 1.0
+          }
+        }
+      ]
+    }
+  ],
+  "optional_sklearn_version": "1.9.1",
+  "optional_sklearn": [
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "decision",
+      "path": "accepted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "run_id": "run_32f5598f52a4dd851f05a3c8d614a6a6a1c2fbdae4ff6e3a640726b65f6178c3",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidate_ids": [
+          "candidate_1d143b04eedc3fa2d9d276c1054a9a4549a92b1dac219a37bc58d2c5bf02b161",
+          "candidate_0110ace7ebf45d4e9bcdaf1108500c2d2d6b9bf9ddbff169764bf2bffbe8ad5c",
+          "candidate_09ccaf80718dbb9761648dabe0661e06a4d9fc0bb203d7e5228feae68e61d6c8"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "active_version": "657fca0f0a08673c40154936d52064f046175ae72158131fa31c149482183d24",
+      "validation": {
+        "candidate_1d143b04eedc3fa2d9d276c1054a9a4549a92b1dac219a37bc58d2c5bf02b161": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1.0,
+            "errors": 0.6,
+            "abstention_cost": 0.0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimated_serving_cost": 0.0
+        },
+        "candidate_0110ace7ebf45d4e9bcdaf1108500c2d2d6b9bf9ddbff169764bf2bffbe8ad5c": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.8199999999999998,
+          "metrics": {
+            "utility": 0.8200000000000008,
+            "coverage": 0.4,
+            "errors": 0.0,
+            "abstention_cost": 0.18,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.18
+        },
+        "candidate_09ccaf80718dbb9761648dabe0661e06a4d9fc0bb203d7e5228feae68e61d6c8": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.7,
+          "metrics": {
+            "utility": 0.7000000000000013,
+            "coverage": 0.0,
+            "errors": 0.0,
+            "abstention_cost": 0.3,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.3
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 0.4,
+        "candidate_mean": 0.82,
+        "metrics": {
+          "utility": 0.8199999999999994,
+          "coverage": 0.4,
+          "errors": 0.0,
+          "abstention_cost": 0.18,
+          "errors:access": 0.0,
+          "errors:billing": 0.0
+        },
+        "estimated_serving_cost": 0.18
+      },
+      "observations": [
+        {
+          "artifact_version": "657fca0f0a08673c40154936d52064f046175ae72158131fa31c149482183d24",
+          "configuration_hash": "ede7cdf0576de84cc1ffaf6f16b61cd48621b7c15ca2f92da037cf68bb266523",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0.0
+          }
+        }
+      ],
+      "classifier": "scikit-learn LogisticRegression; fitted before the cycle",
+      "model_fingerprint_before": "f1631dc689089b880ebff62b8c28e47273d08bb3bfb33698666876ccc0fd652a",
+      "model_fingerprint_after": "f1631dc689089b880ebff62b8c28e47273d08bb3bfb33698666876ccc0fd652a",
+      "data": "SYNTHETIC shifted inputs and labels; not measured customer performance"
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "decision",
+      "path": "rejected",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "no_improvement",
+          "reason": "validation_failed"
+        }
+      ],
+      "result": {
+        "run_id": "run_416cb6d062d6f34d05961c6d977f3feb5c68ff893ee311e470c28c63454a72ba",
+        "state": "no_improvement",
+        "reason": "validation_failed",
+        "candidate_ids": [
+          "candidate_097550f6d076a2fc4e05ce57930b2de36b7c4ba2ceb0c68f6f5a1133cabc0754"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "active_version": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "validation": {
+        "candidate_097550f6d076a2fc4e05ce57930b2de36b7c4ba2ceb0c68f6f5a1133cabc0754": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1.0,
+            "errors": 0.6,
+            "abstention_cost": 0.0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimated_serving_cost": 0.0
+        }
+      },
+      "audit": null,
+      "observations": [],
+      "classifier": "scikit-learn LogisticRegression; fitted before the cycle",
+      "model_fingerprint_before": "f1631dc689089b880ebff62b8c28e47273d08bb3bfb33698666876ccc0fd652a",
+      "model_fingerprint_after": "f1631dc689089b880ebff62b8c28e47273d08bb3bfb33698666876ccc0fd652a",
+      "data": "SYNTHETIC shifted inputs and labels; not measured customer performance"
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "decision",
+      "path": "insufficient",
+      "transitions": [
+        {
+          "state": "waiting_for_evidence",
+          "reason": "insufficient_evidence"
+        }
+      ],
+      "result": {
+        "run_id": null,
+        "state": "waiting_for_evidence",
+        "reason": "insufficient_evidence",
+        "candidate_ids": [],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "active_version": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "validation": {},
+      "audit": null,
+      "observations": [],
+      "classifier": "scikit-learn LogisticRegression; fitted before the cycle",
+      "model_fingerprint_before": "f1631dc689089b880ebff62b8c28e47273d08bb3bfb33698666876ccc0fd652a",
+      "model_fingerprint_after": "f1631dc689089b880ebff62b8c28e47273d08bb3bfb33698666876ccc0fd652a",
+      "data": "SYNTHETIC shifted inputs and labels; not measured customer performance"
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "decision",
+      "path": "interrupted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "reconciliation_required",
+          "reason": "deployment_pending"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "run_id": "run_bf188de26aa4cd802cfd15c11c3e92c099b340edd5bb6637805dc6cb66e35755",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidate_ids": [
+          "candidate_d89e9e6561686a826235fe2f36af26ad2fb9c2696d7d767439e056b2b437ec8e",
+          "candidate_7f48befc6a1e72c27f418171949bfb57afb75bddf8806b146f8f5404281a833d",
+          "candidate_a7d74541f33dbd78c8a4f14cdca586f5772cb98f7a78f1c7f214fdbc88f1eb16"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "active_version": "b712d476642070c2aa1b1ba1bb95f597b2635b9dd24e64080ff5312733b0d4f7",
+      "validation": {
+        "candidate_d89e9e6561686a826235fe2f36af26ad2fb9c2696d7d767439e056b2b437ec8e": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1.0,
+            "errors": 0.6,
+            "abstention_cost": 0.0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimated_serving_cost": 0.0
+        },
+        "candidate_7f48befc6a1e72c27f418171949bfb57afb75bddf8806b146f8f5404281a833d": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.8199999999999998,
+          "metrics": {
+            "utility": 0.8200000000000008,
+            "coverage": 0.4,
+            "errors": 0.0,
+            "abstention_cost": 0.18,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.18
+        },
+        "candidate_a7d74541f33dbd78c8a4f14cdca586f5772cb98f7a78f1c7f214fdbc88f1eb16": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.7,
+          "metrics": {
+            "utility": 0.7000000000000013,
+            "coverage": 0.0,
+            "errors": 0.0,
+            "abstention_cost": 0.3,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.3
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 0.4,
+        "candidate_mean": 0.82,
+        "metrics": {
+          "utility": 0.8199999999999994,
+          "coverage": 0.4,
+          "errors": 0.0,
+          "abstention_cost": 0.18,
+          "errors:access": 0.0,
+          "errors:billing": 0.0
+        },
+        "estimated_serving_cost": 0.18
+      },
+      "observations": [
+        {
+          "artifact_version": "b712d476642070c2aa1b1ba1bb95f597b2635b9dd24e64080ff5312733b0d4f7",
+          "configuration_hash": "ede7cdf0576de84cc1ffaf6f16b61cd48621b7c15ca2f92da037cf68bb266523",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0.0
+          }
+        }
+      ],
+      "classifier": "scikit-learn LogisticRegression; fitted before the cycle",
+      "model_fingerprint_before": "f1631dc689089b880ebff62b8c28e47273d08bb3bfb33698666876ccc0fd652a",
+      "model_fingerprint_after": "f1631dc689089b880ebff62b8c28e47273d08bb3bfb33698666876ccc0fd652a",
+      "data": "SYNTHETIC shifted inputs and labels; not measured customer performance"
+    },
+    {
+      "evidence": "SIMULATED / isolated in-memory application",
+      "kind": "decision",
+      "path": "regression",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "rolling_back",
+          "reason": "production_guardrail_failed"
+        },
+        {
+          "state": "rolled_back",
+          "reason": "previous_version_restored"
+        }
+      ],
+      "result": {
+        "run_id": "run_0d1633ab4e1aa0481e7358a4484780a9a6b2645dadf09a83f70ad02146e34a08",
+        "state": "rolled_back",
+        "reason": "previous_version_restored",
+        "candidate_ids": [
+          "candidate_f93aa792b5e9caa812061d6b6f69e3ae5ef25c888cf9cd1602ccab6962cd8034",
+          "candidate_2f626cf2ca4a8d201720fed2cde1114db7531e2c5cdd718ff4551d1859e681b0",
+          "candidate_5e3d91b602910bfdce38ca5e7244d35d5b5fa2e5c3c4532da2c91873d7d22c74"
+        ],
+        "budget": {
+          "model_requests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "active_version": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "validation": {
+        "candidate_f93aa792b5e9caa812061d6b6f69e3ae5ef25c888cf9cd1602ccab6962cd8034": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1.0,
+            "errors": 0.6,
+            "abstention_cost": 0.0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimated_serving_cost": 0.0
+        },
+        "candidate_2f626cf2ca4a8d201720fed2cde1114db7531e2c5cdd718ff4551d1859e681b0": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.8199999999999998,
+          "metrics": {
+            "utility": 0.8200000000000008,
+            "coverage": 0.4,
+            "errors": 0.0,
+            "abstention_cost": 0.18,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.18
+        },
+        "candidate_5e3d91b602910bfdce38ca5e7244d35d5b5fa2e5c3c4532da2c91873d7d22c74": {
+          "sample_count": 100,
+          "baseline_mean": 0.4,
+          "candidate_mean": 0.7,
+          "metrics": {
+            "utility": 0.7000000000000013,
+            "coverage": 0.0,
+            "errors": 0.0,
+            "abstention_cost": 0.3,
+            "errors:access": 0.0,
+            "errors:billing": 0.0
+          },
+          "estimated_serving_cost": 0.3
+        }
+      },
+      "audit": {
+        "sample_count": 200,
+        "baseline_mean": 0.4,
+        "candidate_mean": 0.82,
+        "metrics": {
+          "utility": 0.8199999999999994,
+          "coverage": 0.4,
+          "errors": 0.0,
+          "abstention_cost": 0.18,
+          "errors:access": 0.0,
+          "errors:billing": 0.0
+        },
+        "estimated_serving_cost": 0.18
+      },
+      "observations": [
+        {
+          "artifact_version": "e57a17e18797fbb7339b0258cb752edc0068c9acd0864cc69fd82a81c52f310e",
+          "configuration_hash": "ede7cdf0576de84cc1ffaf6f16b61cd48621b7c15ca2f92da037cf68bb266523",
+          "started_at": "2026-05-01T00:00:00Z",
+          "ended_at": "2026-05-01T02:00:00Z",
+          "complete": true,
+          "unit_ids": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 1.0
+          }
+        }
+      ],
+      "classifier": "scikit-learn LogisticRegression; fitted before the cycle",
+      "model_fingerprint_before": "f1631dc689089b880ebff62b8c28e47273d08bb3bfb33698666876ccc0fd652a",
+      "model_fingerprint_after": "f1631dc689089b880ebff62b8c28e47273d08bb3bfb33698666876ccc0fd652a",
+      "data": "SYNTHETIC shifted inputs and labels; not measured customer performance"
+    }
+  ]
+}

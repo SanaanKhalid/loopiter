@@ -1,0 +1,184 @@
+{
+  "generatedAt": "2026-09-19T16:13:06.608Z",
+  "release": "0.3.0-alpha.1",
+  "evidence": "LIVE Azure inference; authored synthetic labels; isolated local PostgreSQL serving registry; real wall clock",
+  "deployment": "gpt-4o",
+  "endpointHost": "sanaa-mivj3t3c-eastus2.openai.azure.com",
+  "database": "loopiter_live_f41c158df06640c6962131b9c844dc64",
+  "limits": {
+    "requests": 29,
+    "tokens": 104000,
+    "reservation": 16000,
+    "outputTokens": 1200,
+    "inputBytes": 12000
+  },
+  "requests": [
+    {
+      "ordinal": 1,
+      "stage": "baseline-corrections",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 385,
+      "outputTokens": 115,
+      "model": "gpt-4o",
+      "latencyMs": 1657.781125
+    }
+  ],
+  "transitions": [
+    {
+      "at": "2026-09-19T16:13:09.566Z",
+      "runId": null,
+      "state": "waiting_for_evidence",
+      "reason": "insufficient_evidence",
+      "candidateIds": [],
+      "budget": {
+        "modelRequests": 0,
+        "tokens": 0,
+        "deployments": 0
+      }
+    }
+  ],
+  "authentication": "Azure CLI existing resource key, held in memory",
+  "priorAttempt": "autonomy-live-azure-2026-09-19.json (HTTP 401, reservation retained)",
+  "limitations": [
+    "Deliberately weak baseline; not a claim about improving an already optimized model.",
+    "Synthetic template-derived data is not a representative independent customer sample; bound arithmetic is not calibrated production confidence.",
+    "Observation uses fresh live predictions with synthetic ground truth, not real customer traffic.",
+    "Lost deployment receipt is injected; recovery behavior is real.",
+    "No publication, Azure resource provisioning or production enablement."
+  ],
+  "baseline": {
+    "version": "cfbd4f9d86ff768480fb1bc9f68e4c7ad24515523b4dd780add7fbea3645ed41",
+    "configurationHash": "195fd1cf5239090b4d22d369226ea9aa39524989d8ad72daaf2c593cb86d30b3",
+    "artifact": {
+      "fragment": "For every request return other. This is an intentionally incomplete fallback rule."
+    }
+  },
+  "datasets": {
+    "hashes": {
+      "optimization": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "validation": "414a9b6be1671748576ef795d8f2daea82a5a9d75fe8d384e4547ab125231ecc",
+      "audit": "7af44d1981d83eec9ba81ee60f118a432b06e25b8cacb814df27d20b1a07803c",
+      "observation": "a83627a387f5278bcdb8cb7ee98d4e9334d47d89ab0136867f335e89eccd7558"
+    },
+    "counts": {
+      "corrections": 0,
+      "validation": 18,
+      "audit": 60,
+      "observation": 9
+    }
+  },
+  "policy": {
+    "version": "isolated-live-v1",
+    "target": {
+      "kind": "prompt",
+      "key": "isolated-support-classifier"
+    },
+    "changeSchema": {
+      "type": "object",
+      "properties": {
+        "fragment": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "fragment"
+      ],
+      "additionalProperties": false
+    },
+    "objective": {
+      "metric": "accuracy",
+      "direction": "maximize",
+      "minimumImprovement": 0.05,
+      "range": [
+        0,
+        1
+      ],
+      "alpha": 0.05
+    },
+    "guardrails": [
+      {
+        "metric": "accuracy_billing",
+        "comparator": "gte",
+        "value": 0.8
+      },
+      {
+        "metric": "accuracy_access",
+        "comparator": "gte",
+        "value": 0.8
+      },
+      {
+        "metric": "accuracy_other",
+        "comparator": "gte",
+        "value": 0.8
+      }
+    ],
+    "trustedSources": [
+      "synthetic-authored"
+    ],
+    "minimumNewUnits": 3,
+    "minimumValidationUnits": 18,
+    "minimumAuditUnits": 60,
+    "outcomeMaturityMs": 0,
+    "maximumRows": 100,
+    "daily": {
+      "modelRequests": 29,
+      "tokens": 104000,
+      "deployments": 1
+    },
+    "callbackReservation": {
+      "modelRequests": 10,
+      "tokens": 160000
+    },
+    "cooldownMs": 60000,
+    "maximumCandidates": 1,
+    "maximumProposalCalls": 1,
+    "rollout": {
+      "mode": "immediate"
+    },
+    "observation": {
+      "minimumDurationMs": 1000,
+      "timeoutMs": 120000,
+      "minimumUnits": 9,
+      "guardrails": [
+        {
+          "metric": "accuracy",
+          "comparator": "gte",
+          "value": 0.8
+        }
+      ],
+      "onTimeout": "rollback",
+      "onFailure": "rollback"
+    },
+    "onInsufficientEvidence": "wait",
+    "onUncertainDeployment": "reconcile"
+  },
+  "finalArtifact": {
+    "version": "cfbd4f9d86ff768480fb1bc9f68e4c7ad24515523b4dd780add7fbea3645ed41",
+    "configurationHash": "195fd1cf5239090b4d22d369226ea9aa39524989d8ad72daaf2c593cb86d30b3",
+    "artifact": {
+      "fragment": "For every request return other. This is an intentionally incomplete fallback rule."
+    }
+  },
+  "observations": [],
+  "attempts": [],
+  "result": {
+    "at": "2026-09-19T16:13:09.566Z",
+    "runId": null,
+    "state": "waiting_for_evidence",
+    "reason": "insufficient_evidence",
+    "candidateIds": [],
+    "budget": {
+      "modelRequests": 0,
+      "tokens": 0,
+      "deployments": 0
+    }
+  },
+  "usage": {
+    "requests": 1,
+    "actualOrReservedTokens": 500,
+    "dollarCost": null,
+    "priceNote": "Azure billing is authoritative; no dollar cost invented."
+  }
+}

@@ -1,0 +1,264 @@
+---
+title: Opt-in autonomous improvement
+---
+
+This describes the **0.3 alpha**, not a production-enablement notice.
+An isolated Azure live demonstration is retained in the repository; publication and
+production enablement remain separate release actions.
+Autonomy means unattended changes inside your policy—not permission to change that policy.
+The core has no runtime dependencies, telemetry, daemon, hosted scheduler or agent runtime.
+
+## Modes and the explicit flag
+
+| Mode | Behavior |
+| --- | --- |
+| `observe` | Inspect eligible evidence without proposing changes |
+| `recommend` (default) | Store bounded proposals, without approval or deployment |
+| `experiment` | Compare candidates, select one and independently audit it; no deployment |
+| `autonomous` | With the explicit flag and complete policy: approve, apply, observe, retain or roll back |
+
+Setting the flag alone does nothing. The application calls `tick` repeatedly. The old
+`apply` / `experimentalAutoApply` authorization path is rejected, even when the old flag
+is false. Legacy approvals never authorize fresh autonomous cycles.
+
+<Tabs>
+  <Tab title="Node.js">
+
+```typescript
+import { FeedbackLoop, ImprovementController, type ImprovementWorkflow } from "loopiter";
+
+// Application supplies a fully configured workflow, including policy and adapters.
+export function attachAutonomy(loop: FeedbackLoop, workflow: ImprovementWorkflow) {
+  return new ImprovementController(loop, {
+    selfImproving: true, mode: "autonomous", workflows: [workflow],
+  });
+}
+export async function scheduledTick(controller: ImprovementController, workflowId: string) {
+  return controller.tick(workflowId, AbortSignal.timeout(600_000));
+}
+```
+
+  </Tab>
+  <Tab title="Python">
+
+```python
+from loopiter import FeedbackLoop, ImprovementController, ImprovementWorkflow
+
+def attach_autonomy(loop: FeedbackLoop, workflow: ImprovementWorkflow):
+    return ImprovementController(
+        loop, workflows=[workflow], self_improving=True, mode="autonomous"
+    )
+
+async def scheduled_tick(controller: ImprovementController, workflow_id: str):
+    return await controller.tick(workflow_id)
+```
+
+  </Tab>
+</Tabs>
+
+Omit both options for recommendations. Select `experiment` for evaluation without
+deployment. Python names use snake_case; Node names use camelCase.
+
+## Workflow and policy configuration
+
+A workflow supplies ID/version, optimizer/evaluator versions, and dataset, artifact,
+proposer, evaluator, deployment and observation adapters. Policy and evaluator code
+are trusted application configuration, not generated content.
+
+| Area | Explicit settings |
+| --- | --- |
+| Target | Exact `prompt` or `routing` kind **and key** |
+| Schema | Permitted fields, required fields, `additionalProperties: false`, model/route enums and threshold bounds |
+| Objective | Metric, direction, bounded range, minimum improvement and audit alpha |
+| Guardrails | Independent quality, latency, cost, coverage and configured class/segment constraints |
+| Evidence | Trusted sources, new units, validation/audit sample counts, maturity and query limits |
+| Budgets | Daily requests/tokens/deployments and per-callback request/token envelope |
+| Rollout | Immediate or canary, cooldown, minimum observation duration/samples and timeout |
+| Failure | Wait for evidence, reconcile uncertain changes, roll back observation failure/timeout |
+
+Supported change-schema keywords: type (object/string/number/boolean), properties,
+required, additionalProperties, enum, minimum, maximum and maxLength. Unknown keywords
+fail closed. Strings require a length bound or enum; numbers require a range or enum.
+This is a bounded subset, not a full JSON Schema implementation.
+
+Defaults cap each cycle at three proposal calls and three candidates. Two-minute
+callback and ten-minute tick deadlines may be shortened. Daily ceilings and domain
+thresholds have no unlimited fallback. Simulation configurations are **examples, not
+universal safe settings**.
+
+## Evidence and independent evaluation
+
+The dataset adapter selects a relevant failure segment/optimization opportunity and
+returns versioned optimization, validation and audit partitions. Rows contain ID,
+episode, entity, execution/outcome timestamps, trusted source, input and label. The
+application must authenticate label provenance before assigning a trusted source ID.
+
+The SDK excludes untrusted or immature outcomes, quarantines contradictory episode
+labels, deduplicates episodes and conservatively counts at most one unit per entity.
+Partitions must be disjoint by row/episode/entity and strictly time-separated. Oversized
+queries fail instead of silently truncating evidence. New customer-generated IDs work;
+the controller does not restrict corrections to bundled fixtures.
+
+Only optimization examples reach the proposer. All candidates use one frozen baseline.
+Validation ranks passing candidates by the primary objective, then serving cost, then
+stable ID. Only the winner sees the audit set. Audit row/episode/entity identities are
+consumed durably before exposure. Later cycles need fresh audit evidence. Fixed
+regression cases can be reused, but are not fresh evidence of improvement.
+
+Return one bounded baseline/candidate score per independent unit, separate guardrail
+metrics and explicit serving cost. Missing usage is not free. Unrelated measurements
+such as accuracy and latency are never combined into an implicit average.
+
+The built-in audit uses a fixed-sample one-sided paired Hoeffding bound. Its lower
+improvement bound must strictly exceed the configured minimum. Independence, bounded
+scores, a frozen audit set and a predeclared objective are assumptions—not guarantees
+created by the formula. Custom methods require an explicit versioned `auditMethod` /
+`audit_method` policy and matching evaluator uncertainty report with valid assumptions.
+The SDK checks identity, finite bounds and consistency, not the statistical implementation.
+Do not claim calibration for correlated or adaptively selected samples.
+
+## Durable state and spending
+
+Phases are proposing → evaluating → selected → deploying → observing → completed.
+Alternate results include waiting, no improvement, paused, failed, reconciliation
+required, rolling back and rolled back. `getRun` / `get_run` exposes durable evidence,
+decisions and references; `listRuns` / `list_runs` provides paginated history.
+Run inspection also returns accounting: model requests, charged-or-still-reserved tokens,
+deployment attempts and outstanding callback operation IDs. Unknown usage stays visible;
+it is not treated as a zero-cost result. Callbacks receive immutable configuration identities.
+
+Tick results contain run ID, state, reason, candidate IDs, budget usage and optional next
+eligible time—not a cycle-wide success boolean. Forward lifecycle events to your logger.
+Deployment success and observed acceptance have different reasons.
+
+Short transactions use revisions and expiring leases. Model, evaluation, deployment and
+observation calls run outside database transactions. Late results cannot advance an
+obsolete lease. Database locking does not replace external adapter fencing.
+
+Decision keys bind workflow/configuration, baseline and evidence. Failed/inconclusive
+work is remembered: identical inputs do not repeatedly buy proposal/evaluation calls.
+Three consecutive unsuccessful cycles stop proposals by default; configure
+`maximumConsecutiveFailures` / `maximum_consecutive_failures` explicitly if needed.
+Administrative resume records an event and resets that stop, not budgets, evidence
+deduplication, consumed audits or unresolved operations. Proposers get a bounded history
+of terminal reasons, not previous audit examples.
+
+Meter every model request through callback context `meter(maximumTokens, call)`.
+Reserve a defensible upper bound before dispatch; reconcile actual usage afterward.
+Unknown usage/completion retains the reservation. Reported overages are charged and the
+result rejected. Ambiguous optimizer/evaluator calls are not automatically replayed.
+
+**Callbacks are cooperative, not sandboxed.** Undisclosed calls can bypass accounting.
+Use provider quotas and least-privilege credentials. Cancellation cannot retract a sent
+request or forcibly stop arbitrary code. Keep workers on one authoritative configuration;
+a later tick changing authorization invalidates earlier callback results.
+
+## Deployment and observation
+
+Immediately before apply, the actual artifact/configuration must match the evaluated
+baseline. Persist a stable attempt, apply externally, then atomically finalize the
+receipt and active pointer. Uncertain results block the target and use inspection,
+never blind replay. The adapter must atomically compare the expected version and
+relevant configuration fingerprint in its serving infrastructure.
+The artifact version identifies editable content; configurationHash/configuration_hash
+identifies the **pinned execution context** (model versions, label/safety definitions,
+feature processing), excluding that editable content. It must remain unchanged through
+the cycle, including immediately after apply. Report actual context, not a stale constant
+if your serving configuration can change independently.
+
+Immediate mode freezes further changes while version-specific outcomes mature. Reports
+identify artifact/configuration, time window, unique mature units, completeness and
+finite metrics. The observation adapter verifies attribution and maturity. Missing data
+is not success. Both sample and duration requirements must pass. Configured failure or
+timeout causes rollback; unrelated out-of-band changes block instead of being overwritten.
+
+Without a concurrent control, completion means **passed offline evaluation and production
+observation**, not proven causal production improvement.
+
+## Optional canary coordination
+
+Your application owns durable exposure, stable episode/entity assignment and traffic
+routing. `assignCohort` / `assign_cohort` is a deterministic bucket helper, not a router.
+Persist assignments and exposure with executions. Supply rollout promote/inspect in
+addition to deployment apply/inspect/rollback. Apply stages the candidate; rollback
+withdraws it. Promotion retains artifact/model identity.
+
+Observation requires disjoint mature candidate/control units, control baseline version,
+assignment fingerprint and a trusted predeclared improvement bound. The assignment
+fingerprint must stay stable across reports; changing it blocks progress. Ambiguous promotion
+is inspected before any further change. Fenced failed promotion withdraws the candidate,
+rather than retrying it. Never run Node and Python controllers against the same target.
+
+## Scheduling, pause and recovery
+
+Call `tick` from your queue, cron or event handler and honor next eligible time. Loopiter
+starts no daemon. `pause(workflowId, reason)` and flag disablement block new changes;
+inspection and authorized rollback remain available. Neither undoes an already dispatched
+operation. `resume(workflowId)` is an administrative action.
+Separate manual apply calls also respect the target's outstanding cycle. A reviewed rollback
+through the core remains available; the next tick verifies its receipt against actual serving
+state before marking the cycle rolled back. Out-of-band changes without that lineage stay blocked.
+
+A policy change during an active cycle blocks advancement until the application resolves
+which original configuration governs recovery. Route repeated failures, exhausted budgets
+and permission blockers to an explicitly configured operator channel. The SDK never
+searches for credentials, contacts or additional permissions to bypass blockers.
+
+## Three runnable offline workflows
+
+From a source checkout, without model credentials:
+
+```bash
+npm ci
+npm run build
+node dist/examples/autonomous/demo.js prompt accepted
+node dist/examples/autonomous/demo.js models interrupted
+node dist/examples/autonomous/demo.js decision regression
+python -m pip install -e ./python
+python python/examples/autonomous_demo.py prompt accepted
+python python/examples/autonomous_demo.py models rejected
+python python/examples/autonomous_demo.py decision insufficient
+```
+
+Each kind supports accepted, rejected, insufficient, interrupted and regression paths.
+Reports are explicitly **SIMULATED**; metrics come from deterministic predictions rather
+than hard-coded improvements. They do not demonstrate a live model.
+
+Application factories live in `examples/autonomous/workflows.ts` and
+`python/examples/autonomous_workflows.py`. The decision workflow keeps classifier weights
+fixed and charges abstention cost while enforcing coverage/error constraints. The optional
+Python scikit-learn bridge accepts an already-fitted linear classifier and verifies its
+weights/features; it does not load untrusted pickle files or train during a cycle.
+
+For the complete optional scikit-learn example, install it separately and run:
+
+```bash
+python -m pip install 'scikit-learn>=1.6,<2'
+python python/examples/sklearn_decision_demo.py accepted
+python python/examples/sklearn_decision_demo.py regression
+```
+
+This application fits a tiny synthetic setup model **before** the cycle and then freezes
+its weights and feature mapping. It measures real classifier predictions on synthetic
+data, reports before/after fingerprints, and supports all five offline paths. This is
+not automatic model training or evidence of better real-world customer performance.
+
+Optional OpenAI/Azure wrappers stay outside core. Explicitly configure live mode,
+model/deployment, credentials, input/output limits, token reservations and token prices.
+Inputs are sent to that provider. Refusals and malformed/incomplete outputs fail closed;
+see [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+Python's stdlib HTTP call runs in a worker thread; cancellation cannot stop a dispatched
+request, so its unknown usage remains reserved.
+
+## Release evidence
+
+Run inspection includes the exact `auditEvaluationId` / `audit_evaluation_id` that
+authorized the selected candidate. A separate human evaluation cannot silently replace
+it during autonomous approval or deployment; conflicting review work is preserved.
+
+The repository's `reports/autonomy-live-azure-summary.md` records an explicitly enabled
+Node/Azure proposal → independent evaluation → isolated PostgreSQL deployment → observation
+cycle, including injected lost-receipt recovery. Its labels and workload were synthetic,
+the baseline deliberately stale, and observation brief: this is not causal customer-impact
+evidence or a live Python verification. Earlier authentication failure and no-change results
+are retained too. Publication and production enablement remain separate actions.

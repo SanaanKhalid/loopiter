@@ -1,6 +1,6 @@
 {
   "name": "loopiter",
-  "version": "0.2.0-alpha.1",
+  "version": "0.3.0-alpha.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -39,6 +39,8 @@
     "SECURITY.md",
     "SUPPORTED.md",
     "docs/migration.md",
+    "docs/autonomy-migration.md",
+    "docs/autonomy-release-checklist.md",
     "migrations"
   ],
   "scripts": {
@@ -46,6 +48,7 @@
     "prepack": "npm run build",
     "starter": "npm run build && node dist/examples/prompt-improvement/cli.js",
     "test:postgres": "npm run build && node --test dist/test/postgres.test.js",
+    "test:mock-support": "npm run build && node scripts/mock-support.mjs",
     "test:package": "node scripts/package-smoke.mjs",
     "test:docs": "node scripts/check-docs.mjs",
     "test:fern": "node scripts/check-fern.mjs",

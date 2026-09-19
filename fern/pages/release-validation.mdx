@@ -1,0 +1,76 @@
+---
+title: Release validation
+---
+
+## 0.3 opt-in autonomous alpha
+
+Node.js: `npm install loopiter@0.3.0-alpha.1` (or `loopiter@alpha`).
+Python: `python -m pip install 'loopiter==0.3.0a1'`.
+Both cores remain dependency-free and send no telemetry. Read the
+[migration guide](/operate/migrating-to-0-3) before upgrading existing storage.
+
+Autonomy requires `selfImproving: true` in Node.js or `self_improving=True` in Python,
+`mode: autonomous`, a complete exact-target policy and application adapters. The flag
+alone does not schedule work. The application repeatedly calls `tick`.
+Start with [the complete policy guide](/closing-the-loop/opt-in-autonomous-improvement).
+
+## Mock support application
+
+The repository includes a localhost HTTP support application with real PostgreSQL,
+captured ticket predictions and reviewer corrections, independent worker processes,
+and a versioned router that the application actually uses for subsequent requests.
+
+| Scenario | Asserted result |
+| --- | --- |
+| Useful routing correction | Independently audited, deployed, observed and retained |
+| Injected post-deployment regression | Automatically restored the predecessor |
+| No valid improvement | No deployment or repeated calls for unchanged evidence |
+| Production labels never arrive | Observation timed out and restored the predecessor |
+
+Additional checks cover duplicate deliveries, contradictory-label quarantine, disabled
+autonomy, unauthorized corrections, concurrent ticks, process restarts, delayed outcomes,
+and inspect-only recovery after a lost deployment response.
+
+Run it from a repository checkout using Node 22/24 and a disposable PostgreSQL database:
+
+```bash
+export LOOPITER_TEST_DATABASE_URL='postgresql://USER:PASSWORD@localhost:5432/loopiter_test'
+npm ci
+npm run test:mock-support
+```
+
+The command explicitly applies migrations, uses random test namespaces and removes
+those namespaces afterward. It makes no live model calls. Both local Node 22 and 24
+runs passed with PostgreSQL 17; CI includes PostgreSQL 16/17.
+
+**The tickets, labels, keyword model, optimizer and clock are simulated.** Repeated
+templates are correlated; the measured audit bound is not calibrated evidence of
+customer accuracy. This lab tests Node application integration, not a Python HTTP
+application or production traffic canary. Python has separate controller/parity tests.
+
+See [the retained mock report](https://github.com/SanaanKhalid/loopiter/blob/main/reports/mock-support-summary.md)
+and [the runnable lab guide](https://github.com/SanaanKhalid/loopiter/blob/main/examples/autonomous/MOCK-SUPPORT.md).
+
+## Separate live Azure demonstration
+
+An explicitly enabled Node/Azure run used an existing `gpt-4o` deployment to propose
+a prompt revision, independently evaluate it, deploy to an isolated PostgreSQL registry,
+recover an injected lost receipt and classify subsequent inputs using the new artifact.
+The successful run used 15 requests and 9,648 reported tokens. Synthetic audit accuracy
+changed from 20/60 to 60/60; subsequent observation was 9/9.
+
+The labels were authored, the baseline deliberately stale, and observation brief.
+These are **not real customer-impact results**, a live Python verification, or a live
+rollback demonstration. Earlier authentication failure and no-change outcomes are
+retained in [the full Azure report](https://github.com/SanaanKhalid/loopiter/blob/main/reports/autonomy-live-azure-summary.md).
+
+## What alpha does not promise
+
+No universal improvement guarantee, model-weight training, arbitrary code editing,
+agent spawning, hosted scheduler or automatic infrastructure scaling. Immediate
+observation without a concurrent control cannot establish causal production improvement.
+External adapters must enforce fencing, truthful usage and outcome attribution.
+Callbacks are cooperative application code, not sandboxed processes.
+
+Use isolated targets first, monitor blocked states and receipts, and retain the ability
+to pause, reconcile and roll back. Installing this release does not enable production autonomy.

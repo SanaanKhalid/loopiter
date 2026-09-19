@@ -1,7 +1,7 @@
 # Publishing the Python alpha
 
-The Python package is `loopiter`; its PEP 440 version is `0.2.0a1`. It is distinct
-from the npm `0.2.0-alpha.1` artifact. Never publish from a dirty developer checkout
+The Python package is `loopiter`; its PEP 440 version is `0.3.0a1`. It is distinct
+from the npm `0.3.0-alpha.1` artifact. Never publish from a dirty developer checkout
 or assume that owning an npm name gives access to the corresponding PyPI name.
 
 ## One-time trust
@@ -44,7 +44,8 @@ does not allow replacing an uploaded file; do not delete a release to overwrite 
 For a defective release, assess yanking it and issue a new version after review.
 
 No Python live-model run is claimed: the Python example is explicitly simulated.
-The controller and OpenAI/Azure starter remain Node-only. Release automation is
+Both SDKs include controllers and optional provider examples; the retained live demonstration
+and original reviewed classification CLI are Node-only. Release automation is
 maintainer infrastructure, not a runtime service or dependency of either SDK.
 
 References: [PyPI project creation with OIDC](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)

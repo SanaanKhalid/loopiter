@@ -58,6 +58,18 @@ export async function runStoreConformance(
       ),
     );
     results.push("write isolation");
+    for(const kind of ['runs','operations','budgets','observations','coordination'] as const){
+      const row={id:'controller',namespace,revision:1,createdAt:loop.now(),updatedAt:loop.now(),format:1 as const,data:{value:1,modelRequests:0,tokens:0,deployments:0}};
+      await store.transaction(namespace,tx=>tx.insert(kind,row));
+      assert.equal((await loop.list(kind)).items.length,1);
+      assert.equal((await second.list(kind)).items.length,0);
+      if(kind==='observations')await assert.rejects(store.transaction(namespace,tx=>tx.replace(kind,{...row,revision:2},1)));
+      else {
+        const updates=await Promise.allSettled([1,2].map(value=>store.transaction(namespace,tx=>tx.replace(kind,{...row,revision:2,data:{...row.data,value}},1))));
+        assert.equal(updates.filter(r=>r.status==='fulfilled').length,1);
+      }
+    }
+    results.push('autonomy collections, revisions and immutable observations');
     await loop.deleteNamespace(namespace);
     assert.equal(await loop.getExecution("a"), undefined);
     assert.ok(await second.getExecution("a"));

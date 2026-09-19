@@ -1,4 +1,4 @@
-"""Python store contract v1. Namespace-serializable, atomic, short transactions."""
+"""Python store contract v2. Namespace-serializable, atomic, short transactions."""
 
 import asyncio
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -102,7 +102,7 @@ class MemoryTransaction:
         self.check(collection)
         stored(collection, record, self.namespace)
         integer(expected_revision, "expected_revision")
-        if collection in ("signals", "events"):
+        if collection in ("signals", "events", "observations"):
             fail("immutable_record", "Collection is insert-only.")
         previous = self.state.get(collection, {}).get(record["id"])
         if (
@@ -117,7 +117,7 @@ class MemoryTransaction:
 class InMemoryStore:
     """Development only. One asyncio event loop; no multi-process durability."""
 
-    version = 1
+    version = 2
 
     def __init__(self) -> None:
         self._state: Record = {}

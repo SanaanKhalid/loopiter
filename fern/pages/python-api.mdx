@@ -2,7 +2,7 @@
 title: Python API
 ---
 
-Reference for the native async **Python `0.2.0a1`** SDK. It is not a Python wrapper
+Reference for the native async **Python `0.3.0a1`** SDK. It is not a Python wrapper
 around Node.js. Use [the Python quickstart](/get-started/python-quickstart) for
 installation, database setup and deployment recovery, and
 [the examples](/get-started/python-examples) for a complete runnable loop.
@@ -154,14 +154,17 @@ results are discarded and uncertain external outcomes must be reconciled.
 ## Other exports and language boundaries
 
 - `fingerprint(json_value)` computes a stable fingerprint for versioned identities.
-- `FeedbackStore` and `StoreTransaction` describe the Python v1 adapter protocol.
+- `FeedbackStore` and `StoreTransaction` describe the Python v2 adapter protocol in 0.3.
 - `loopiter.postgres.PostgresStore(pool)` accepts your psycopg async pool.
 - `loopiter.postgres.migration_sql()` returns packaged SQL; construction never migrates.
 - `loopiter.testing.run_store_conformance(store)` tests an adapter using disposable,
   randomly named namespaces. Use a test database, not a production connection.
 
-Python does not yet ship the Node controller, unattended auto-apply,
-JsonFileStore/legacy-import CLI or OpenAI/Azure classification starter. The SDKs
+The 0.3 alpha adds native `ImprovementController`, `ImprovementWorkflow`,
+`CallbackContext`, evidence helpers and `assign_cohort`. See
+[Python autonomy](/get-started/autonomous-improvement-in-python).
+Provider wrappers and fixed-classifier integrations stay in application examples;
+Python does not include JsonFileStore or the legacy-import CLI. The SDKs
 use separate database tables, hashes and deployment locks; never independently
 control the same external target with both. The **Node.js** tab documents the
 TypeScript SDK, not interchangeable signatures for this package.

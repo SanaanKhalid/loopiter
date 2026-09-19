@@ -1,5 +1,7 @@
 # Reliable public alpha release checklist
 
+Historical 0.2 checklist. For the current release use [the 0.3 release gates](autonomy-release-checklist.md).
+
 Target: `loopiter@0.2.0-alpha.1`, npm tag **alpha**, MIT, Node 22/24.
 This file prepares intentional release actions; no publication or visibility change
 is performed by the build, tests, starter or CI.

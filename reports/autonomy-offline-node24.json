@@ -1,0 +1,1334 @@
+{
+  "generatedAt": "2026-09-19T00:59:51.190Z",
+  "release": "0.3.0-alpha.1",
+  "runtime": "v24.21.0",
+  "evidence": "SIMULATED: deterministic predictions, synthetic labeled examples, in-memory serving registry and simulated observation clock",
+  "injectedFailures": [
+    "Lost apply receipt in interrupted path",
+    "Wrong subsequent predictions in regression path"
+  ],
+  "liveModelCalls": 0,
+  "provesCausalProductionImprovement": false,
+  "workflows": [
+    {
+      "kind": "prompt",
+      "path": "accepted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "runId": "run_bae77c94132c4827e6358d585920cca99dc50b22dc9315766ed11774fde48831",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidateIds": [
+          "candidate_e8a3d86b6af5b3059b31220649971a5548f34ac7148a052905213daf9e99f897"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "activeVersion": "bbca13f4826b0ad998d0d1e91910b12c68db78b8b60be127531c4973691d09a2",
+      "validation": {
+        "candidate_e8a3d86b6af5b3059b31220649971a5548f34ac7148a052905213daf9e99f897": {
+          "sampleCount": 100,
+          "baselineMean": 0,
+          "candidateMean": 1,
+          "metrics": {
+            "accuracy": 1.0000000000000007,
+            "errors": 0,
+            "latencyMs": 0,
+            "cost": 0,
+            "accuracy:access": 1,
+            "accuracy:billing": 1
+          },
+          "estimatedServingCost": 0
+        }
+      },
+      "audit": {
+        "sampleCount": 200,
+        "baselineMean": 0,
+        "candidateMean": 1,
+        "metrics": {
+          "accuracy": 1.0000000000000007,
+          "errors": 0,
+          "latencyMs": 0,
+          "cost": 0,
+          "accuracy:access": 1,
+          "accuracy:billing": 1
+        },
+        "estimatedServingCost": 0
+      },
+      "observations": [
+        {
+          "artifactVersion": "bbca13f4826b0ad998d0d1e91910b12c68db78b8b60be127531c4973691d09a2",
+          "configurationHash": "5c87eeac4bb8408c9e16383c250943297bf334b7fe3e8729a94bcaa2636fec63",
+          "startedAt": "2026-05-01T00:00:00.000Z",
+          "endedAt": "2026-05-01T02:00:00.000Z",
+          "complete": true,
+          "unitIds": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0
+          }
+        }
+      ]
+    },
+    {
+      "kind": "prompt",
+      "path": "rejected",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "no_improvement",
+          "reason": "validation_failed"
+        }
+      ],
+      "result": {
+        "runId": "run_ac33774e6bc2f0c8128b41db8ec56e9c5b5aa8462566f43a4a9d1eda92c470f6",
+        "state": "no_improvement",
+        "reason": "validation_failed",
+        "candidateIds": [
+          "candidate_08da3dc9ed47fb85a7cab7f85c4941bbc664402734cb953196ee59371e2a2862"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "activeVersion": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "validation": {
+        "candidate_08da3dc9ed47fb85a7cab7f85c4941bbc664402734cb953196ee59371e2a2862": {
+          "sampleCount": 100,
+          "baselineMean": 0,
+          "candidateMean": 0,
+          "metrics": {
+            "accuracy": 0,
+            "errors": 1.0000000000000007,
+            "latencyMs": 0,
+            "cost": 0,
+            "accuracy:access": 0,
+            "accuracy:billing": 0
+          },
+          "estimatedServingCost": 0
+        }
+      },
+      "audit": null,
+      "observations": []
+    },
+    {
+      "kind": "prompt",
+      "path": "insufficient",
+      "transitions": [
+        {
+          "state": "waiting_for_evidence",
+          "reason": "insufficient_evidence"
+        }
+      ],
+      "result": {
+        "runId": null,
+        "state": "waiting_for_evidence",
+        "reason": "insufficient_evidence",
+        "candidateIds": [],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "activeVersion": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "validation": {},
+      "audit": null,
+      "observations": []
+    },
+    {
+      "kind": "prompt",
+      "path": "interrupted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "reconciliation_required",
+          "reason": "deployment_pending"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "runId": "run_2b9a316352c11a26162926d1d1586e1874dcb958a0a0b658a7970f529eab7bca",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidateIds": [
+          "candidate_3d80f0a791a0dec3e484c2d57d7ae9206afa1bff2763f0b9574d0cf7161e6af2"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "activeVersion": "811aed7f0e5a6009f2740448fa2b992d076a0a1a1fc48a1f7ed9c2720bae02e4",
+      "validation": {
+        "candidate_3d80f0a791a0dec3e484c2d57d7ae9206afa1bff2763f0b9574d0cf7161e6af2": {
+          "sampleCount": 100,
+          "baselineMean": 0,
+          "candidateMean": 1,
+          "metrics": {
+            "accuracy": 1.0000000000000007,
+            "errors": 0,
+            "latencyMs": 0,
+            "cost": 0,
+            "accuracy:access": 1,
+            "accuracy:billing": 1
+          },
+          "estimatedServingCost": 0
+        }
+      },
+      "audit": {
+        "sampleCount": 200,
+        "baselineMean": 0,
+        "candidateMean": 1,
+        "metrics": {
+          "accuracy": 1.0000000000000007,
+          "errors": 0,
+          "latencyMs": 0,
+          "cost": 0,
+          "accuracy:access": 1,
+          "accuracy:billing": 1
+        },
+        "estimatedServingCost": 0
+      },
+      "observations": [
+        {
+          "artifactVersion": "811aed7f0e5a6009f2740448fa2b992d076a0a1a1fc48a1f7ed9c2720bae02e4",
+          "configurationHash": "5c87eeac4bb8408c9e16383c250943297bf334b7fe3e8729a94bcaa2636fec63",
+          "startedAt": "2026-05-01T00:00:00.000Z",
+          "endedAt": "2026-05-01T02:00:00.000Z",
+          "complete": true,
+          "unitIds": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0
+          }
+        }
+      ]
+    },
+    {
+      "kind": "prompt",
+      "path": "regression",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "rolling_back",
+          "reason": "production_guardrail_failed"
+        },
+        {
+          "state": "rolled_back",
+          "reason": "previous_version_restored"
+        }
+      ],
+      "result": {
+        "runId": "run_228ae3d00dfbce3a56c43735ac129f49f1d13b4680f5bf3a63c732912acc4eee",
+        "state": "rolled_back",
+        "reason": "previous_version_restored",
+        "candidateIds": [
+          "candidate_573cfef426d104ad5ef30006b84ac840a1ab77a77d1e380326786eb42b867697"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "activeVersion": "9fd1d74383274cfdc782dd3ea8fe1a192d43f46ec33088b1992c299468a09bcb",
+      "validation": {
+        "candidate_573cfef426d104ad5ef30006b84ac840a1ab77a77d1e380326786eb42b867697": {
+          "sampleCount": 100,
+          "baselineMean": 0,
+          "candidateMean": 1,
+          "metrics": {
+            "accuracy": 1.0000000000000007,
+            "errors": 0,
+            "latencyMs": 0,
+            "cost": 0,
+            "accuracy:access": 1,
+            "accuracy:billing": 1
+          },
+          "estimatedServingCost": 0
+        }
+      },
+      "audit": {
+        "sampleCount": 200,
+        "baselineMean": 0,
+        "candidateMean": 1,
+        "metrics": {
+          "accuracy": 1.0000000000000007,
+          "errors": 0,
+          "latencyMs": 0,
+          "cost": 0,
+          "accuracy:access": 1,
+          "accuracy:billing": 1
+        },
+        "estimatedServingCost": 0
+      },
+      "observations": [
+        {
+          "artifactVersion": "b0b57d8c69715931e34e12cbb878048ab3c4eabee908c9c9a65de9408bf0ee1b",
+          "configurationHash": "5c87eeac4bb8408c9e16383c250943297bf334b7fe3e8729a94bcaa2636fec63",
+          "startedAt": "2026-05-01T00:00:00.000Z",
+          "endedAt": "2026-05-01T02:00:00.000Z",
+          "complete": true,
+          "unitIds": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 1
+          }
+        }
+      ]
+    },
+    {
+      "kind": "models",
+      "path": "accepted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "runId": "run_f76b59156d1ac759d70328798541b9492d6017a842dfabe7fdec35c31663e2b3",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidateIds": [
+          "candidate_3c35195651e0eed08f8fefa37e361fb7f1f2f8a7b29836b57bf6471af2363e75"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "activeVersion": "73b8553f5b1496679143e4affd572903012743d9a8e8961f1823deb46d396f21",
+      "validation": {
+        "candidate_3c35195651e0eed08f8fefa37e361fb7f1f2f8a7b29836b57bf6471af2363e75": {
+          "sampleCount": 100,
+          "baselineMean": 1,
+          "candidateMean": 0.09999999999999981,
+          "metrics": {
+            "accuracy": 1.0000000000000007,
+            "errors": 0,
+            "latencyMs": 10,
+            "cost": 0.10000000000000007,
+            "accuracy:access": 1,
+            "accuracy:billing": 1,
+            "accuracy:complex": 1,
+            "latencyMs:complex": 10,
+            "samples:complex": 50,
+            "accuracy:simple": 1,
+            "latencyMs:simple": 10,
+            "samples:simple": 50
+          },
+          "estimatedServingCost": 0.10000000000000007
+        }
+      },
+      "audit": {
+        "sampleCount": 200,
+        "baselineMean": 1,
+        "candidateMean": 0.10000000000000007,
+        "metrics": {
+          "accuracy": 1.0000000000000007,
+          "errors": 0,
+          "latencyMs": 10,
+          "cost": 0.10000000000000007,
+          "accuracy:access": 1,
+          "accuracy:billing": 1,
+          "accuracy:complex": 1,
+          "latencyMs:complex": 10,
+          "samples:complex": 100,
+          "accuracy:simple": 1,
+          "latencyMs:simple": 10,
+          "samples:simple": 100
+        },
+        "estimatedServingCost": 0.10000000000000007
+      },
+      "observations": [
+        {
+          "artifactVersion": "73b8553f5b1496679143e4affd572903012743d9a8e8961f1823deb46d396f21",
+          "configurationHash": "96c7afd641651ea6f30d1ab2237a43d502d9a20943275b371137c88ed3e5ecfc",
+          "startedAt": "2026-05-01T00:00:00.000Z",
+          "endedAt": "2026-05-01T02:00:00.000Z",
+          "complete": true,
+          "unitIds": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0
+          }
+        }
+      ]
+    },
+    {
+      "kind": "models",
+      "path": "rejected",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "no_improvement",
+          "reason": "validation_failed"
+        }
+      ],
+      "result": {
+        "runId": "run_13424050aa2c730c8992ff5faf5a68873c4ccdd049141e41abddd28577aedec0",
+        "state": "no_improvement",
+        "reason": "validation_failed",
+        "candidateIds": [
+          "candidate_c9c4eee41c9a0b5304fcafb5c2ba35dd888fe8966101f5e5d1bfaf1bcbf3366c"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "activeVersion": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "validation": {
+        "candidate_c9c4eee41c9a0b5304fcafb5c2ba35dd888fe8966101f5e5d1bfaf1bcbf3366c": {
+          "sampleCount": 100,
+          "baselineMean": 1,
+          "candidateMean": 1,
+          "metrics": {
+            "accuracy": 1.0000000000000007,
+            "errors": 0,
+            "latencyMs": 20,
+            "cost": 1.0000000000000007,
+            "accuracy:access": 1,
+            "accuracy:billing": 1,
+            "accuracy:complex": 1,
+            "latencyMs:complex": 20,
+            "samples:complex": 50,
+            "accuracy:simple": 1,
+            "latencyMs:simple": 20,
+            "samples:simple": 50
+          },
+          "estimatedServingCost": 1.0000000000000007
+        }
+      },
+      "audit": null,
+      "observations": []
+    },
+    {
+      "kind": "models",
+      "path": "insufficient",
+      "transitions": [
+        {
+          "state": "waiting_for_evidence",
+          "reason": "insufficient_evidence"
+        }
+      ],
+      "result": {
+        "runId": null,
+        "state": "waiting_for_evidence",
+        "reason": "insufficient_evidence",
+        "candidateIds": [],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "activeVersion": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "validation": {},
+      "audit": null,
+      "observations": []
+    },
+    {
+      "kind": "models",
+      "path": "interrupted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "reconciliation_required",
+          "reason": "deployment_pending"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "runId": "run_2adf2eb431637278ddd04fbf12f5086bc6021fc0bfc560c9641741594d8f7884",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidateIds": [
+          "candidate_59e8d864ccb09df2a49b999dadd7159c4980ce9e9ed5e3b3324b05f44863da14"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "activeVersion": "5aac0a074a7f3ce88237044aebd29e15addffabb29cab338d60ece9f31703388",
+      "validation": {
+        "candidate_59e8d864ccb09df2a49b999dadd7159c4980ce9e9ed5e3b3324b05f44863da14": {
+          "sampleCount": 100,
+          "baselineMean": 1,
+          "candidateMean": 0.09999999999999981,
+          "metrics": {
+            "accuracy": 1.0000000000000007,
+            "errors": 0,
+            "latencyMs": 10,
+            "cost": 0.10000000000000007,
+            "accuracy:access": 1,
+            "accuracy:billing": 1,
+            "accuracy:complex": 1,
+            "latencyMs:complex": 10,
+            "samples:complex": 50,
+            "accuracy:simple": 1,
+            "latencyMs:simple": 10,
+            "samples:simple": 50
+          },
+          "estimatedServingCost": 0.10000000000000007
+        }
+      },
+      "audit": {
+        "sampleCount": 200,
+        "baselineMean": 1,
+        "candidateMean": 0.10000000000000007,
+        "metrics": {
+          "accuracy": 1.0000000000000007,
+          "errors": 0,
+          "latencyMs": 10,
+          "cost": 0.10000000000000007,
+          "accuracy:access": 1,
+          "accuracy:billing": 1,
+          "accuracy:complex": 1,
+          "latencyMs:complex": 10,
+          "samples:complex": 100,
+          "accuracy:simple": 1,
+          "latencyMs:simple": 10,
+          "samples:simple": 100
+        },
+        "estimatedServingCost": 0.10000000000000007
+      },
+      "observations": [
+        {
+          "artifactVersion": "5aac0a074a7f3ce88237044aebd29e15addffabb29cab338d60ece9f31703388",
+          "configurationHash": "96c7afd641651ea6f30d1ab2237a43d502d9a20943275b371137c88ed3e5ecfc",
+          "startedAt": "2026-05-01T00:00:00.000Z",
+          "endedAt": "2026-05-01T02:00:00.000Z",
+          "complete": true,
+          "unitIds": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0
+          }
+        }
+      ]
+    },
+    {
+      "kind": "models",
+      "path": "regression",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "rolling_back",
+          "reason": "production_guardrail_failed"
+        },
+        {
+          "state": "rolled_back",
+          "reason": "previous_version_restored"
+        }
+      ],
+      "result": {
+        "runId": "run_2bac4a9c5b050658e1221890b00b54cd4f68ed9b99cd6e0310afa7aed66eff6c",
+        "state": "rolled_back",
+        "reason": "previous_version_restored",
+        "candidateIds": [
+          "candidate_f71d1f3df5271367386d3886d30b631343f033cc3970297ec54d5704588735f5"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "activeVersion": "681201bd6110340ab3c2d2b9b10fab5f793e6d24fcff60322036093c3f7adbe7",
+      "validation": {
+        "candidate_f71d1f3df5271367386d3886d30b631343f033cc3970297ec54d5704588735f5": {
+          "sampleCount": 100,
+          "baselineMean": 1,
+          "candidateMean": 0.09999999999999981,
+          "metrics": {
+            "accuracy": 1.0000000000000007,
+            "errors": 0,
+            "latencyMs": 10,
+            "cost": 0.10000000000000007,
+            "accuracy:access": 1,
+            "accuracy:billing": 1,
+            "accuracy:complex": 1,
+            "latencyMs:complex": 10,
+            "samples:complex": 50,
+            "accuracy:simple": 1,
+            "latencyMs:simple": 10,
+            "samples:simple": 50
+          },
+          "estimatedServingCost": 0.10000000000000007
+        }
+      },
+      "audit": {
+        "sampleCount": 200,
+        "baselineMean": 1,
+        "candidateMean": 0.10000000000000007,
+        "metrics": {
+          "accuracy": 1.0000000000000007,
+          "errors": 0,
+          "latencyMs": 10,
+          "cost": 0.10000000000000007,
+          "accuracy:access": 1,
+          "accuracy:billing": 1,
+          "accuracy:complex": 1,
+          "latencyMs:complex": 10,
+          "samples:complex": 100,
+          "accuracy:simple": 1,
+          "latencyMs:simple": 10,
+          "samples:simple": 100
+        },
+        "estimatedServingCost": 0.10000000000000007
+      },
+      "observations": [
+        {
+          "artifactVersion": "dee857b9fa873769542c159b8e9ea6edbdf02d900ba754d067ab601abc7ca593",
+          "configurationHash": "96c7afd641651ea6f30d1ab2237a43d502d9a20943275b371137c88ed3e5ecfc",
+          "startedAt": "2026-05-01T00:00:00.000Z",
+          "endedAt": "2026-05-01T02:00:00.000Z",
+          "complete": true,
+          "unitIds": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 1
+          }
+        }
+      ]
+    },
+    {
+      "kind": "decision",
+      "path": "accepted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "runId": "run_a7ee48e20217b59f2b60963f815816566f7678454789aa924ca8c12178a5dd14",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidateIds": [
+          "candidate_6ad6a750926e50b23e4476dd342a26afdd2f9c850c08d08c779918da8f35be4d",
+          "candidate_66321186350dd658939422f32dbe32d7a66438185242ecea9e3ef44b7f0de9e8",
+          "candidate_e45a10bd6fa7fecbec19372d7c6b4accca3b086475447b39223a1e3348ec4ead"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "activeVersion": "1a894e026b3a4a78bcf14fb5a0e30ab41365712b69a61a1518fbd3ab375f6f76",
+      "validation": {
+        "candidate_6ad6a750926e50b23e4476dd342a26afdd2f9c850c08d08c779918da8f35be4d": {
+          "sampleCount": 100,
+          "baselineMean": 0.4,
+          "candidateMean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1,
+            "errors": 0.6,
+            "abstentionCost": 0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimatedServingCost": 0
+        },
+        "candidate_66321186350dd658939422f32dbe32d7a66438185242ecea9e3ef44b7f0de9e8": {
+          "sampleCount": 100,
+          "baselineMean": 0.4,
+          "candidateMean": 0.8200000000000008,
+          "metrics": {
+            "utility": 0.8200000000000008,
+            "coverage": 0.4,
+            "errors": 0,
+            "abstentionCost": 0.18,
+            "errors:access": 0,
+            "errors:billing": 0
+          },
+          "estimatedServingCost": 0.18
+        },
+        "candidate_e45a10bd6fa7fecbec19372d7c6b4accca3b086475447b39223a1e3348ec4ead": {
+          "sampleCount": 100,
+          "baselineMean": 0.4,
+          "candidateMean": 0.7000000000000013,
+          "metrics": {
+            "utility": 0.7000000000000013,
+            "coverage": 0,
+            "errors": 0,
+            "abstentionCost": 0.3,
+            "errors:access": 0,
+            "errors:billing": 0
+          },
+          "estimatedServingCost": 0.3
+        }
+      },
+      "audit": {
+        "sampleCount": 200,
+        "baselineMean": 0.4,
+        "candidateMean": 0.8199999999999994,
+        "metrics": {
+          "utility": 0.8199999999999994,
+          "coverage": 0.4,
+          "errors": 0,
+          "abstentionCost": 0.18,
+          "errors:access": 0,
+          "errors:billing": 0
+        },
+        "estimatedServingCost": 0.18
+      },
+      "observations": [
+        {
+          "artifactVersion": "1a894e026b3a4a78bcf14fb5a0e30ab41365712b69a61a1518fbd3ab375f6f76",
+          "configurationHash": "daec0dfb1eee367b98f143aa5e447e41fae37da57dbcea7e0143749cc6e42ab1",
+          "startedAt": "2026-05-01T00:00:00.000Z",
+          "endedAt": "2026-05-01T02:00:00.000Z",
+          "complete": true,
+          "unitIds": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0
+          }
+        }
+      ]
+    },
+    {
+      "kind": "decision",
+      "path": "rejected",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "no_improvement",
+          "reason": "validation_failed"
+        }
+      ],
+      "result": {
+        "runId": "run_6c83b7bf87984adbfcdc14032af85d071a1f98b18a29af89861df63c38f82844",
+        "state": "no_improvement",
+        "reason": "validation_failed",
+        "candidateIds": [
+          "candidate_c6dc5914f6e38ad2964c43967d761ae4bb8d8e13c7329ec58debb6069e093acb"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "activeVersion": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "validation": {
+        "candidate_c6dc5914f6e38ad2964c43967d761ae4bb8d8e13c7329ec58debb6069e093acb": {
+          "sampleCount": 100,
+          "baselineMean": 0.4,
+          "candidateMean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1,
+            "errors": 0.6,
+            "abstentionCost": 0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimatedServingCost": 0
+        }
+      },
+      "audit": null,
+      "observations": []
+    },
+    {
+      "kind": "decision",
+      "path": "insufficient",
+      "transitions": [
+        {
+          "state": "waiting_for_evidence",
+          "reason": "insufficient_evidence"
+        }
+      ],
+      "result": {
+        "runId": null,
+        "state": "waiting_for_evidence",
+        "reason": "insufficient_evidence",
+        "candidateIds": [],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 0
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "activeVersion": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "validation": {},
+      "audit": null,
+      "observations": []
+    },
+    {
+      "kind": "decision",
+      "path": "interrupted",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "reconciliation_required",
+          "reason": "deployment_pending"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "completed",
+          "reason": "offline_pass_and_production_limits_met_not_causal_proof"
+        }
+      ],
+      "result": {
+        "runId": "run_66ad51e4a2f0ab4ff12a9db263dc03e4fa74bfadfc4ad0972bdc861d74e06e91",
+        "state": "completed",
+        "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+        "candidateIds": [
+          "candidate_7a5cc634847dbbcae4856b677666a84b36295fdc08c4940800641e2a5eb1dc46",
+          "candidate_a77c57c09a30d9dd178e0387eeca8438ea859ec6cc8c51670fea5d7a521bbdfa",
+          "candidate_63ce95825f77cc0f1c9a0f03e3c15377b18ebed250f23163164755a485bc0377"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "activeVersion": "33410b8e503608b115984ed1a7c987bcdf832ea55fd82f3810f1e8e3f48a8409",
+      "validation": {
+        "candidate_7a5cc634847dbbcae4856b677666a84b36295fdc08c4940800641e2a5eb1dc46": {
+          "sampleCount": 100,
+          "baselineMean": 0.4,
+          "candidateMean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1,
+            "errors": 0.6,
+            "abstentionCost": 0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimatedServingCost": 0
+        },
+        "candidate_a77c57c09a30d9dd178e0387eeca8438ea859ec6cc8c51670fea5d7a521bbdfa": {
+          "sampleCount": 100,
+          "baselineMean": 0.4,
+          "candidateMean": 0.8200000000000008,
+          "metrics": {
+            "utility": 0.8200000000000008,
+            "coverage": 0.4,
+            "errors": 0,
+            "abstentionCost": 0.18,
+            "errors:access": 0,
+            "errors:billing": 0
+          },
+          "estimatedServingCost": 0.18
+        },
+        "candidate_63ce95825f77cc0f1c9a0f03e3c15377b18ebed250f23163164755a485bc0377": {
+          "sampleCount": 100,
+          "baselineMean": 0.4,
+          "candidateMean": 0.7000000000000013,
+          "metrics": {
+            "utility": 0.7000000000000013,
+            "coverage": 0,
+            "errors": 0,
+            "abstentionCost": 0.3,
+            "errors:access": 0,
+            "errors:billing": 0
+          },
+          "estimatedServingCost": 0.3
+        }
+      },
+      "audit": {
+        "sampleCount": 200,
+        "baselineMean": 0.4,
+        "candidateMean": 0.8199999999999994,
+        "metrics": {
+          "utility": 0.8199999999999994,
+          "coverage": 0.4,
+          "errors": 0,
+          "abstentionCost": 0.18,
+          "errors:access": 0,
+          "errors:billing": 0
+        },
+        "estimatedServingCost": 0.18
+      },
+      "observations": [
+        {
+          "artifactVersion": "33410b8e503608b115984ed1a7c987bcdf832ea55fd82f3810f1e8e3f48a8409",
+          "configurationHash": "daec0dfb1eee367b98f143aa5e447e41fae37da57dbcea7e0143749cc6e42ab1",
+          "startedAt": "2026-05-01T00:00:00.000Z",
+          "endedAt": "2026-05-01T02:00:00.000Z",
+          "complete": true,
+          "unitIds": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 0
+          }
+        }
+      ]
+    },
+    {
+      "kind": "decision",
+      "path": "regression",
+      "transitions": [
+        {
+          "state": "evaluating",
+          "reason": "proposals_ready"
+        },
+        {
+          "state": "selected",
+          "reason": "winner_selected"
+        },
+        {
+          "state": "deploying",
+          "reason": "audit_passed"
+        },
+        {
+          "state": "observing",
+          "reason": "deployment_is_not_improvement"
+        },
+        {
+          "state": "rolling_back",
+          "reason": "production_guardrail_failed"
+        },
+        {
+          "state": "rolled_back",
+          "reason": "previous_version_restored"
+        }
+      ],
+      "result": {
+        "runId": "run_d299df473497f402301f717452bfdb95f46755f6121d234fcfcc5070c640ab18",
+        "state": "rolled_back",
+        "reason": "previous_version_restored",
+        "candidateIds": [
+          "candidate_7e5e1373535e84a54cddb7b3fe58d59462177d2c3cf63cb889fbf7c481eee69d",
+          "candidate_a1914bd3e31697b926cf0dfee72e5d8ccb32a7cc38bcd3bee6d1551dd25fb772",
+          "candidate_164d5d7f0e5e979eaf5dc58988c5c92deaf6fccca6033d8ef6f5ec9ca52020c9"
+        ],
+        "budget": {
+          "modelRequests": 0,
+          "tokens": 0,
+          "deployments": 1
+        }
+      },
+      "baseline": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "activeVersion": "33b8672aa738f7a49782fca35f669a68c23c502175990e195f4f49aacd1be3d5",
+      "validation": {
+        "candidate_7e5e1373535e84a54cddb7b3fe58d59462177d2c3cf63cb889fbf7c481eee69d": {
+          "sampleCount": 100,
+          "baselineMean": 0.4,
+          "candidateMean": 0.4,
+          "metrics": {
+            "utility": 0.4,
+            "coverage": 1,
+            "errors": 0.6,
+            "abstentionCost": 0,
+            "errors:access": 0.6,
+            "errors:billing": 0.6
+          },
+          "estimatedServingCost": 0
+        },
+        "candidate_a1914bd3e31697b926cf0dfee72e5d8ccb32a7cc38bcd3bee6d1551dd25fb772": {
+          "sampleCount": 100,
+          "baselineMean": 0.4,
+          "candidateMean": 0.8200000000000008,
+          "metrics": {
+            "utility": 0.8200000000000008,
+            "coverage": 0.4,
+            "errors": 0,
+            "abstentionCost": 0.18,
+            "errors:access": 0,
+            "errors:billing": 0
+          },
+          "estimatedServingCost": 0.18
+        },
+        "candidate_164d5d7f0e5e979eaf5dc58988c5c92deaf6fccca6033d8ef6f5ec9ca52020c9": {
+          "sampleCount": 100,
+          "baselineMean": 0.4,
+          "candidateMean": 0.7000000000000013,
+          "metrics": {
+            "utility": 0.7000000000000013,
+            "coverage": 0,
+            "errors": 0,
+            "abstentionCost": 0.3,
+            "errors:access": 0,
+            "errors:billing": 0
+          },
+          "estimatedServingCost": 0.3
+        }
+      },
+      "audit": {
+        "sampleCount": 200,
+        "baselineMean": 0.4,
+        "candidateMean": 0.8199999999999994,
+        "metrics": {
+          "utility": 0.8199999999999994,
+          "coverage": 0.4,
+          "errors": 0,
+          "abstentionCost": 0.18,
+          "errors:access": 0,
+          "errors:billing": 0
+        },
+        "estimatedServingCost": 0.18
+      },
+      "observations": [
+        {
+          "artifactVersion": "5d0ee12950cd549ed576b2ff8e096a7329bbdc48294c82070db44bd19ed15421",
+          "configurationHash": "daec0dfb1eee367b98f143aa5e447e41fae37da57dbcea7e0143749cc6e42ab1",
+          "startedAt": "2026-05-01T00:00:00.000Z",
+          "endedAt": "2026-05-01T02:00:00.000Z",
+          "complete": true,
+          "unitIds": [
+            "customer-production-0",
+            "customer-production-1",
+            "customer-production-2",
+            "customer-production-3",
+            "customer-production-4",
+            "customer-production-5",
+            "customer-production-6",
+            "customer-production-7",
+            "customer-production-8",
+            "customer-production-9",
+            "customer-production-10",
+            "customer-production-11",
+            "customer-production-12",
+            "customer-production-13",
+            "customer-production-14",
+            "customer-production-15",
+            "customer-production-16",
+            "customer-production-17",
+            "customer-production-18",
+            "customer-production-19"
+          ],
+          "metrics": {
+            "errors": 1
+          }
+        }
+      ]
+    }
+  ]
+}

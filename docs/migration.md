@@ -1,5 +1,8 @@
 # Migration from the private v0.1 prototype
 
+This historical guide describes the original 0.1 → 0.2 upgrade. Use
+[the 0.3 migration guide](autonomy-migration.md) for the new store contracts and autonomy.
+
 This is a clean breaking release. Stop old writers and back up the original JSON
 file before importing. Never point the v2 JsonFileStore at a v1 file: it refuses it.
 Use a new database/JSON destination and keep the original unchanged.

@@ -1,0 +1,2391 @@
+{
+  "generatedAt": "2026-09-19T16:15:11.902Z",
+  "release": "0.3.0-alpha.1",
+  "evidence": "LIVE Azure inference; authored synthetic labels; isolated local PostgreSQL serving registry; real wall clock",
+  "deployment": "gpt-4o",
+  "endpointHost": "sanaa-mivj3t3c-eastus2.openai.azure.com",
+  "database": "loopiter_live_1f5ff5159c8c4dd9b3a9dc8be2e89a72",
+  "limits": {
+    "requests": 28,
+    "tokens": 103500,
+    "reservation": 16000,
+    "outputTokens": 1200,
+    "inputBytes": 12000
+  },
+  "requests": [
+    {
+      "ordinal": 1,
+      "stage": "baseline-corrections",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 430,
+      "outputTokens": 133,
+      "model": "gpt-4o",
+      "latencyMs": 2450.794083
+    },
+    {
+      "ordinal": 2,
+      "stage": "proposal",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 263,
+      "outputTokens": 49,
+      "model": "gpt-4o",
+      "latencyMs": 1235.0370420000004
+    },
+    {
+      "ordinal": 3,
+      "stage": "validation-baseline",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 566,
+      "outputTokens": 187,
+      "model": "gpt-4o",
+      "latencyMs": 1734.9625409999999
+    },
+    {
+      "ordinal": 4,
+      "stage": "validation-baseline",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 252,
+      "outputTokens": 43,
+      "model": "gpt-4o",
+      "latencyMs": 1155.06725
+    },
+    {
+      "ordinal": 5,
+      "stage": "validation-candidate",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 576,
+      "outputTokens": 187,
+      "model": "gpt-4o",
+      "latencyMs": 1612.3804999999993
+    },
+    {
+      "ordinal": 6,
+      "stage": "validation-candidate",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 262,
+      "outputTokens": 43,
+      "model": "gpt-4o",
+      "latencyMs": 1097.8821249999983
+    },
+    {
+      "ordinal": 7,
+      "stage": "audit-baseline",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 563,
+      "outputTokens": 187,
+      "model": "gpt-4o",
+      "latencyMs": 1832.4187920000004
+    },
+    {
+      "ordinal": 8,
+      "stage": "audit-baseline",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 570,
+      "outputTokens": 187,
+      "model": "gpt-4o",
+      "latencyMs": 1685.281167000001
+    },
+    {
+      "ordinal": 9,
+      "stage": "audit-baseline",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 571,
+      "outputTokens": 187,
+      "model": "gpt-4o",
+      "latencyMs": 1336.413292000001
+    },
+    {
+      "ordinal": 10,
+      "stage": "audit-baseline",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 570,
+      "outputTokens": 187,
+      "model": "gpt-4o",
+      "latencyMs": 1430.262208000002
+    },
+    {
+      "ordinal": 11,
+      "stage": "audit-candidate",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 573,
+      "outputTokens": 187,
+      "model": "gpt-4o",
+      "latencyMs": 1573.755333000001
+    },
+    {
+      "ordinal": 12,
+      "stage": "audit-candidate",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 580,
+      "outputTokens": 187,
+      "model": "gpt-4o",
+      "latencyMs": 2087.7053749999977
+    },
+    {
+      "ordinal": 13,
+      "stage": "audit-candidate",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 581,
+      "outputTokens": 187,
+      "model": "gpt-4o",
+      "latencyMs": 1689.265041999999
+    },
+    {
+      "ordinal": 14,
+      "stage": "audit-candidate",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 580,
+      "outputTokens": 187,
+      "model": "gpt-4o",
+      "latencyMs": 1831.377124999999
+    },
+    {
+      "ordinal": 15,
+      "stage": "post-deployment-observation",
+      "status": "completed",
+      "reservedTokens": 16000,
+      "inputTokens": 440,
+      "outputTokens": 133,
+      "model": "gpt-4o",
+      "latencyMs": 1963.3580839999995
+    }
+  ],
+  "transitions": [
+    {
+      "at": "2026-09-19T16:15:16.630Z",
+      "runId": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad",
+      "state": "evaluating",
+      "reason": "proposals_ready",
+      "candidateIds": [
+        "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a"
+      ],
+      "budget": {
+        "modelRequests": 1,
+        "tokens": 312,
+        "deployments": 0
+      }
+    },
+    {
+      "at": "2026-09-19T16:15:22.417Z",
+      "runId": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad",
+      "state": "selected",
+      "reason": "winner_selected",
+      "candidateIds": [
+        "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a"
+      ],
+      "budget": {
+        "modelRequests": 5,
+        "tokens": 2428,
+        "deployments": 0
+      }
+    },
+    {
+      "at": "2026-09-19T16:15:36.389Z",
+      "runId": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad",
+      "state": "deploying",
+      "reason": "audit_passed",
+      "candidateIds": [
+        "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a"
+      ],
+      "budget": {
+        "modelRequests": 13,
+        "tokens": 8512,
+        "deployments": 1
+      }
+    },
+    {
+      "at": "2026-09-19T16:15:36.462Z",
+      "runId": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad",
+      "state": "reconciliation_required",
+      "reason": "deployment_pending",
+      "candidateIds": [
+        "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a"
+      ],
+      "budget": {
+        "modelRequests": 13,
+        "tokens": 8512,
+        "deployments": 1
+      }
+    },
+    {
+      "at": "2026-09-19T16:15:36.517Z",
+      "runId": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad",
+      "state": "observing",
+      "reason": "deployment_is_not_improvement",
+      "candidateIds": [
+        "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a"
+      ],
+      "budget": {
+        "modelRequests": 13,
+        "tokens": 8512,
+        "deployments": 1
+      }
+    },
+    {
+      "at": "2026-09-19T16:15:38.634Z",
+      "runId": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad",
+      "state": "completed",
+      "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+      "candidateIds": [
+        "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a"
+      ],
+      "budget": {
+        "modelRequests": 14,
+        "tokens": 9085,
+        "deployments": 1
+      }
+    }
+  ],
+  "authentication": "Azure CLI existing resource key, held in memory",
+  "priorAttempt": "autonomy-live-azure-2026-09-19.json (HTTP 401, reservation retained)",
+  "priorSemanticTest": "autonomy-live-azure-2026-09-19-key.json: 1 request/500 tokens, no errors to correct; no deployment",
+  "scenario": "Controlled stale internal queue mapping; new frozen experiment, no gate weakening",
+  "limitations": [
+    "Deliberately weak baseline; not a claim about improving an already optimized model.",
+    "Synthetic template-derived data is not a representative independent customer sample; bound arithmetic is not calibrated production confidence.",
+    "Observation uses fresh live predictions with synthetic ground truth, not real customer traffic.",
+    "Lost deployment receipt is injected; recovery behavior is real.",
+    "No publication, Azure resource provisioning or production enablement."
+  ],
+  "baseline": {
+    "version": "ef6b3764549801ac182a16b449bd13bb4e277d840199c524f30b745eeefd9744",
+    "configurationHash": "195fd1cf5239090b4d22d369226ea9aa39524989d8ad72daaf2c593cb86d30b3",
+    "artifact": {
+      "fragment": "Route billing, invoices, payments and refunds to route_cedar. Route sign-in, password and account access to route_amber. Everything else goes to route_slate."
+    }
+  },
+  "initialPredictions": [
+    {
+      "id": "corrections-0",
+      "label": "route_cedar"
+    },
+    {
+      "id": "corrections-1",
+      "label": "route_amber"
+    },
+    {
+      "id": "corrections-2",
+      "label": "route_slate"
+    },
+    {
+      "id": "corrections-3",
+      "label": "route_cedar"
+    },
+    {
+      "id": "corrections-4",
+      "label": "route_amber"
+    },
+    {
+      "id": "corrections-5",
+      "label": "route_slate"
+    },
+    {
+      "id": "corrections-6",
+      "label": "route_cedar"
+    },
+    {
+      "id": "corrections-7",
+      "label": "route_amber"
+    },
+    {
+      "id": "corrections-8",
+      "label": "route_slate"
+    }
+  ],
+  "datasets": {
+    "hashes": {
+      "optimization": "1c06edc42418f4b81b7cf408da373220a178b52b4923f9f23c87f8115c10ddf5",
+      "validation": "fccd8dbbd98da128fed49cebf1059dfe307d4ccc33ad128c034fe411a6b12784",
+      "audit": "0f3369726e0ca32a31296716c05ae46334c8f25492f0f0767f0d90eb3d921180",
+      "observation": "04500a84ce0ccae55b007ef00bbb576902fb710edbe3676d01e6c7d6cc182f40"
+    },
+    "counts": {
+      "corrections": 6,
+      "validation": 18,
+      "audit": 60,
+      "observation": 9
+    }
+  },
+  "policy": {
+    "version": "isolated-live-v1",
+    "target": {
+      "kind": "prompt",
+      "key": "isolated-support-classifier"
+    },
+    "changeSchema": {
+      "type": "object",
+      "properties": {
+        "fragment": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "fragment"
+      ],
+      "additionalProperties": false
+    },
+    "objective": {
+      "metric": "accuracy",
+      "direction": "maximize",
+      "minimumImprovement": 0.05,
+      "range": [
+        0,
+        1
+      ],
+      "alpha": 0.05
+    },
+    "guardrails": [
+      {
+        "metric": "accuracy_route_amber",
+        "comparator": "gte",
+        "value": 0.8
+      },
+      {
+        "metric": "accuracy_route_cedar",
+        "comparator": "gte",
+        "value": 0.8
+      },
+      {
+        "metric": "accuracy_route_slate",
+        "comparator": "gte",
+        "value": 0.8
+      }
+    ],
+    "trustedSources": [
+      "synthetic-authored"
+    ],
+    "minimumNewUnits": 3,
+    "minimumValidationUnits": 18,
+    "minimumAuditUnits": 60,
+    "outcomeMaturityMs": 0,
+    "maximumRows": 100,
+    "daily": {
+      "modelRequests": 28,
+      "tokens": 103500,
+      "deployments": 1
+    },
+    "callbackReservation": {
+      "modelRequests": 10,
+      "tokens": 160000
+    },
+    "cooldownMs": 60000,
+    "maximumCandidates": 1,
+    "maximumProposalCalls": 1,
+    "rollout": {
+      "mode": "immediate"
+    },
+    "observation": {
+      "minimumDurationMs": 1000,
+      "timeoutMs": 120000,
+      "minimumUnits": 9,
+      "guardrails": [
+        {
+          "metric": "accuracy",
+          "comparator": "gte",
+          "value": 0.8
+        }
+      ],
+      "onTimeout": "rollback",
+      "onFailure": "rollback"
+    },
+    "onInsufficientEvidence": "wait",
+    "onUncertainDeployment": "reconcile"
+  },
+  "proposedArtifact": {
+    "fragment": "Determine the correct label based on the issue described: choose 'route_amber' for billing and payment inquiries, 'route_cedar' for account access and login issues, and 'route_slate' for unrelated topics."
+  },
+  "validation": {
+    "baselineAccuracy": 0.3333333333333333,
+    "candidateAccuracy": 1,
+    "cases": [
+      {
+        "id": "validation-0",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-1",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-10",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-11",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "validation-12",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-13",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-14",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "validation-15",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-16",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-17",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "validation-2",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "validation-3",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-4",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-5",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "validation-6",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-7",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "validation-8",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "validation-9",
+        "baseline": 0,
+        "candidate": 1
+      }
+    ],
+    "metrics": {
+      "accuracy_route_amber": 1,
+      "accuracy_route_cedar": 1,
+      "accuracy_route_slate": 1
+    },
+    "estimatedServingCost": 59.333333333333336,
+    "servingCostNote": "Measured tokens/example proxy; not a dollar estimate. One accuracy-only candidate, no cost ranking."
+  },
+  "audit": {
+    "baselineAccuracy": 0.3333333333333333,
+    "candidateAccuracy": 1,
+    "cases": [
+      {
+        "id": "audit-0",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-1",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-10",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-11",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-12",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-13",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-14",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-15",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-16",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-17",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-18",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-19",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-2",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-20",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-21",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-22",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-23",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-24",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-25",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-26",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-27",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-28",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-29",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-3",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-30",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-31",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-32",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-33",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-34",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-35",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-36",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-37",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-38",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-39",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-4",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-40",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-41",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-42",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-43",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-44",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-45",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-46",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-47",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-48",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-49",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-5",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-50",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-51",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-52",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-53",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-54",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-55",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-56",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-57",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-58",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-59",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-6",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-7",
+        "baseline": 0,
+        "candidate": 1
+      },
+      {
+        "id": "audit-8",
+        "baseline": 1,
+        "candidate": 1
+      },
+      {
+        "id": "audit-9",
+        "baseline": 0,
+        "candidate": 1
+      }
+    ],
+    "metrics": {
+      "accuracy_route_amber": 1,
+      "accuracy_route_cedar": 1,
+      "accuracy_route_slate": 1
+    },
+    "estimatedServingCost": 51.03333333333333,
+    "servingCostNote": "Measured tokens/example proxy; not a dollar estimate. One accuracy-only candidate, no cost ranking."
+  },
+  "finalArtifact": {
+    "version": "8b7a61d42dcfff6b4648d4468198f49c661f1498819064492aa0fede029df19a",
+    "configurationHash": "195fd1cf5239090b4d22d369226ea9aa39524989d8ad72daaf2c593cb86d30b3",
+    "artifact": {
+      "fragment": "Determine the correct label based on the issue described: choose 'route_amber' for billing and payment inquiries, 'route_cedar' for account access and login issues, and 'route_slate' for unrelated topics."
+    }
+  },
+  "run": {
+    "id": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad",
+    "data": {
+      "audit": {
+        "cases": [
+          {
+            "id": "audit-0",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-1",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-10",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-11",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-12",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-13",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-14",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-15",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-16",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-17",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-18",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-19",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-2",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-20",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-21",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-22",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-23",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-24",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-25",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-26",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-27",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-28",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-29",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-3",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-30",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-31",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-32",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-33",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-34",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-35",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-36",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-37",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-38",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-39",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-4",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-40",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-41",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-42",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-43",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-44",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-45",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-46",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-47",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-48",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-49",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-5",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-50",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-51",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-52",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-53",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-54",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-55",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-56",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-57",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-58",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-59",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-6",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-7",
+            "baseline": 0,
+            "candidate": 1
+          },
+          {
+            "id": "audit-8",
+            "baseline": 1,
+            "candidate": 1
+          },
+          {
+            "id": "audit-9",
+            "baseline": 0,
+            "candidate": 1
+          }
+        ],
+        "metrics": {
+          "accuracy_route_amber": 1,
+          "accuracy_route_cedar": 1,
+          "accuracy_route_slate": 1
+        },
+        "estimatedServingCost": 51.03333333333333
+      },
+      "state": "completed",
+      "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+      "dataset": {
+        "audit": [
+          {
+            "id": "audit-0",
+            "input": {
+              "text": "Please refund my duplicate payment. Context: audit request 0; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-0",
+            "episodeId": "audit-ticket-0",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-1",
+            "input": {
+              "text": "I cannot log in after resetting my password. Context: audit request 1; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-1",
+            "episodeId": "audit-ticket-1",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-10",
+            "input": {
+              "text": "Please help recover my account. Context: audit request 10; plan team."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-10",
+            "episodeId": "audit-ticket-10",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-11",
+            "input": {
+              "text": "What languages does the application support?. Context: audit request 11; plan team."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-11",
+            "episodeId": "audit-ticket-11",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-12",
+            "input": {
+              "text": "I paid twice and need reimbursement. Context: audit request 12; plan education."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-12",
+            "episodeId": "audit-ticket-12",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-13",
+            "input": {
+              "text": "The login page rejects my credentials. Context: audit request 13; plan education."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-13",
+            "episodeId": "audit-ticket-13",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-14",
+            "input": {
+              "text": "Is there an introductory tutorial?. Context: audit request 14; plan education."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-14",
+            "episodeId": "audit-ticket-14",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-15",
+            "input": {
+              "text": "Please explain this unexpected debit. Context: audit request 15; plan education."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-15",
+            "episodeId": "audit-ticket-15",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-16",
+            "input": {
+              "text": "I lost my authenticator and cannot sign in. Context: audit request 16; plan education."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-16",
+            "episodeId": "audit-ticket-16",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-17",
+            "input": {
+              "text": "How do I export a report?. Context: audit request 17; plan education."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-17",
+            "episodeId": "audit-ticket-17",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-18",
+            "input": {
+              "text": "Please refund my duplicate payment. Context: audit request 18; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-18",
+            "episodeId": "audit-ticket-18",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-19",
+            "input": {
+              "text": "I cannot log in after resetting my password. Context: audit request 19; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-19",
+            "episodeId": "audit-ticket-19",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-2",
+            "input": {
+              "text": "Which keyboard shortcuts are supported?. Context: audit request 2; plan individual."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-2",
+            "episodeId": "audit-ticket-2",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-20",
+            "input": {
+              "text": "Which keyboard shortcuts are supported?. Context: audit request 20; plan individual."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-20",
+            "episodeId": "audit-ticket-20",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-21",
+            "input": {
+              "text": "There is an unexplained charge on my invoice. Context: audit request 21; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-21",
+            "episodeId": "audit-ticket-21",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-22",
+            "input": {
+              "text": "My account is locked and I need access. Context: audit request 22; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-22",
+            "episodeId": "audit-ticket-22",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-23",
+            "input": {
+              "text": "Where is the user guide?. Context: audit request 23; plan individual."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-23",
+            "episodeId": "audit-ticket-23",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-24",
+            "input": {
+              "text": "The renewal price on my bill is wrong. Context: audit request 24; plan team."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-24",
+            "episodeId": "audit-ticket-24",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-25",
+            "input": {
+              "text": "My sign-in verification code never arrives. Context: audit request 25; plan team."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-25",
+            "episodeId": "audit-ticket-25",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-26",
+            "input": {
+              "text": "Can I suggest a new color theme?. Context: audit request 26; plan team."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-26",
+            "episodeId": "audit-ticket-26",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-27",
+            "input": {
+              "text": "Can you correct the tax on my subscription?. Context: audit request 27; plan team."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-27",
+            "episodeId": "audit-ticket-27",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-28",
+            "input": {
+              "text": "Please help recover my account. Context: audit request 28; plan team."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-28",
+            "episodeId": "audit-ticket-28",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-29",
+            "input": {
+              "text": "What languages does the application support?. Context: audit request 29; plan team."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-29",
+            "episodeId": "audit-ticket-29",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-3",
+            "input": {
+              "text": "There is an unexplained charge on my invoice. Context: audit request 3; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-3",
+            "episodeId": "audit-ticket-3",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-30",
+            "input": {
+              "text": "I paid twice and need reimbursement. Context: audit request 30; plan education."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-30",
+            "episodeId": "audit-ticket-30",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-31",
+            "input": {
+              "text": "The login page rejects my credentials. Context: audit request 31; plan education."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-31",
+            "episodeId": "audit-ticket-31",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-32",
+            "input": {
+              "text": "Is there an introductory tutorial?. Context: audit request 32; plan education."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-32",
+            "episodeId": "audit-ticket-32",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-33",
+            "input": {
+              "text": "Please explain this unexpected debit. Context: audit request 33; plan education."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-33",
+            "episodeId": "audit-ticket-33",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-34",
+            "input": {
+              "text": "I lost my authenticator and cannot sign in. Context: audit request 34; plan education."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-34",
+            "episodeId": "audit-ticket-34",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-35",
+            "input": {
+              "text": "How do I export a report?. Context: audit request 35; plan education."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-35",
+            "episodeId": "audit-ticket-35",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-36",
+            "input": {
+              "text": "Please refund my duplicate payment. Context: audit request 36; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-36",
+            "episodeId": "audit-ticket-36",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-37",
+            "input": {
+              "text": "I cannot log in after resetting my password. Context: audit request 37; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-37",
+            "episodeId": "audit-ticket-37",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-38",
+            "input": {
+              "text": "Which keyboard shortcuts are supported?. Context: audit request 38; plan individual."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-38",
+            "episodeId": "audit-ticket-38",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-39",
+            "input": {
+              "text": "There is an unexplained charge on my invoice. Context: audit request 39; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-39",
+            "episodeId": "audit-ticket-39",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-4",
+            "input": {
+              "text": "My account is locked and I need access. Context: audit request 4; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-4",
+            "episodeId": "audit-ticket-4",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-40",
+            "input": {
+              "text": "My account is locked and I need access. Context: audit request 40; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-40",
+            "episodeId": "audit-ticket-40",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-41",
+            "input": {
+              "text": "Where is the user guide?. Context: audit request 41; plan individual."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-41",
+            "episodeId": "audit-ticket-41",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-42",
+            "input": {
+              "text": "The renewal price on my bill is wrong. Context: audit request 42; plan team."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-42",
+            "episodeId": "audit-ticket-42",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-43",
+            "input": {
+              "text": "My sign-in verification code never arrives. Context: audit request 43; plan team."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-43",
+            "episodeId": "audit-ticket-43",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-44",
+            "input": {
+              "text": "Can I suggest a new color theme?. Context: audit request 44; plan team."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-44",
+            "episodeId": "audit-ticket-44",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-45",
+            "input": {
+              "text": "Can you correct the tax on my subscription?. Context: audit request 45; plan team."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-45",
+            "episodeId": "audit-ticket-45",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-46",
+            "input": {
+              "text": "Please help recover my account. Context: audit request 46; plan team."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-46",
+            "episodeId": "audit-ticket-46",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-47",
+            "input": {
+              "text": "What languages does the application support?. Context: audit request 47; plan team."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-47",
+            "episodeId": "audit-ticket-47",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-48",
+            "input": {
+              "text": "I paid twice and need reimbursement. Context: audit request 48; plan education."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-48",
+            "episodeId": "audit-ticket-48",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-49",
+            "input": {
+              "text": "The login page rejects my credentials. Context: audit request 49; plan education."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-49",
+            "episodeId": "audit-ticket-49",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-5",
+            "input": {
+              "text": "Where is the user guide?. Context: audit request 5; plan individual."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-5",
+            "episodeId": "audit-ticket-5",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-50",
+            "input": {
+              "text": "Is there an introductory tutorial?. Context: audit request 50; plan education."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-50",
+            "episodeId": "audit-ticket-50",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-51",
+            "input": {
+              "text": "Please explain this unexpected debit. Context: audit request 51; plan education."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-51",
+            "episodeId": "audit-ticket-51",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-52",
+            "input": {
+              "text": "I lost my authenticator and cannot sign in. Context: audit request 52; plan education."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-52",
+            "episodeId": "audit-ticket-52",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-53",
+            "input": {
+              "text": "How do I export a report?. Context: audit request 53; plan education."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-53",
+            "episodeId": "audit-ticket-53",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-54",
+            "input": {
+              "text": "Please refund my duplicate payment. Context: audit request 54; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-54",
+            "episodeId": "audit-ticket-54",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-55",
+            "input": {
+              "text": "I cannot log in after resetting my password. Context: audit request 55; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-55",
+            "episodeId": "audit-ticket-55",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-56",
+            "input": {
+              "text": "Which keyboard shortcuts are supported?. Context: audit request 56; plan individual."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-56",
+            "episodeId": "audit-ticket-56",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-57",
+            "input": {
+              "text": "There is an unexplained charge on my invoice. Context: audit request 57; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-57",
+            "episodeId": "audit-ticket-57",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-58",
+            "input": {
+              "text": "My account is locked and I need access. Context: audit request 58; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-58",
+            "episodeId": "audit-ticket-58",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-59",
+            "input": {
+              "text": "Where is the user guide?. Context: audit request 59; plan individual."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-59",
+            "episodeId": "audit-ticket-59",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-6",
+            "input": {
+              "text": "The renewal price on my bill is wrong. Context: audit request 6; plan team."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-6",
+            "episodeId": "audit-ticket-6",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-7",
+            "input": {
+              "text": "My sign-in verification code never arrives. Context: audit request 7; plan team."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-7",
+            "episodeId": "audit-ticket-7",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-8",
+            "input": {
+              "text": "Can I suggest a new color theme?. Context: audit request 8; plan team."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-8",
+            "episodeId": "audit-ticket-8",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          },
+          {
+            "id": "audit-9",
+            "input": {
+              "text": "Can you correct the tax on my subscription?. Context: audit request 9; plan team."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "audit-person-9",
+            "episodeId": "audit-ticket-9",
+            "observedAt": "2026-01-03T01:00:00Z",
+            "occurredAt": "2026-01-03T00:00:00Z"
+          }
+        ],
+        "version": "isolated-opaque-authored-v2",
+        "validation": [
+          {
+            "id": "validation-0",
+            "input": {
+              "text": "Please refund my duplicate payment. Context: validation request 0; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-0",
+            "episodeId": "validation-ticket-0",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-1",
+            "input": {
+              "text": "I cannot log in after resetting my password. Context: validation request 1; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-1",
+            "episodeId": "validation-ticket-1",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-10",
+            "input": {
+              "text": "Please help recover my account. Context: validation request 10; plan team."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-10",
+            "episodeId": "validation-ticket-10",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-11",
+            "input": {
+              "text": "What languages does the application support?. Context: validation request 11; plan team."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-11",
+            "episodeId": "validation-ticket-11",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-12",
+            "input": {
+              "text": "I paid twice and need reimbursement. Context: validation request 12; plan education."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-12",
+            "episodeId": "validation-ticket-12",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-13",
+            "input": {
+              "text": "The login page rejects my credentials. Context: validation request 13; plan education."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-13",
+            "episodeId": "validation-ticket-13",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-14",
+            "input": {
+              "text": "Is there an introductory tutorial?. Context: validation request 14; plan education."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-14",
+            "episodeId": "validation-ticket-14",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-15",
+            "input": {
+              "text": "Please explain this unexpected debit. Context: validation request 15; plan education."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-15",
+            "episodeId": "validation-ticket-15",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-16",
+            "input": {
+              "text": "I lost my authenticator and cannot sign in. Context: validation request 16; plan education."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-16",
+            "episodeId": "validation-ticket-16",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-17",
+            "input": {
+              "text": "How do I export a report?. Context: validation request 17; plan education."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-17",
+            "episodeId": "validation-ticket-17",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-2",
+            "input": {
+              "text": "Which keyboard shortcuts are supported?. Context: validation request 2; plan individual."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-2",
+            "episodeId": "validation-ticket-2",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-3",
+            "input": {
+              "text": "There is an unexplained charge on my invoice. Context: validation request 3; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-3",
+            "episodeId": "validation-ticket-3",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-4",
+            "input": {
+              "text": "My account is locked and I need access. Context: validation request 4; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-4",
+            "episodeId": "validation-ticket-4",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-5",
+            "input": {
+              "text": "Where is the user guide?. Context: validation request 5; plan individual."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-5",
+            "episodeId": "validation-ticket-5",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-6",
+            "input": {
+              "text": "The renewal price on my bill is wrong. Context: validation request 6; plan team."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-6",
+            "episodeId": "validation-ticket-6",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-7",
+            "input": {
+              "text": "My sign-in verification code never arrives. Context: validation request 7; plan team."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-7",
+            "episodeId": "validation-ticket-7",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-8",
+            "input": {
+              "text": "Can I suggest a new color theme?. Context: validation request 8; plan team."
+            },
+            "label": "route_slate",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-8",
+            "episodeId": "validation-ticket-8",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          },
+          {
+            "id": "validation-9",
+            "input": {
+              "text": "Can you correct the tax on my subscription?. Context: validation request 9; plan team."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "validation-person-9",
+            "episodeId": "validation-ticket-9",
+            "observedAt": "2026-01-02T01:00:00Z",
+            "occurredAt": "2026-01-02T00:00:00Z"
+          }
+        ],
+        "optimization": [
+          {
+            "id": "corrections-0",
+            "input": {
+              "text": "Please refund my duplicate payment. Context: corrections request 0; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "corrections-person-0",
+            "episodeId": "corrections-ticket-0",
+            "observedAt": "2026-01-01T01:00:00Z",
+            "occurredAt": "2026-01-01T00:00:00Z"
+          },
+          {
+            "id": "corrections-1",
+            "input": {
+              "text": "I cannot log in after resetting my password. Context: corrections request 1; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "corrections-person-1",
+            "episodeId": "corrections-ticket-1",
+            "observedAt": "2026-01-01T01:00:00Z",
+            "occurredAt": "2026-01-01T00:00:00Z"
+          },
+          {
+            "id": "corrections-3",
+            "input": {
+              "text": "There is an unexplained charge on my invoice. Context: corrections request 3; plan individual."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "corrections-person-3",
+            "episodeId": "corrections-ticket-3",
+            "observedAt": "2026-01-01T01:00:00Z",
+            "occurredAt": "2026-01-01T00:00:00Z"
+          },
+          {
+            "id": "corrections-4",
+            "input": {
+              "text": "My account is locked and I need access. Context: corrections request 4; plan individual."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "corrections-person-4",
+            "episodeId": "corrections-ticket-4",
+            "observedAt": "2026-01-01T01:00:00Z",
+            "occurredAt": "2026-01-01T00:00:00Z"
+          },
+          {
+            "id": "corrections-6",
+            "input": {
+              "text": "The renewal price on my bill is wrong. Context: corrections request 6; plan team."
+            },
+            "label": "route_amber",
+            "source": "synthetic-authored",
+            "entityId": "corrections-person-6",
+            "episodeId": "corrections-ticket-6",
+            "observedAt": "2026-01-01T01:00:00Z",
+            "occurredAt": "2026-01-01T00:00:00Z"
+          },
+          {
+            "id": "corrections-7",
+            "input": {
+              "text": "My sign-in verification code never arrives. Context: corrections request 7; plan team."
+            },
+            "label": "route_cedar",
+            "source": "synthetic-authored",
+            "entityId": "corrections-person-7",
+            "episodeId": "corrections-ticket-7",
+            "observedAt": "2026-01-01T01:00:00Z",
+            "occurredAt": "2026-01-01T00:00:00Z"
+          }
+        ]
+      },
+      "baseline": {
+        "artifactVersion": "ef6b3764549801ac182a16b449bd13bb4e277d840199c524f30b745eeefd9744",
+        "configurationHash": "195fd1cf5239090b4d22d369226ea9aa39524989d8ad72daaf2c593cb86d30b3"
+      },
+      "attemptId": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad:apply",
+      "operation": "apply",
+      "deployedAt": "2026-09-19T16:15:36.492Z",
+      "leaseOwner": null,
+      "leaseUntil": "2026-09-19T16:15:38.617Z",
+      "selectedId": "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a",
+      "workflowId": "isolated-azure-live",
+      "comparisons": {
+        "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a": {
+          "cases": [
+            {
+              "id": "validation-0",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-1",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-10",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-11",
+              "baseline": 1,
+              "candidate": 1
+            },
+            {
+              "id": "validation-12",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-13",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-14",
+              "baseline": 1,
+              "candidate": 1
+            },
+            {
+              "id": "validation-15",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-16",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-17",
+              "baseline": 1,
+              "candidate": 1
+            },
+            {
+              "id": "validation-2",
+              "baseline": 1,
+              "candidate": 1
+            },
+            {
+              "id": "validation-3",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-4",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-5",
+              "baseline": 1,
+              "candidate": 1
+            },
+            {
+              "id": "validation-6",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-7",
+              "baseline": 0,
+              "candidate": 1
+            },
+            {
+              "id": "validation-8",
+              "baseline": 1,
+              "candidate": 1
+            },
+            {
+              "id": "validation-9",
+              "baseline": 0,
+              "candidate": 1
+            }
+          ],
+          "metrics": {
+            "accuracy_route_amber": 1,
+            "accuracy_route_cedar": 1,
+            "accuracy_route_slate": 1
+          },
+          "estimatedServingCost": 59.333333333333336
+        }
+      },
+      "decisionKey": "d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad",
+      "candidateIds": [
+        "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a"
+      ],
+      "operationIds": [
+        "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad:propose:0",
+        "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad:validation:candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a",
+        "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad:audit:candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a",
+        "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad:observe:22"
+      ],
+      "configuration": {
+        "workflowId": "isolated-azure-live",
+        "policyVersion": "isolated-live-v1",
+        "definitionHash": "7af41962e1797b9b5ca2a08db01833ef51d92f56bea4ab906010364db8e338b5",
+        "workflowVersion": "1",
+        "evaluatorVersion": "authored-exact-match-v1",
+        "optimizerVersion": "azure-fragment-v1"
+      },
+      "proposalCalls": 1,
+      "definitionHash": "7af41962e1797b9b5ca2a08db01833ef51d92f56bea4ab906010364db8e338b5",
+      "artifactVersion": "8b7a61d42dcfff6b4648d4468198f49c661f1498819064492aa0fede029df19a",
+      "previousOutcomes": [],
+      "auditEvaluationId": "eval_667099dd-179c-4e38-bf2d-e7ef123b5d5b",
+      "lastObservationId": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad:observation:22",
+      "observationConfigurationHash": "195fd1cf5239090b4d22d369226ea9aa39524989d8ad72daaf2c593cb86d30b3"
+    },
+    "format": 1,
+    "revision": 25,
+    "createdAt": "2026-09-19T16:15:15.318Z",
+    "namespace": "isolated-live/1f5ff5159c8c4dd9b3a9dc8be2e89a72",
+    "updatedAt": "2026-09-19T16:15:38.619Z",
+    "accounting": {
+      "modelRequests": 14,
+      "chargedOrReservedTokens": 9085,
+      "deployments": 1,
+      "outstandingOperations": []
+    }
+  },
+  "observations": [
+    {
+      "id": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad:observation:22",
+      "data": {
+        "endedAt": "2026-09-19T16:15:38.528Z",
+        "metrics": {
+          "accuracy": 1
+        },
+        "unitIds": [
+          "subsequent-person-0",
+          "subsequent-person-1",
+          "subsequent-person-2",
+          "subsequent-person-3",
+          "subsequent-person-4",
+          "subsequent-person-5",
+          "subsequent-person-6",
+          "subsequent-person-7",
+          "subsequent-person-8"
+        ],
+        "complete": true,
+        "startedAt": "2026-09-19T16:15:36.492Z",
+        "artifactVersion": "8b7a61d42dcfff6b4648d4468198f49c661f1498819064492aa0fede029df19a",
+        "configurationHash": "195fd1cf5239090b4d22d369226ea9aa39524989d8ad72daaf2c593cb86d30b3"
+      },
+      "format": 1,
+      "revision": 1,
+      "createdAt": "2026-09-19T16:15:38.601Z",
+      "namespace": "isolated-live/1f5ff5159c8c4dd9b3a9dc8be2e89a72",
+      "updatedAt": "2026-09-19T16:15:38.601Z"
+    }
+  ],
+  "attempts": [
+    {
+      "id": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad:apply",
+      "status": "succeeded",
+      "target": {
+        "key": "isolated-support-classifier",
+        "kind": "prompt"
+      },
+      "receipt": {
+        "attemptId": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad:apply",
+        "artifactVersion": "8b7a61d42dcfff6b4648d4468198f49c661f1498819064492aa0fede029df19a",
+        "previousArtifactVersion": "ef6b3764549801ac182a16b449bd13bb4e277d840199c524f30b745eeefd9744"
+      },
+      "revision": 2,
+      "createdAt": "2026-09-19T16:15:36.425Z",
+      "namespace": "isolated-live/1f5ff5159c8c4dd9b3a9dc8be2e89a72",
+      "operation": "apply",
+      "updatedAt": "2026-09-19T16:15:36.492Z",
+      "candidateId": "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a",
+      "expectedArtifactVersion": "ef6b3764549801ac182a16b449bd13bb4e277d840199c524f30b745eeefd9744"
+    }
+  ],
+  "result": {
+    "at": "2026-09-19T16:15:38.634Z",
+    "runId": "run_d209903abbb3f8feaee7d55c8d3e77d0a5320566a3304d8483bf6b7399125bad",
+    "state": "completed",
+    "reason": "offline_pass_and_production_limits_met_not_causal_proof",
+    "candidateIds": [
+      "candidate_f648b7516e260eaa375708b2845cd2b32c7dc4e11d19f74c51538bc40fa1205a"
+    ],
+    "budget": {
+      "modelRequests": 14,
+      "tokens": 9085,
+      "deployments": 1
+    }
+  },
+  "usage": {
+    "requests": 15,
+    "actualOrReservedTokens": 9648,
+    "dollarCost": null,
+    "priceNote": "Azure billing is authoritative; no dollar cost invented."
+  }
+}

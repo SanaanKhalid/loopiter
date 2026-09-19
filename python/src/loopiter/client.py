@@ -66,10 +66,14 @@ class FeedbackLoop:
         callback_timeout: float = 120,
         sanitize: Callable[[Any], Awaitable[Any]] | None = None,
         deployments_enabled: Callable[[], bool] | None = None,
+        clock: Callable[[], str] | None = None,
     ):
         v.nonempty(namespace, "namespace")
-        if type(getattr(store, "version", None)) is not int or store.version != 1:
-            v.fail("invalid_input", "Python FeedbackStore contract version 1 required.")
+        if type(getattr(store, "version", None)) is not int or store.version != 2:
+            v.fail(
+                "migration_required",
+                "Python FeedbackStore contract version 2 required. Apply the explicit migration.",
+            )
         for name in ("transaction", "delete_namespace", "close"):
             if not callable(getattr(store, name, None)):
                 v.fail("invalid_input", f"Store missing {name}.")
@@ -83,6 +87,12 @@ class FeedbackLoop:
         self._store, self._namespace = store, namespace
         self.maximum_payload_bytes, self.callback_timeout = maximum_payload_bytes, callback_timeout
         self.sanitize, self.deployments_enabled = sanitize, deployments_enabled
+        self.clock = clock or v.now
+
+    def now(self):
+        value = self.clock()
+        v.timestamp(value)
+        return value
 
     @property
     def namespace(self) -> str:
@@ -93,7 +103,7 @@ class FeedbackLoop:
         return self._store
 
     def _base(self, prefix: str, key: str | None = None) -> Record:
-        now = v.now()
+        now = self.now()
         return {
             "id": key or f"{prefix}_{uuid4()}",
             "namespace": self.namespace,
@@ -102,11 +112,10 @@ class FeedbackLoop:
             "updated_at": now,
         }
 
-    @staticmethod
-    def _next(row: Record, **updates) -> Record:
+    def _next(self, row: Record, **updates) -> Record:
         result = deepcopy(row)
         result.update(updates)
-        result.update(revision=row["revision"] + 1, updated_at=max(v.now(), row["updated_at"]))
+        result.update(revision=row["revision"] + 1, updated_at=max(self.now(), row["updated_at"]))
         return result
 
     async def _prepare(self, raw: Any) -> Any:
@@ -205,7 +214,7 @@ class FeedbackLoop:
             **self._base("execution", data.get("id")),
             "artifacts": {},
             "metadata": {},
-            "started_at": v.now(),
+            "started_at": self.now(),
             **data,
             "input_hash": v.fingerprint(data),
         }
@@ -230,7 +239,7 @@ class FeedbackLoop:
             row = await self._read(tx, "executions", key, required=True)
             updated = self._next(row, **data)
             updated["metadata"] = {**row["metadata"], **data.get("metadata", {})}
-            updated["completed_at"] = data.get("completed_at", v.now())
+            updated["completed_at"] = data.get("completed_at", self.now())
             v.stored("executions", updated, self.namespace)
             await tx.replace("executions", updated, expected_revision)
             return updated
@@ -243,7 +252,7 @@ class FeedbackLoop:
             **self._base("signal", data.get("id")),
             "confidence": 1,
             "metadata": {},
-            "observed_at": v.now(),
+            "observed_at": self.now(),
             **data,
             "input_hash": v.fingerprint(data),
         }
@@ -326,7 +335,12 @@ class FeedbackLoop:
                 "evaluator": evaluator_name,
                 "version": version,
                 "dataset_hash": dataset_hash,
-                "created_at": v.now(),
+                "created_at": self.now(),
+                **(
+                    {"baseline_hash": v.fingerprint(current["baseline"])}
+                    if "baseline" in current
+                    else {}
+                ),
             }
             updated = self._next(
                 current, status="evaluated", evaluations=[*current["evaluations"], evaluation]
@@ -341,10 +355,14 @@ class FeedbackLoop:
             )
             return updated
 
-    async def approve_candidate(self, key: str, *, actor: str, evaluation_id: str) -> Record:
+    async def approve_candidate(
+        self, key: str, *, actor: str, evaluation_id: str, authorization: Record | None = None
+    ) -> Record:
         v.nonempty(actor, "actor")
         v.nonempty(evaluation_id, "evaluation_id")
         async with self.store.transaction(self.namespace) as tx:
+            if authorization:
+                await self._authorize_autonomous(tx, key, authorization)
             current = await self._read(tx, "candidates", key, required=True)
             await self._unlocked(tx, current)
             latest = current["evaluations"][-1] if current["evaluations"] else {}
@@ -361,7 +379,7 @@ class FeedbackLoop:
                     "actor": actor,
                     "evaluation_id": evaluation_id,
                     "candidate_hash": current["content_hash"],
-                    "approved_at": v.now(),
+                    "approved_at": self.now(),
                 },
             )
             await tx.replace("candidates", updated, current["revision"])
@@ -369,6 +387,36 @@ class FeedbackLoop:
                 tx, "candidate.approved", key, actor=actor, evaluation_id=evaluation_id
             )
             return updated
+
+    async def _authorize_autonomous(self, tx, key, authorization):
+        v.fields(authorization, ["run_id", "lease_owner"], ("run_id", "lease_owner"))
+        run = await self._read(tx, "runs", authorization["run_id"], required=True)
+        d = run["data"]
+        control = await self._read(tx, "coordination", "workflow:" + d["workflow_id"])
+        c = control["data"] if control else {}
+        candidate = await self._read(tx, "candidates", key, required=True)
+        if (
+            not isinstance(d.get("audit_evaluation_id"), str)
+            or not candidate["evaluations"]
+            or candidate["evaluations"][-1]["id"] != d["audit_evaluation_id"]
+        ):
+            v.fail(
+                "audit_evaluation_conflict",
+                "Autonomous approval/deployment requires the exact recorded audit.",
+            )
+        if (
+            d.get("lease_owner") != authorization["lease_owner"]
+            or v.timestamp(d["lease_until"]) <= v.timestamp(self.now())
+            or d.get("selected_id") != key
+            or d.get("state") not in ("selected", "deploying")
+            or c.get("paused") is True
+            or c.get("mode") != "autonomous"
+            or c.get("self_improving") is not True
+            or c.get("definition_hash") != d["definition_hash"]
+        ):
+            v.fail(
+                "autonomy_not_authorized", "Current durable controller authorization is required."
+            )
 
     async def reject_candidate(self, key: str, *, reason: str) -> Record:
         v.nonempty(reason, "reason")
@@ -400,24 +448,66 @@ class FeedbackLoop:
             )
 
     async def deploy_candidate(
-        self, key: str, adapter: DeploymentAdapter, *, expected_artifact_version: Any = _UNSET
+        self,
+        key: str,
+        adapter: DeploymentAdapter,
+        *,
+        expected_artifact_version: Any = _UNSET,
+        attempt_id: str | None = None,
+        authorization: Record | None = None,
     ) -> Record:
-        return await self._start(key, adapter, "apply", expected_artifact_version)
+        return await self._start(
+            key, adapter, "apply", expected_artifact_version, attempt_id, authorization
+        )
 
-    async def rollback_candidate(self, key: str, adapter: DeploymentAdapter) -> Record:
-        return await self._start(key, adapter, "rollback", _UNSET)
+    async def rollback_candidate(
+        self,
+        key: str,
+        adapter: DeploymentAdapter,
+        *,
+        attempt_id: str | None = None,
+        expected_artifact_version: Any = _UNSET,
+    ) -> Record:
+        return await self._start(key, adapter, "rollback", expected_artifact_version, attempt_id)
 
     async def _start(
-        self, key: str, adapter: DeploymentAdapter, operation: str, expected: Any
+        self,
+        key: str,
+        adapter: DeploymentAdapter,
+        operation: str,
+        expected: Any,
+        attempt_id: str | None,
+        authorization: Record | None = None,
     ) -> Record:
         self._adapter(adapter)
+        if attempt_id is not None:
+            v.nonempty(attempt_id, "attempt_id")
+            async with self.store.transaction(self.namespace) as tx:
+                prior = await self._read(tx, "attempts", attempt_id)
+            if prior:
+                if prior["candidate_id"] != key or prior["operation"] != operation:
+                    v.fail("conflict", "Attempt belongs to a different operation.")
+                return await self.reconcile_deployment(attempt_id, adapter)
         if expected is not _UNSET and expected is not None:
             v.nonempty(expected, "expected_artifact_version")
         async with self.store.transaction(self.namespace) as tx:
             if operation == "apply":
                 self._enabled()
+                if authorization:
+                    await self._authorize_autonomous(tx, key, authorization)
             candidate = await self._read(tx, "candidates", key, required=True)
             target_id = v.fingerprint(candidate["target"])
+            coordination = await self._read(tx, "coordination", "target:" + target_id)
+            if (
+                operation == "apply"
+                and coordination
+                and coordination["data"].get("active_run")
+                and coordination["data"]["active_run"] != (authorization or {}).get("run_id")
+            ):
+                v.fail(
+                    "target_busy",
+                    "An improvement cycle owns this target. Finish observation or recover before a separate deployment.",
+                )
             previous = await self._read(tx, "targets", target_id)
             await self._unlocked(tx, candidate)
             if operation == "apply" and candidate["status"] != "approved":
@@ -432,12 +522,22 @@ class FeedbackLoop:
             version = (
                 previous.get("artifact_version")
                 if previous and "artifact_version" in previous
-                else (None if expected is _UNSET else expected)
+                else (
+                    candidate.get("baseline", {}).get("artifact_version")
+                    if expected is _UNSET
+                    else expected
+                )
             )
+            if (
+                operation == "apply"
+                and "baseline" in candidate
+                and candidate["baseline"]["artifact_version"] != version
+            ):
+                v.fail("stale_baseline", "Candidate evaluated against another artifact version.")
             if expected is not _UNSET and version != expected:
                 v.fail("conflict", "Active artifact version differs from expected version.")
             attempt = {
-                **self._base("attempt"),
+                **self._base("attempt", attempt_id),
                 "target": candidate["target"],
                 "candidate_id": key,
                 "operation": operation,
@@ -596,6 +696,7 @@ class FeedbackLoop:
                     ):
                         v.fail("conflict", "Active candidate changed during rollback.")
                     updated["status"] = "rolled_back"
+                    updated["rollback_receipt"] = receipt
                     updated_state.pop("active_candidate_id", None)
                     if attempt.get("restore_candidate_id"):
                         restore = await self._read(

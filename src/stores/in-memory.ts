@@ -26,6 +26,7 @@ export const collections: Collection[] = [
   "attempts",
   "events",
   "historical",
+  "runs", "operations", "budgets", "observations", "coordination",
 ];
 export function validateRecord(namespace: string, record: RecordBase): void {
   json(record, 16 * 1024 * 1024);
@@ -43,7 +44,7 @@ export function pageOptions(options: PageOptions = {}): number {
   return limit;
 }
 export class InMemoryStore implements FeedbackStore {
-  readonly version = 2 as const;
+  readonly version = 3 as const;
   protected state: MemoryState = Object.create(null) as MemoryState;
   protected pending: Promise<unknown> = Promise.resolve();
   protected async load(): Promise<void> {}
@@ -123,7 +124,7 @@ export class InMemoryStore implements FeedbackStore {
           validateRecord(namespace, record);
           integer(expected, "expectedRevision");
           const b = bucket(kind);
-          if (["signals", "events", "historical"].includes(kind))
+          if (["signals", "events", "historical", "observations"].includes(kind))
             fail("immutable_record", "Collection is insert-only.");
           if (
             !Object.hasOwn(b, record.id) ||

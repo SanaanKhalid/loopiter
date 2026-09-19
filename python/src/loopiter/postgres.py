@@ -14,7 +14,10 @@ if TYPE_CHECKING:
 
 def migration_sql() -> str:
     """Return versioned SQL for the application's migration process; execute explicitly."""
-    return files("loopiter").joinpath("migrations/001-python-store.sql").read_text(encoding="utf-8")
+    return "\n".join(
+        files("loopiter").joinpath("migrations/" + name).read_text(encoding="utf-8")
+        for name in ("001-python-store.sql", "002-autonomy.sql")
+    )
 
 
 class PostgresTransaction:
@@ -98,7 +101,7 @@ class PostgresTransaction:
         self._check(collection)
         v.stored(collection, record, self.namespace)
         v.integer(expected_revision, "expected_revision")
-        if collection in ("signals", "events"):
+        if collection in ("signals", "events", "observations"):
             v.fail("immutable_record", "Collection is insert-only.")
         if record["revision"] != expected_revision + 1:
             v.fail("conflict", "Replacement revision must increment by one.")
@@ -127,7 +130,7 @@ class PostgresStore:
     concurrently. Configure pool timeouts/TLS/DB statement limits in your app.
     """
 
-    version = 1
+    version = 2
 
     def __init__(self, pool: "AsyncConnectionPool"):
         if not callable(getattr(pool, "connection", None)):
@@ -147,6 +150,22 @@ class PostgresStore:
                 )
                 tx = PostgresTransaction(namespace, connection)
                 try:
+                    installed = await tx._query(
+                        "SELECT to_regclass('loopiter_python_schema_migrations')", ()
+                    )
+                    if not installed or not installed[0][0]:
+                        v.fail(
+                            "migration_required",
+                            "Database uninitialized. Review and explicitly run migration_sql; construction never changes your schema.",
+                        )
+                    schema = await tx._query(
+                        "SELECT max(version) FROM loopiter_python_schema_migrations", ()
+                    )
+                    if not schema or schema[0][0] != 2:
+                        v.fail(
+                            "migration_required",
+                            "Store v2 requires explicit SQL migration 002-autonomy.sql. Stop old writers and back up first.",
+                        )
                     yield tx
                 finally:
                     tx.active = False

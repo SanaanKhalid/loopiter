@@ -1,8 +1,27 @@
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { InMemoryStore, type MemoryState } from "./in-memory.js";
-import { fail, id, json } from "../utils.js";
+import { fail, id, json, object } from "../utils.js";
+import { stored } from "../validation.js";
+import type { Collection, Collections } from "../contracts.js";
 const owners = new Set<string>();
+/** Explicit copy-only v2 -> v3 migration. The original and existing destination are never overwritten. */
+export async function migrateJsonV2(source:string,destination:string):Promise<void>{
+  if(resolve(source)===resolve(destination))fail('invalid_input','Migration requires a different destination.');
+  const input=JSON.parse(await readFile(source,'utf8'));
+  json(input,128*1024*1024);object(input,'JSON export');
+  if(input.version!==2)fail('migration_required','Expected a v2 JSON store.');
+  object(input.namespaces,'namespaces');
+  for(const [namespace,buckets] of Object.entries(input.namespaces)){
+    object(buckets,'collections');
+    for(const [kind,rows] of Object.entries(buckets)){
+      if(!['executions','signals','candidates','targets','attempts','events','historical'].includes(kind))fail('migration_required','Unknown v2 collection.');
+      object(rows,'records');for(const [key,row] of Object.entries(rows)){stored(kind as Collection,row as unknown as Collections[Collection],namespace);if((row as {id:string}).id!==key)fail('integrity_error','Record key does not match its ID.');}
+    }
+  }
+  const file=await open(destination,'wx',0o600);
+  try{await file.writeFile(JSON.stringify({...input,version:3}));await file.sync();}finally{await file.close();}
+}
 /** Development only: one instance per path per process; no inter-process locking. */
 export class JsonFileStore extends InMemoryStore {
   readonly filePath: string;
@@ -25,13 +44,13 @@ export class JsonFileStore extends InMemoryStore {
       };
       json(document, 128 * 1024 * 1024);
       if (
-        document.version !== 2 ||
+        document.version !== 3 ||
         !document.namespaces ||
         Array.isArray(document.namespaces)
       )
         fail(
           "migration_required",
-          "Expected v2 JSON. Use explicit legacy import; the original file is never changed automatically.",
+          "Expected v3 JSON. Explicitly migrate a copy; preserve the original file.",
         );
       this.state = Object.assign(
         Object.create(null),
@@ -47,7 +66,7 @@ export class JsonFileStore extends InMemoryStore {
     const temporary = `${this.filePath}.${id("write")}.tmp`;
     const file = await open(temporary, "wx", 0o600);
     try {
-      await file.writeFile(JSON.stringify({ version: 2, namespaces: next }));
+      await file.writeFile(JSON.stringify({ version: 3, namespaces: next }));
       await file.sync();
     } finally {
       await file.close();

@@ -1,0 +1,27 @@
+{
+  "policy": {
+    "version": "simulation-v1",
+    "target": {"kind": "prompt", "key": "test-classifier"},
+    "changeSchema": {"type": "object", "properties": {"score": {"type": "number", "minimum": 0, "maximum": 1}}, "required": ["score"], "additionalProperties": false},
+    "objective": {"metric": "accuracy", "direction": "maximize", "minimumImprovement": 0.05, "range": [0, 1], "alpha": 0.05},
+    "guardrails": [{"metric": "errors", "comparator": "lte", "value": 0.2}],
+    "trustedSources": ["verified-human"],
+    "minimumNewUnits": 3, "minimumValidationUnits": 20, "minimumAuditUnits": 50,
+    "outcomeMaturityMs": 3600000, "maximumRows": 1000,
+    "daily": {"modelRequests": 5, "tokens": 1000, "deployments": 1},
+    "callbackReservation": {"modelRequests": 2, "tokens": 300},
+    "cooldownMs": 0, "rollout": {"mode": "immediate"},
+    "observation": {"minimumDurationMs": 3600000, "timeoutMs": 86400000, "minimumUnits": 10, "guardrails": [{"metric": "errors", "comparator": "lte", "value": 0.2}], "onTimeout": "rollback", "onFailure": "rollback"},
+    "onInsufficientEvidence": "wait", "onUncertainDeployment": "reconcile"
+  },
+  "scenarios": [
+    {"name": "accepted", "scores": [0.95, 0.85], "errors": 0, "expected": "completed"},
+    {"name": "rejected", "scores": [0], "errors": 0, "expected": "no_improvement"},
+    {"name": "guardrail", "scores": [1], "errors": 0.3, "expected": "no_improvement"},
+    {"name": "insufficient", "scores": [1], "errors": 0, "expected": "waiting_for_evidence"},
+    {"name": "interrupted", "scores": [1], "errors": 0, "expected": "completed"},
+    {"name": "regression", "scores": [1], "errors": 0, "productionErrors": 0.5, "expected": "rolled_back"},
+    {"name": "delayed", "scores": [1], "errors": 0, "expected": "observing"},
+    {"name": "missing", "scores": [1], "errors": 0, "expected": "rolled_back"}
+  ]
+}

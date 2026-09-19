@@ -47,6 +47,8 @@ def main():
             names = archive.namelist()
             assert "loopiter/py.typed" in names
             assert "loopiter/migrations/001-python-store.sql" in names
+            assert "loopiter/migrations/002-autonomy.sql" in names
+            assert "loopiter/improvement.py" in names
             metadata = archive.read(
                 next(n for n in names if n.endswith("/METADATA"))
             ).decode()
@@ -96,6 +98,27 @@ print('Clean consumer capture/conformance/migration smoke passed')
                 "-I",
                 str(PACKAGE / "examples/reviewed_loop.py"),
                 "--interrupt",
+                cwd=work,
+            )
+            run(
+                str(python),
+                "-I",
+                "-c",
+                """
+import asyncio, pathlib, sys, loopiter
+assert not pathlib.Path(loopiter.__file__).is_relative_to(pathlib.Path(sys.argv[1]))
+# Only application examples are imported from checkout; SDK resolves to the installed artifact.
+sys.path.insert(0, sys.argv[2])
+from autonomous_demo import run_demo
+async def smoke():
+    for path, expected in [('accepted', 'completed'), ('regression', 'rolled_back')]:
+        report = await run_demo('prompt', path)
+        assert report['result']['state'] == expected, report['result']
+    print('Installed SDK simulated autonomous cycle and rollback passed')
+asyncio.run(smoke())
+""",
+                str(ROOT),
+                str(PACKAGE / "examples"),
                 cwd=work,
             )
     print("Python wheel + sdist consumer smoke passed; nothing published.")

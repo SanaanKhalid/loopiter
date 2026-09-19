@@ -17,8 +17,8 @@ against representative complete tasks, not just individual tool calls; correlate
 steps in one episode must not become many independent samples. Limit model calls,
 latency, cost and privileges in the agent's own execution layer.
 
-Only low-risk prompt/routing targets can be explicitly enabled for experimental
-automatic apply, and the adapter must support inspection and real rollback. Applying
+Only explicitly allowed prompt/routing targets can be enabled for autonomous
+execution, with a complete policy and adapters supporting inspection and real rollback. Applying
 a prompt change to an agent with privileged tools may not actually be low risk:
 the recipe author and application policy must make that decision honestly.
 

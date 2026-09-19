@@ -4,14 +4,17 @@ title: Loopiter reliable alpha
 
 Loopiter is an MIT-licensed SDK that coordinates feedback-driven AI
 improvements. It is not an LLM, trainer, hosted observability service or rollout daemon.
-The published alpha is `0.2.0-alpha.1`, supporting Node.js 22 and 24 as an ESM library
+The **0.3 alpha** (`0.3.0-alpha.1` on npm; `0.3.0a1` on PyPI) adds
+[opt-in autonomous improvement](/closing-the-loop/opt-in-autonomous-improvement) in both SDKs.
+Autonomy remains disabled by default. The alpha supports Node.js 22 and 24 as an ESM library
 with **zero core runtime dependencies**. Formerly Feloop.
 
 A native **Python 3.11+ alpha** is also available, with
 capture, analysis, reviewed deployment and an optional PostgreSQL adapter. Python
-installation via `python -m pip install 'loopiter==0.2.0a1'`. Start with the
+installation via `python -m pip install 'loopiter==0.3.0a1'`. Start with the
 [Python quickstart](/get-started/python-quickstart) for installation and explicit
-language differences. The controller and OpenAI/Azure starter below remain Node-only.
+language differences. Both SDKs have native controllers and optional provider examples;
+the original reviewed classification CLI below remains Node-only.
 
 Use the **Node.js** and **Python** tabs at the top of the docs to switch SDK guides.
 Both packages are named `loopiter`, but npm and PyPI distribute separate SDKs.
@@ -20,7 +23,7 @@ Both packages are named `loopiter`, but npm and PyPI distribute separate SDKs.
 <Tab title="Node.js" language="typescript">
 
 ```sh
-npm install loopiter@0.2.0-alpha.1
+npm install loopiter@0.3.0-alpha.1
 ```
 
 Requires Node.js 22 or 24. Follow the [Node.js quickstart](/get-started/quickstart).
@@ -29,7 +32,7 @@ Requires Node.js 22 or 24. Follow the [Node.js quickstart](/get-started/quicksta
 <Tab title="Python" language="python">
 
 ```sh
-python -m pip install 'loopiter==0.2.0a1'
+python -m pip install 'loopiter==0.3.0a1'
 ```
 
 Requires Python 3.11+. Follow the [Python quickstart](/get-started/python-quickstart).
@@ -56,7 +59,8 @@ callbacks. Loopiter stores evidence, bounds orchestration and protects lifecycle
 - Durable deployment attempts, target reservations, receipts, inspect/reconcile and
   explicit predecessor-based rollback through your deployment adapter.
 - A v2 database contract, optional PostgreSQL 16/17 reference adapter and conformance suite.
-- Review-first controller with limited experimental prompt/routing auto-apply.
+- Review-first defaults with explicitly enabled prompt/routing autonomy, independent audit,
+  production observation and automatic rollback through application adapters.
 - A complete standalone PostgreSQL/OpenAI or Azure OpenAI support-intent starter, plus offline fixtures.
 
 ## What does not ship

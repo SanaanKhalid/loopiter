@@ -158,7 +158,7 @@ export default function Home() {
             <div className="mode-row"><span>01</span><strong>OBSERVE</strong><p>Detect and rank findings.</p><b>NO MUTATION</b></div>
             <div className="mode-row"><span>02</span><strong>RECOMMEND</strong><p>Create reviewable improvement candidates.</p><b>HUMAN REVIEW</b></div>
             <div className="mode-row"><span>03</span><strong>EXPERIMENT</strong><p>Run your evaluator. Callbacks are application-owned, not sandboxed.</p><b>NO AUTO-DEPLOY</b></div>
-            <div className="mode-row selected"><span>04</span><strong>APPLY</strong><p>Explicitly opt in to low-risk prompt and routing changes.</p><b>EXPERIMENTAL</b></div>
+            <div className="mode-row selected"><span>04</span><strong>AUTONOMOUS</strong><p>Enable the self-improvement flag and an exact prompt/routing policy. Evaluate, deploy, observe, retain or roll back.</p><b>OPT-IN ALPHA</b></div>
           </div>
         </section>
 
@@ -175,7 +175,7 @@ export default function Home() {
             <h2>Your evidence. Your policies. Your decision to deploy.</h2>
           </div>
           <div className="safety-grid">
-            <article><span>01</span><h3>Explicit risk ceiling</h3><p>Recipes declare risk. Experimental automatic application accepts only low-risk prompts and routing.</p></article>
+            <article><span>01</span><h3>Explicit change boundaries</h3><p>Autonomy is off by default. Allow exact prompt or routing targets, bounded fields, and daily budgets.</p></article>
             <article><span>02</span><h3>Versioned evaluation</h3><p>Approval references the exact candidate, evidence, evaluator version, and passing evaluation.</p></article>
             <article><span>03</span><h3>Application-owned boundaries</h3><p>Keep authentication, authorization, tool allowlists, and evaluator code outside generated artifacts.</p></article>
             <article><span>04</span><h3>Recoverable deployment</h3><p>Transactional state, explicit predecessors, and adapter receipts support inspection and rollback after failures.</p></article>
@@ -193,7 +193,7 @@ export default function Home() {
         <footer className="site-footer">
           <div className="brand"><Mark /><span>Loopiter</span></div>
           <p>A lightweight control plane for measurable AI improvement.</p>
-          <div><a href={docsHref()}>Docs</a><a href="https://github.com/SanaanKhalid/loopiter">GitHub</a><span>v0.2.0-alpha.1</span></div>
+          <div><a href={docsHref()}>Docs</a><a href="https://loopiter.docs.buildwithfern.com/get-started/release-validation">Validation</a><a href="https://github.com/SanaanKhalid/loopiter">GitHub</a><span>v0.3.0-alpha.1</span></div>
         </footer>
       </div>
     </main>

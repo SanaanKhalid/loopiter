@@ -23,6 +23,8 @@ test("failed PostgreSQL rollback discards the checked-out connection", async () 
       return {
         query: async (sql: string) => {
           if (sql === "ROLLBACK") throw new Error("connection lost");
+          if(sql.includes('to_regclass'))return {rows:[{installed:'feloop_schema_migrations'}],rowCount:1};
+          if(sql.includes('max(version)'))return {rows:[{version:2}],rowCount:1};
           return { rows: [], rowCount: 0 };
         },
         release: (error) => {
@@ -214,7 +216,7 @@ test("malformed adapter namespace and risk fail closed", async () => {
     loop = new FeedbackLoop({ store: real, namespace: "test" });
   await approved(loop, "a");
   const faulty: FeedbackStore = {
-    version: 2,
+    version: 3,
     close: () => real.close(),
     deleteNamespace: (n) => real.deleteNamespace(n),
     transaction: <T>(n: string, fn: (tx: StoreTransaction) => Promise<T>) =>
@@ -297,7 +299,7 @@ test("adapter falsy records and malformed pages cannot masquerade as absence", a
   const real = new InMemoryStore();
   for (const result of [false, null, ""]) {
     const faulty: FeedbackStore = {
-      version: 2,
+      version: 3,
       close: () => real.close(),
       deleteNamespace: (n) => real.deleteNamespace(n),
       transaction: <T>(n: string, fn: (tx: StoreTransaction) => Promise<T>) =>

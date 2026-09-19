@@ -78,31 +78,29 @@ test("invalid risk and autonomy fail closed without deployment", async () => {
   assert.equal(result.candidates.length, 0);
   assert.equal(result.blocked[0]?.reason, "run_failed");
 });
-test("auto-apply requires opt-in and constraints; valid low-risk apply works", async () => {
+test("obsolete auto-apply is rejected even with its former opt-in", async () => {
   const { controller } = await setup();
   const x = input();
-  x.policy.autonomy = "apply";
+  x.policy.autonomy = "apply" as never;
   x.deploymentAdapter = new Registry();
   await assert.rejects(controller.run(x));
-  x.policy.experimentalAutoApply = true;
+  Object.assign(x.policy,{experimentalAutoApply:true});
   x.policy.constraints = [
     { metric: "accuracy", comparator: "gte", value: 0.95 },
   ];
-  assert.equal((await controller.run(x)).deployed.length, 1);
+  await assert.rejects(controller.run(x), {code:'migration_required'});
 });
 test("failed constraints and higher risk never auto-deploy", async () => {
   const { controller } = await setup();
   const x = input();
-  x.policy = {
+  Object.assign(x.policy, {
     autonomy: "apply",
     experimentalAutoApply: true,
     allowedTargets: ["prompt"],
     constraints: [{ metric: "missing", comparator: "gte", value: 1 }],
-  };
+  });
   x.deploymentAdapter = new Registry();
-  const result = await controller.run(x);
-  assert.equal(result.deployed.length, 0);
-  assert.equal(result.blocked[0]?.reason, "evaluation_failed");
+  await assert.rejects(controller.run(x), {code:'migration_required'});
 });
 test("timeout ignores late proposals", async () => {
   const { controller, loop } = await setup();

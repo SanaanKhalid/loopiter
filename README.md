@@ -1,15 +1,30 @@
 # Loopiter
 
+## 0.3 opt-in autonomous alpha
+
+Release versions: `loopiter@0.3.0-alpha.1` and Python `loopiter==0.3.0a1`.
+It adds opt-in, policy-bounded `ImprovementController` APIs in both languages, durable
+experiments, single-winner selection, production observation and recovery. Default
+behavior remains recommendations. Installation never enables autonomous production changes.
+
+See [autonomy guide source](fern/pages/autonomous.mdx), [migration](docs/autonomy-migration.md),
+[simulation workflows](examples/autonomous/README.md), and the
+[release gates](docs/autonomy-release-checklist.md), and [mock support integration results](reports/mock-support-summary.md).
+
+The [isolated Azure live demonstration](reports/autonomy-live-azure-summary.md) now records
+one completed Node cycle and receipt recovery with live calls and synthetic labels—not
+production customer-impact evidence. The earlier no-change result is retained too.
+
 A lightweight SDK for **reviewed, evidence-driven AI improvements**, with
 Node.js/TypeScript and native Python alphas.
 Capture executions and feedback, find recurring scored segments, evaluate an
 immutable candidate, approve it, and coordinate deployment or rollback through
 your infrastructure. Loopiter is a library, not a hosted service or autonomous trainer.
 
-Published alpha: **0.2.0-alpha.1**, MIT, ESM, Node.js **22 and 24**. No core runtime
+Published alpha: **0.3.0-alpha.1**, MIT, ESM, Node.js **22 and 24**. No core runtime
 dependencies, telemetry, database driver, scheduler, model client, or background daemon.
 Loopiter is the new name of Feloop. Install with
-`npm install loopiter@0.2.0-alpha.1` or follow the alpha channel with `npm install loopiter@alpha`.
+`npm install loopiter@0.3.0-alpha.1` or follow the alpha channel with `npm install loopiter@alpha`.
 
 [Canonical documentation](https://loopiter.docs.buildwithfern.com/get-started/overview)
 · [Starter](examples/prompt-improvement/README.md)
@@ -22,12 +37,12 @@ Python 3.11+ now has a native async SDK in [`python/`](python/README.md): captur
 structured analysis, evaluation, explicit approval, deployment, rollback, recovery,
 and optional PostgreSQL. The core has no runtime dependencies and requires no Node.js.
 
-Install with `python -m pip install 'loopiter==0.2.0a1'`, or
-`python -m pip install 'loopiter[postgres]==0.2.0a1'` for PostgreSQL support.
+Install with `python -m pip install 'loopiter==0.3.0a1'`, or
+`python -m pip install 'loopiter[postgres]==0.3.0a1'` for PostgreSQL support.
 From a repository checkout, run `python python/examples/reviewed_loop.py`.
 See the [Python guide](python/README.md) for setup and language boundaries.
-The first Python alpha does not port the Node automation controller or OpenAI starter;
-its database records/locks are deliberately separate from Node's.
+The 0.3 Python alpha includes the native controller and optional application-side provider examples;
+database records/locks remain deliberately separate from Node's.
 
 ## Try the source and starter
 

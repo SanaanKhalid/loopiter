@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0-alpha.1 / Python 0.3.0a1 — 2026-09-19
+
+- Add opt-in autonomous controllers with exact-target policies and namespace-scoped durable runs.
+- Bind candidates to baseline artifacts/configuration; select one validation winner and independently audit it.
+- Persist leases, callback attempts, budgets, audit consumption and immutable observations.
+- Add immediate observation/rollback and optional application-owned canary coordination.
+- Add trusted-source/partition helpers, paired audit bounds, stable cohort assignment and repeated-failure stops.
+- Add three simulated application workflows in both languages; providers and scientific libraries remain outside core.
+- Introduce explicit Node store v3 / Python store v2 migrations, preserving legacy records and rollback lineage.
+- Reject the former experimental auto-apply authorization path. No automatic training, code modification or agent spawning.
+- Retain isolated Azure model-backed evidence and an HTTP/PostgreSQL mock support lab covering retain, rejection, regression rollback and missing-feedback timeout. Synthetic inputs are explicitly labeled.
+- Update both language guides, migration/reference documentation and landing-page autonomy descriptions. Production enablement remains a separate application decision.
+
 ## Python 0.2.0a1 — published 2026-09-12
 
 - Add a native async Python 3.11+ package with a dependency-free core; Node remains unchanged.

@@ -1,0 +1,49 @@
+{
+  "generatedAt": "2026-09-19T16:11:44.215Z",
+  "release": "0.3.0-alpha.1",
+  "evidence": "LIVE Azure inference; authored synthetic labels; isolated local PostgreSQL serving registry; real wall clock",
+  "deployment": "gpt-4o",
+  "endpointHost": "sanaa-mivj3t3c-eastus2.cognitiveservices.azure.com",
+  "database": "loopiter_live_5f32ca7fea784129ab352421388a5bbc",
+  "limits": {
+    "requests": 30,
+    "tokens": 120000,
+    "reservation": 16000,
+    "outputTokens": 1200,
+    "inputBytes": 12000
+  },
+  "requests": [
+    {
+      "ordinal": 1,
+      "stage": "baseline-corrections",
+      "status": "pending",
+      "reservedTokens": 16000
+    }
+  ],
+  "transitions": [],
+  "limitations": [
+    "Deliberately weak baseline; not a claim about improving an already optimized model.",
+    "Synthetic template-derived data is not a representative independent customer sample; bound arithmetic is not calibrated production confidence.",
+    "Observation uses fresh live predictions with synthetic ground truth, not real customer traffic.",
+    "Lost deployment receipt is injected; recovery behavior is real.",
+    "No publication, Azure resource provisioning or production enablement."
+  ],
+  "baseline": {
+    "version": "cfbd4f9d86ff768480fb1bc9f68e4c7ad24515523b4dd780add7fbea3645ed41",
+    "configurationHash": "e73e8e850aeb87b283f5429b357db77fedead85df06223da0e5ea9270161a225",
+    "artifact": {
+      "fragment": "For every request return other. This is an intentionally incomplete fallback rule."
+    }
+  },
+  "error": {
+    "name": "Error",
+    "code": null,
+    "message": "OpenAI request failed (HTTP 401); no automatic retry."
+  },
+  "usage": {
+    "requests": 1,
+    "actualOrReservedTokens": 16000,
+    "dollarCost": null,
+    "priceNote": "Azure billing is authoritative; no dollar cost invented."
+  }
+}

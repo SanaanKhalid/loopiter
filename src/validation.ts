@@ -99,8 +99,14 @@ export function candidateInput(value: unknown): void {
     "evidence",
     "risk",
     "metadata",
+    "baseline",
   ]);
   target(value.target);
+  if (value.baseline !== undefined) {
+    fields(value.baseline, ["artifactVersion", "configurationHash"]);
+    if (value.baseline.artifactVersion !== null) nonempty(value.baseline.artifactVersion, "baseline version");
+    nonempty(value.baseline.configurationHash, "baseline configurationHash");
+  }
   if (
     !Object.hasOwn(value, "proposedChange") ||
     !Object.hasOwn(value, "evidence")
@@ -162,6 +168,7 @@ export function stored<K extends Collection>(
     object(r.metadata, "metadata");
   } else if (kind === "candidates") {
     const r = row as Collections["candidates"];
+    if(r.baseline!==undefined){fields(r.baseline,['artifactVersion','configurationHash']);if(r.baseline.artifactVersion!==null)nonempty(r.baseline.artifactVersion,'baseline version');nonempty(r.baseline.configurationHash,'baseline configuration');}
     target(r.target);
     enumeration(r.risk, risks, "stored risk");
     enumeration(
@@ -185,6 +192,7 @@ export function stored<K extends Collection>(
           proposedChange: r.proposedChange,
           risk: r.risk,
           metadata: r.metadata,
+          ...(r.baseline ? { baseline: r.baseline } : {}),
         }) ||
       r.evidenceHash !== hash(r.evidence)
     )
@@ -204,6 +212,7 @@ export function stored<K extends Collection>(
       nonempty(e.version, "evaluator version");
       nonempty(e.datasetHash, "dataset hash");
       timestamp(e.createdAt, "evaluation time");
+      if (r.baseline && e.baselineHash !== hash(r.baseline)) fail("integrity_error", "Evaluation baseline mismatch.");
       if (
         e.candidateHash !== r.contentHash ||
         e.evidenceHash !== r.evidenceHash
@@ -232,6 +241,7 @@ export function stored<K extends Collection>(
     )
       fail("integrity_error", "Approved lifecycle record has no approval.");
     if (r.deploymentReceipt) receipt(r.deploymentReceipt);
+    if (r.rollbackReceipt) receipt(r.rollbackReceipt);
   } else if (kind === "targets") {
     const r = row as Collections["targets"];
     target(r.target);
@@ -262,6 +272,11 @@ export function stored<K extends Collection>(
     }
     if (r.status === "succeeded" && !r.receipt)
       fail("integrity_error", "Successful attempt has no receipt.");
+  } else if (["runs", "operations", "budgets", "observations", "coordination"].includes(kind)) {
+    const r = row as Collections["runs"];
+    if (r.format !== 1) fail("integrity_error", "Unknown controller record format.");
+    object(r.data, "controller data");
+    if(kind==='budgets')for(const key of ['modelRequests','tokens','deployments'])integer(r.data[key],key,0);
   } else if (kind === "events") {
     const r = row as Collections["events"];
     nonempty(r.type, "event type");

@@ -16,7 +16,7 @@ TARGET_KINDS = (
 ).split()
 RISKS = "low medium high critical".split()
 STATUSES = "proposed evaluated approved deployed rejected superseded rolled_back historical".split()
-COLLECTIONS = "executions signals candidates targets attempts events".split()
+COLLECTIONS = "executions signals candidates targets attempts events runs operations budgets observations coordination".split()
 EXECUTION_FIELDS = (
     "id kind episode_id parent_execution_id entity_id input output artifacts metadata "
     "started_at completed_at"
@@ -24,7 +24,7 @@ EXECUTION_FIELDS = (
 SIGNAL_FIELDS = (
     "id execution_id episode_id kind name value correction source confidence metadata observed_at"
 ).split()
-CANDIDATE_FIELDS = "id target proposed_change evidence risk metadata".split()
+CANDIDATE_FIELDS = "id target proposed_change evidence risk metadata baseline".split()
 
 
 class LoopiterError(Exception):
@@ -194,6 +194,8 @@ def signal_input(value: Any) -> None:
 def candidate_input(value: Any) -> None:
     fields(value, CANDIDATE_FIELDS, ("target", "proposed_change", "evidence"))
     target(value["target"])
+    if "baseline" in value:
+        baseline(value["baseline"])
     if "id" in value:
         nonempty(value["id"], "id")
     if "risk" in value:
@@ -230,8 +232,25 @@ def receipt(value: Any) -> None:
         obj(value["metadata"], "metadata")
 
 
+def baseline(value: Any) -> None:
+    fields(
+        value,
+        ["artifact_version", "configuration_hash"],
+        ("artifact_version", "configuration_hash"),
+    )
+    if value["artifact_version"] is not None:
+        nonempty(value["artifact_version"], "artifact_version")
+    nonempty(value["configuration_hash"], "configuration_hash")
+
+
 def content_hash(row: Record) -> str:
-    return fingerprint({k: row[k] for k in ("target", "proposed_change", "risk", "metadata")})
+    return fingerprint(
+        {
+            k: row[k]
+            for k in ("target", "proposed_change", "risk", "metadata", "baseline")
+            if k in row
+        }
+    )
 
 
 def stored(kind: str, row: Any, namespace: str) -> None:
@@ -244,6 +263,13 @@ def stored(kind: str, row: Any, namespace: str) -> None:
         fail("namespace_mismatch", "Adapter returned another namespace.")
     if timestamp(row.get("updated_at")) < timestamp(row.get("created_at")):
         fail("integrity_error", "Update predates creation.")
+    if kind in ("runs", "operations", "budgets", "observations", "coordination"):
+        if type(row.get("format")) is not int or row["format"] != 1:
+            fail("migration_required", "Unsupported controller record format.")
+        obj(row.get("data"), "controller record")
+        if kind == "budgets":
+            for key in ("model_requests", "tokens", "deployments"):
+                integer(row["data"].get(key), key, 0)
     if kind in ("executions", "signals", "candidates"):
         allowed, validator = {
             "executions": (EXECUTION_FIELDS, execution_input),
@@ -277,6 +303,7 @@ def stored(kind: str, row: Any, namespace: str) -> None:
             if (
                 e.get("candidate_hash") != row["content_hash"]
                 or e.get("evidence_hash") != row["evidence_hash"]
+                or ("baseline" in row and e.get("baseline_hash") != fingerprint(row["baseline"]))
             ):
                 fail("integrity_error", "Evaluation bound to different content.")
         if "approval" in row:
@@ -298,6 +325,8 @@ def stored(kind: str, row: Any, namespace: str) -> None:
             fail("integrity_error", "Lifecycle record missing approval.")
         if "deployment_receipt" in row:
             receipt(row["deployment_receipt"])
+        if "rollback_receipt" in row:
+            receipt(row["rollback_receipt"])
     if kind in ("targets", "attempts"):
         target(row.get("target"))
         if kind == "targets" and row["id"] != fingerprint(row["target"]):

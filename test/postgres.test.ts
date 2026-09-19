@@ -29,7 +29,7 @@ test(
     try {
       await migratePostgres(pool);
       await migratePostgres(pool);
-      assert.equal((await runStoreConformance(store)).length, 8);
+      assert.equal((await runStoreConformance(store)).length, 9);
       const loop = new FeedbackLoop({ store, namespace });
       await loop.recordExecution({ id: "race", kind: "turn" });
       const worker = (value: string) =>
@@ -64,7 +64,7 @@ test(
       );
       let failOnce = true;
       const faulty: FeedbackStore = {
-        version: 2,
+        version: 3,
         close: () => store.close(),
         deleteNamespace: (n) => store.deleteNamespace(n),
         transaction: <T>(n: string, fn: (tx: StoreTransaction) => Promise<T>) =>

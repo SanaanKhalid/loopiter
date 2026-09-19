@@ -1,15 +1,22 @@
 # Loopiter for Python
 
+> **0.3.0a1 alpha.** This release adds the opt-in
+> `ImprovementController` with durable budgets, independent audits and observation/rollback.
+> Start with the [autonomous workflow guide](https://github.com/SanaanKhalid/loopiter/blob/main/fern/pages/autonomous.mdx)
+> and [explicit migration guide](https://github.com/SanaanKhalid/loopiter/blob/main/docs/autonomy-migration.md).
+> Autonomy is disabled by default. Upgrading requires explicit storage migration;
+> enabling it requires `self_improving=True`, autonomous mode and a complete policy.
+
 Native, async Python SDK for **reviewed, evidence-driven AI improvements**.
 No Node.js subprocess, hosted service, model dependency, telemetry, or core runtime
-dependencies. Python **3.11+**, MIT. Python alpha version: **0.2.0a1** (PEP 440).
+dependencies. Python **3.11+**, MIT. Python alpha version: **0.3.0a1** (PEP 440).
 
 ## Install the Python alpha
 
 ```sh
-python -m pip install 'loopiter==0.2.0a1'
+python -m pip install 'loopiter==0.3.0a1'
 # Optional PostgreSQL adapter:
-python -m pip install 'loopiter[postgres]==0.2.0a1'
+python -m pip install 'loopiter[postgres]==0.3.0a1'
 ```
 
 Use an explicit version for this prerelease. The Node.js SDK is distributed separately
@@ -93,7 +100,7 @@ your explicitly supplied store and callbacks.
 ## PostgreSQL (optional)
 
 ```sh
-python -m pip install 'loopiter[postgres]==0.2.0a1'
+python -m pip install 'loopiter[postgres]==0.3.0a1'
 ```
 
 Review the packaged versioned migration before running it with an authorized setup
@@ -146,8 +153,8 @@ No transaction is held during evaluation or deployment callbacks. Avoid nested
 store transactions, spawned tasks within a transaction, and direct SQL record
 mutations. These bypass or interfere with the adapter's guarantees.
 
-Python uses contract **v1**, `loopiter_python_records`, separate migration/version
-tables and lock keys. Node uses its existing contract v2 and tables. **The languages
+This 0.3 checkout uses Python contract **v2**, `loopiter_python_records`, separate migration/version
+tables and lock keys. Node uses contract v3 and its own tables. **The languages
 do not share records, hashes, active pointers, or deployment locks.** They can use
 the same PostgreSQL database, but must not independently control the same external
 target. Choose one language as lifecycle owner and communicate through your own
@@ -174,8 +181,9 @@ Candidate IDs are insert-idempotency keys, not automatic semantic deduplication.
 proposal deduplication choose a stable ID derived with `fingerprint({...})` from the
 target, proposed change, evidence fingerprint, evaluator version and dataset hash.
 Changed evidence/evaluator versions should produce a new ID. No callback runs
-automatically after feedback capture. No Python controller or unattended auto-apply
-ships in this first alpha.
+automatically after feedback capture. In the 0.3 alpha, the native
+`ImprovementController` adds scheduled-by-your-application, opt-in autonomous cycles;
+reviewed calls above remain supported without enabling autonomy.
 
 ## Deployment and recovery contract
 
@@ -238,7 +246,7 @@ snapshot in memory; it is not a streaming warehouse engine.
 Python includes capture, updates, structured analysis, manual candidate lifecycle,
 timeouts/cancellation, events, namespace deletion, an in-memory dev store, optional
 PostgreSQL 16/17 adapter, conformance tests and an offline end-to-end example.
-The Node controller/experimental auto-apply, JsonFileStore/legacy migration CLI,
+The Node-only legacy controller, JsonFileStore/legacy migration CLI,
 and OpenAI/Azure classification starter remain **Node-only**. Neither SDK automatically
 fine-tunes a model. Application callbacks, database permissions and deployment
 fencing remain application responsibilities.

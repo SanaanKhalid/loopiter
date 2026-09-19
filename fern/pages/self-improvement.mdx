@@ -2,7 +2,14 @@
 title: Governed self-improvement
 ---
 
-The controller coordinates trusted application callbacks; it does not invent a
+<Warning>
+The 0.3 alpha replaces automatic application with a durable, explicit opt-in
+controller. `apply` and `experimentalAutoApply` are rejected, not translated into autonomy.
+Follow the [new controller guide](/closing-the-loop/opt-in-autonomous-improvement).
+This page retains the Node-only reviewed recipe API for migration.
+</Warning>
+
+The legacy controller coordinates trusted application callbacks; it does not invent a
 training algorithm or discover reliable feedback by itself. A recipe has a name,
 version, boolean `matches(finding, context)` and `propose(finding, context)` callback.
 The latter returns zero, one or several JSON proposals. Supply an allowed-target list.
@@ -12,7 +19,6 @@ The latter returns zero, one or several JSON proposals. Supply an allowed-target
 | observe | Analyze only |
 | recommend (default) | Store proposals; no evaluation, approval or deployment |
 | experiment | Evaluate candidates; no automatic deployment |
-| apply | Explicit experimental low-risk prompt/routing application after gates |
 
 Experiment is **not a sandbox**. Callbacks execute in your process with your
 credentials. If they perform side effects, the SDK cannot prevent them. Separate
@@ -30,21 +36,21 @@ results, but cannot forcibly stop arbitrary JavaScript or undo an external reque
 A pending deployment remains reserved and needs reconciliation even if a run times out.
 The application owns the run invocation/schedule; no background daemon is started.
 
-## Experimental automatic application
+## Migrating automatic application
 
-Require `autonomy: 'apply'`, `experimentalAutoApply: true`, allowed targets, a
-versioned evaluator/dataset, at least one valid metric constraint and an adapter
-implementing apply, inspect and rollback. Candidate risk must be low and target
-must be prompt or routing. Missing/non-finite metrics fail constraints. Risk declarations
-come from trusted application code; they are not an independent security classifier.
+The legacy controller no longer approves or deploys. Use a fresh `ImprovementController`
+workflow with `mode: 'autonomous'`, `selfImproving: true`, exact target policy, persistent
+budgets, separate validation/audit datasets and production observation. Legacy evaluations
+and approvals do not grant autonomous authority. Start with `recommend` or `experiment`.
 
 Constraints support gte/lte/gt/lt/eq with finite thresholds. They supplement, not
 override, the evaluator's own passing result. Set `deploymentsEnabled: () => false`
 on the client to stop new application; rollback and inspection remain available for
 recovery. The switch cannot undo a previously dispatched operation.
 
-Controller results expose findings, candidates, proposalCalls, deployed IDs and
+Legacy results expose findings, candidates, proposalCalls, an empty deployed list and
 structured `blocked` reasons such as evaluation_failed, target_not_allowed,
-run_budget_reached, automatic_scope_exceeded, run_cancelled and operation_failed.
+run_budget_reached and run_cancelled.
 Forward these to your logger. Persisted lifecycle events can be paged separately.
-Loopiter sends no telemetry and provides no distributed run locking or scheduling SLA.
+Loopiter sends no telemetry. The new controller adds durable leases and target coordination;
+neither controller provides hosted scheduling or a scheduling SLA.

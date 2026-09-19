@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,6 +7,7 @@ import {
   FeedbackLoop,
   InMemoryStore,
   JsonFileStore,
+  migrateJsonV2,
   type CreateCandidateInput,
 } from "../src/index.js";
 import type { MemoryState } from "../src/stores/in-memory.js";
@@ -15,7 +16,7 @@ import { Registry, approved, seed, analysis } from "./helpers.js";
 const make = () =>
   new FeedbackLoop({ store: new InMemoryStore(), namespace: "test" });
 test("in-memory adapter conformance", async () => {
-  assert.equal((await runStoreConformance(new InMemoryStore())).length, 8);
+  assert.equal((await runStoreConformance(new InMemoryStore())).length, 9);
 });
 test("JSON conformance and reopen persistence", async () => {
   const path = await mkdtemp(join(tmpdir(), "loopiter-json-"));
@@ -33,11 +34,25 @@ test("JSON conformance and reopen persistence", async () => {
       ),
     );
     await next.close();
-    assert.equal(JSON.parse(await readFile(file, "utf8")).version, 2);
+    assert.equal(JSON.parse(await readFile(file, "utf8")).version, 3);
   } finally {
     await store.close();
     await rm(path, { recursive: true, force: true });
   }
+});
+test('copy-only JSON migration preserves active receipts and valid rollback lineage',async()=>{
+  const temporary=await mkdtemp(join(tmpdir(),'loopiter-migration-')),source=join(temporary,'v2.json'),destination=join(temporary,'v3.json');
+  const old=new JsonFileStore(source),registry=new Registry();
+  try{
+    const loop=new FeedbackLoop({store:old,namespace:'legacy'});await approved(loop,'legacy-candidate');await loop.deployCandidate('legacy-candidate',{adapter:registry});await old.close();
+    const data=JSON.parse(await readFile(source,'utf8'));data.version=2;
+    for(const buckets of Object.values(data.namespaces) as Record<string,unknown>[])for(const name of ['runs','operations','budgets','observations','coordination'])delete buckets[name];
+    await writeFile(source,JSON.stringify(data));const original=await readFile(source,'utf8');
+    await assert.rejects(migrateJsonV2(source,source));await migrateJsonV2(source,destination);
+    await assert.rejects(migrateJsonV2(source,destination));assert.equal(await readFile(source,'utf8'),original);
+    const upgraded=new JsonFileStore(destination);
+    try{const next=new FeedbackLoop({store:upgraded,namespace:'legacy'});assert.equal((await next.getCandidate('legacy-candidate'))?.status,'deployed');await next.rollbackCandidate('legacy-candidate',{adapter:registry});assert.equal(registry.version,null);assert.equal((await next.list('runs')).items.length,0);}finally{await upgraded.close();}
+  }finally{await old.close();await rm(temporary,{recursive:true,force:true});}
 });
 test("IDs cannot overwrite another namespace and conflicting input is rejected", async () => {
   const store = new InMemoryStore(),

@@ -87,6 +87,34 @@ async def run_store_conformance(store: FeedbackStore, *, namespace: str | None =
             assert e.code == "namespace_mismatch"
         else:
             raise AssertionError("Cross-namespace write accepted")
+        for kind in ("runs", "operations", "budgets", "observations", "coordination"):
+            row = {
+                **loop._base("control", "controller"),
+                "format": 1,
+                "data": {"value": 1, "model_requests": 0, "tokens": 0, "deployments": 0},
+            }
+            async with store.transaction(namespace) as tx:
+                await tx.insert(kind, row)
+            assert len((await loop.list(kind))["items"]) == 1
+            assert not (await isolated.list(kind))["items"]
+            if kind == "observations":
+                try:
+                    async with store.transaction(namespace) as tx:
+                        await tx.replace(kind, {**row, "revision": 2}, 1)
+                except LoopiterError as exc:
+                    assert exc.code == "immutable_record"
+                else:
+                    raise AssertionError("Observation was mutable")
+            else:
+
+                async def change(value, kind=kind, row=row):
+                    async with store.transaction(namespace) as tx:
+                        await tx.replace(
+                            kind, {**row, "revision": 2, "data": {**row["data"], "value": value}}, 1
+                        )
+
+                outcomes = await asyncio.gather(change(1), change(2), return_exceptions=True)
+                assert sum(x is None for x in outcomes) == 1
         await loop.delete_namespace(confirmation=namespace)
         assert await loop.get_execution("a") is None
         assert (await isolated.get_execution("a"))["kind"] == "tool"

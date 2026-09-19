@@ -23,7 +23,7 @@ import {
   nonempty,
 } from "./utils.js";
 import { evaluation } from "./validation.js";
-export type AutonomyLevel = "observe" | "recommend" | "experiment" | "apply";
+export type AutonomyLevel = "observe" | "recommend" | "experiment";
 export interface EvaluationConstraint {
   metric: string;
   comparator: "gte" | "lte" | "gt" | "lt" | "eq";
@@ -32,7 +32,6 @@ export interface EvaluationConstraint {
 export interface ImprovementPolicy {
   autonomy?: AutonomyLevel;
   allowedTargets: CandidateTargetKind[];
-  experimentalAutoApply?: boolean;
   maximumCandidatesPerRun?: number;
   maximumProposalCalls?: number;
   runTimeoutMs?: number;
@@ -109,13 +108,16 @@ export function applyConstraints(
   }
   return result;
 }
+/** @deprecated Use ImprovementController for durable, baseline-bound cycles. Reviewed modes only. */
 export class SelfImprovementController {
   constructor(readonly loop: FeedbackLoop) {}
   async run(input: SelfImprovementRunInput): Promise<SelfImprovementRunResult> {
+    if ((input.policy as {autonomy?:unknown}).autonomy === "apply" || "experimentalAutoApply" in input.policy)
+      fail("migration_required", "Legacy auto-apply is removed. Use ImprovementController with selfImproving and a complete autonomy policy.");
     const autonomy = input.policy.autonomy ?? "recommend";
     enumeration(
       autonomy,
-      ["observe", "recommend", "experiment", "apply"],
+      ["observe", "recommend", "experiment"],
       "autonomy",
     );
     if (!Array.isArray(input.policy.allowedTargets))
@@ -139,7 +141,7 @@ export class SelfImprovementController {
       nonempty(recipe.name, "recipe name");
       nonempty(recipe.version, "recipe version");
     }
-    if (["experiment", "apply"].includes(autonomy)) {
+    if (autonomy === "experiment") {
       if (!input.evaluator || !input.evaluation)
         fail(
           "invalid_input",
@@ -149,16 +151,6 @@ export class SelfImprovementController {
       nonempty(input.evaluation.version, "evaluator version");
       nonempty(input.evaluation.datasetHash, "datasetHash");
     }
-    if (
-      autonomy === "apply" &&
-      (input.policy.experimentalAutoApply !== true ||
-        !input.deploymentAdapter ||
-        !input.policy.constraints?.length)
-    )
-      fail(
-        "invalid_input",
-        "Auto-apply requires explicit experimental opt-in, constraints and a deployment adapter.",
-      );
     const controller = new AbortController();
     const abort = () => controller.abort(input.signal?.reason);
     if (input.signal?.aborted) abort();
@@ -259,28 +251,6 @@ export class SelfImprovementController {
                 });
                 continue;
               }
-              if (autonomy !== "apply") continue;
-              if (
-                candidate.risk !== "low" ||
-                !["prompt", "routing"].includes(candidate.target.kind)
-              ) {
-                result.blocked.push({
-                  reason: "automatic_scope_exceeded",
-                  candidateId,
-                });
-                continue;
-              }
-              controller.signal.throwIfAborted();
-              candidate = await this.loop.approveCandidate(candidate.id, {
-                actor: "loopiter/experimental-auto-apply",
-                evaluationId: candidate.evaluations.at(-1)!.id,
-              });
-              const attempt = await this.loop.deployCandidate(candidate.id, {
-                adapter: input.deploymentAdapter!,
-                signal: controller.signal,
-              });
-              if (attempt.status === "succeeded")
-                result.deployed.push(candidate.id);
             } catch (error) {
               result.blocked.push({
                 reason: "operation_failed",

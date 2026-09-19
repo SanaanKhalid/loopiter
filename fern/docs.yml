@@ -8,7 +8,7 @@ default-language: typescript
 favicon: assets/favicon.svg
 
 logo:
-  href: https://loopiter-website.sanaansanaan.workers.dev
+  href: https://loopiter.co
   dark: assets/logo-dark.svg
   light: assets/logo-light.svg
   right-text: Docs
@@ -49,7 +49,7 @@ layout:
 navbar-links:
   - type: minimal
     text: Home
-    href: https://loopiter-website.sanaansanaan.workers.dev
+    href: https://loopiter.co
   - type: github
     value: https://github.com/SanaanKhalid/loopiter
 
@@ -79,6 +79,8 @@ navigation:
             path: pages/starter.mdx
           - page: Supported capabilities
             path: pages/supported.mdx
+          - page: Release validation
+            path: pages/release-validation.mdx
       - section: Core concepts
         contents:
           - page: Executions and episodes
@@ -91,6 +93,8 @@ navigation:
             path: pages/candidates.mdx
       - section: Closing the loop
         contents:
+          - page: Opt-in autonomous improvement
+            path: pages/autonomous.mdx
           - page: Governed self-improvement
             path: pages/self-improvement.mdx
           - page: Evaluation and deployment
@@ -109,6 +113,8 @@ navigation:
             path: pages/production.mdx
           - page: Migrating from the prototype
             path: pages/migration.mdx
+          - page: Migrating to 0.3
+            path: pages/autonomy-migration.mdx
       - section: Reference
         contents:
           - page: TypeScript API
@@ -123,11 +129,17 @@ navigation:
             path: pages/python.mdx
           - page: Python examples
             path: pages/python-examples.mdx
+          - page: Autonomous improvement in Python
+            path: pages/python-autonomy.mdx
       - section: Reference
         contents:
           - page: Python API
             path: pages/python-api.mdx
           - link: Node.js and Python capabilities
             href: /get-started/supported-capabilities
+          - link: Migrating to 0.3
+            href: /operate/migrating-to-0-3
+          - link: Release validation
+            href: /get-started/release-validation
 
 css: styles.css
