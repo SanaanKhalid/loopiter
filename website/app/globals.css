@@ -77,6 +77,12 @@ button, input { font: inherit; }
 .status-light { width: 8px; height: 8px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 9px rgba(198,255,89,.65); }
 .hero-console pre { padding: 27px 28px 24px; margin: 0; overflow: auto; min-height: 395px; color: #c9ccc4; font: 500 .88rem/1.75 var(--font-geist-mono), monospace; }
 .hero-console pre code { white-space: pre; }
+.sdk-language { display: flex; gap: 4px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.sdk-language button { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 9px 8px; color: #b0b7a7; font: inherit; cursor: pointer; min-height: 36px; }
+.sdk-language button[aria-pressed="true"] { color: #c6ff59; background: #1d2713; border-color: #455733; }
+.sdk-language button:focus-visible { outline: 2px solid #c6ff59; outline-offset: 2px; }
+.sdk-install { padding: 14px 18px; border-bottom: 1px solid var(--line); color: #c6ff59; overflow-x: auto; font-size: .8rem; }
+.sdk-install code { white-space: pre; }
 .console-result { min-height: 74px; border-top: 1px solid var(--line); display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 14px 18px; background: #0e120c; }
 .console-result > span { color: var(--signal); }
 .console-result strong, .console-result small { display: block; }

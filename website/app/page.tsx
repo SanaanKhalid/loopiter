@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SdkExample } from '../components/sdk-example';
 import { docsHref } from '../lib/docs-links';
 
 function Mark() {
@@ -53,6 +54,31 @@ await loop.recordSignal({
 // Next: connect your database and evaluator.
 // Recommendations do not deploy automatically.`;
 
+const pythonCode = `import asyncio
+from loopiter import FeedbackLoop, InMemoryStore
+
+async def main():
+    loop = FeedbackLoop(
+        store=InMemoryStore(),  # local demo
+        namespace="acme/dev",
+    )
+    turn = await loop.record_execution(
+        kind="agent",
+        artifacts={"prompt": "support@18"},
+    )
+    await loop.record_signal(
+        execution_id=turn["id"],
+        kind="outcome",
+        name="resolved",
+        value=True,
+        source="ticket-system",
+    )
+    await loop.close()
+
+asyncio.run(main())
+# Next: connect your database and evaluator.
+# Recommendations do not deploy automatically.`;
+
 const loopSteps = [
   ["01", "Capture", "Record the decisions, tools, models, and versions behind every outcome."],
   ["02", "Connect", "Attach human feedback, delayed outcomes, cost, latency, and operational signals."],
@@ -86,21 +112,10 @@ export default function Home() {
               <a href={docsHref()} className="button button-primary">READ THE DOCS <span>→</span></a>
               <a href="#how-it-works" className="button button-ghost">EXPLORE THE LOOP</a>
             </div>
-            <p className="hero-note">Embed it in an existing worker. Keep your models, database, and deployment stack.</p>
+            <p className="hero-note">Native Python and Node.js SDKs. Keep your models, database, and deployment stack.</p>
           </div>
 
-          <div className="hero-console" aria-label="Loopiter TypeScript example">
-            <div className="console-bar">
-              <div className="console-title"><span className="status-light" /> feedback-loop.ts</div>
-              <span>TYPESCRIPT</span>
-            </div>
-            <pre aria-label="TypeScript example, scroll horizontally to read"><code>{code}</code></pre>
-            <div className="console-result">
-              <span>●</span>
-              <div><strong>Review first. Measure before deployment.</strong><small>Connect your evaluator · inspect every proposed change</small></div>
-              <b>ALPHA</b>
-            </div>
-          </div>
+          <SdkExample pythonCode={pythonCode} nodeCode={code} />
 
           <div className="signal-path" aria-hidden="true">
             <span>EXECUTION</span><i />
@@ -187,7 +202,7 @@ export default function Home() {
           <div className="section-label">[ CLOSE THE LOOP ]</div>
           <h2>Your model is replaceable.<br />Your learning loop compounds.</h2>
           <p>Start with one execution, one outcome, and one recurring pattern.</p>
-          <a href={docsHref('installation')} className="button button-primary">GET STARTED <span>→</span></a>
+          <a href="https://loopiter.docs.buildwithfern.com/get-started/python-quickstart" className="button button-primary">GET STARTED WITH PYTHON <span>→</span></a>
         </section>
 
         <footer className="site-footer">

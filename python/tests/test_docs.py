@@ -13,6 +13,14 @@ PACKAGE = Path(__file__).resolve().parents[1]
 
 
 class DocumentationTests(unittest.TestCase):
+    def test_landing_python_example(self):
+        page = ROOT / "website/app/page.tsx"
+        if not page.exists():
+            self.skipTest("Website is outside the Python source distribution")
+        snippet = re.search(r"const pythonCode = `(.*?)`;", page.read_text(), re.S)
+        self.assertIsNotNone(snippet)
+        self.check_examples("```python\n" + snippet[1] + "\n```", "landing page")
+
     def test_complete_autonomy_policy(self):
         page = ROOT / "fern/pages/autonomy-policy.mdx"
         if not page.exists():
