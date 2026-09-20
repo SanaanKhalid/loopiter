@@ -1,0 +1,245 @@
+---
+title: Autonomy policy reference
+---
+
+A policy is trusted application configuration. It specifies what may change, what
+counts as improvement, what evidence is required and when the controller must stop.
+The optimizer must never generate or edit this configuration.
+
+This page documents the **0.3 alpha implementation**, including its limitations.
+The `ImprovementController` requires a complete valid workflow and policy even in
+observe, recommend and experiment modes. The low-level reviewed candidate API is
+available when you do not need that controller contract.
+
+## Complete example in both languages
+
+These values illustrate a support-classification integration. **They are not recommended
+universal thresholds or a statistical sample-size recommendation.** A 3-percentage-point
+effect threshold does not mean 500 cases will establish that effect. Choose limits
+from your risk, traffic, label delay and independently designed evaluation.
+
+<Tabs>
+  <Tab title="Node.js">
+
+```typescript
+import type { AutonomyPolicy } from "loopiter";
+
+export const supportPolicy: AutonomyPolicy = {
+  version: "support-policy-v1",
+  target: { kind: "prompt", key: "support/intent-guidance" },
+  changeSchema: {
+    type: "object",
+    properties: { fragment: { type: "string", maxLength: 2000 } },
+    required: ["fragment"],
+    additionalProperties: false,
+  },
+  objective: {
+    metric: "accuracy", direction: "maximize",
+    minimumImprovement: 0.03, range: [0, 1], alpha: 0.05,
+  },
+  guardrails: [
+    { metric: "accuracy:billing", comparator: "gte", value: 0.90 },
+    { metric: "accuracy:access", comparator: "gte", value: 0.90 },
+    { metric: "maxLatencyMs", comparator: "lte", value: 2500 },
+  ],
+  trustedSources: ["support-reviewer-v1"],
+  minimumNewUnits: 30,
+  minimumValidationUnits: 150,
+  minimumAuditUnits: 500,
+  outcomeMaturityMs: 86_400_000,
+  maximumRows: 5000,
+  daily: { modelRequests: 5000, tokens: 5_000_000, deployments: 1 },
+  callbackReservation: { modelRequests: 1200, tokens: 1_200_000 },
+  cooldownMs: 86_400_000,
+  rollout: { mode: "immediate" },
+  observation: {
+    minimumDurationMs: 86_400_000,
+    timeoutMs: 604_800_000,
+    minimumUnits: 200,
+    guardrails: [
+      { metric: "errorRate", comparator: "lte", value: 0.10 },
+      { metric: "telemetryCoverage", comparator: "gte", value: 0.99 },
+    ],
+    onTimeout: "rollback",
+    onFailure: "rollback",
+  },
+  onInsufficientEvidence: "wait",
+  onUncertainDeployment: "reconcile",
+  maximumCandidates: 3,
+  maximumProposalCalls: 3,
+  maximumConsecutiveFailures: 3,
+};
+```
+
+  </Tab>
+  <Tab title="Python">
+
+```python
+support_policy = {
+    "version": "support-policy-v1",
+    "target": {"kind": "prompt", "key": "support/intent-guidance"},
+    "change_schema": {
+        "type": "object",
+        "properties": {"fragment": {"type": "string", "maxLength": 2000}},
+        "required": ["fragment"],
+        "additionalProperties": False,
+    },
+    "objective": {
+        "metric": "accuracy", "direction": "maximize",
+        "minimum_improvement": 0.03, "range": [0, 1], "alpha": 0.05,
+    },
+    "guardrails": [
+        {"metric": "accuracy:billing", "comparator": "gte", "value": 0.90},
+        {"metric": "accuracy:access", "comparator": "gte", "value": 0.90},
+        {"metric": "maxLatencyMs", "comparator": "lte", "value": 2500},
+    ],
+    "trusted_sources": ["support-reviewer-v1"],
+    "minimum_new_units": 30,
+    "minimum_validation_units": 150,
+    "minimum_audit_units": 500,
+    "outcome_maturity_ms": 86_400_000,
+    "maximum_rows": 5000,
+    "daily": {"model_requests": 5000, "tokens": 5_000_000, "deployments": 1},
+    "callback_reservation": {"model_requests": 1200, "tokens": 1_200_000},
+    "cooldown_ms": 86_400_000,
+    "rollout": {"mode": "immediate"},
+    "observation": {
+        "minimum_duration_ms": 86_400_000,
+        "timeout_ms": 604_800_000,
+        "minimum_units": 200,
+        "guardrails": [
+            {"metric": "errorRate", "comparator": "lte", "value": 0.10},
+            {"metric": "telemetryCoverage", "comparator": "gte", "value": 0.99},
+        ],
+        "on_timeout": "rollback",
+        "on_failure": "rollback",
+    },
+    "on_insufficient_evidence": "wait",
+    "on_uncertain_deployment": "reconcile",
+    "maximum_candidates": 3,
+    "maximum_proposal_calls": 3,
+    "maximum_consecutive_failures": 3,
+}
+```
+
+  </Tab>
+</Tabs>
+
+Python's policy keys use snake_case, but **schema keywords remain JSON-Schema-style**
+`additionalProperties` and `maxLength`. Metric names such as `errorRate` are
+application-defined identifiers: return the exact same strings in evaluator/observer
+metrics. They are not automatically translated between languages.
+
+## Target, schema and trusted context
+
+| Setting | Meaning and enforcement |
+| --- | --- |
+| `version` | Nonempty application-controlled policy identity. Bump when intent changes; policy content also contributes to the workflow definition hash. |
+| `target.kind` | Only `prompt` or `routing` in this controller, including reviewed modes. Other candidate categories use the low-level reviewed lifecycle. |
+| `target.key` | Exact artifact identifier. No wildcard permission or implicit access to every prompt/model. |
+| `changeSchema` / `change_schema` | Allowed JSON value shape. Unknown schema keywords and candidate fields fail closed. |
+| `trustedSources` / `trusted_sources` | Nonempty list of authenticated application source IDs. A source string alone is not proof of reviewer authorization. |
+
+Objects must declare `properties`, `required` and `additionalProperties: false`.
+Strings need `maxLength` or `enum`. Numbers need inclusive `minimum`/`maximum` or an
+enum. Supported types are object, string, number and boolean. Arrays, `$ref`, unions,
+regexes and general JSON Schema validators are not part of this subset.
+An enum restricts the value; it does not provision a model or validate an external credential.
+
+For prompts, keep label schema, safety instructions and permissions outside the fragment.
+For routing, enumerate permitted segments/models/routes and bound numeric thresholds.
+The serving adapter must still interpret those values safely; schema-valid is not
+equivalent to harmless or useful.
+
+## Objective and offline guardrails
+
+| Setting | Meaning |
+| --- | --- |
+| `objective.metric` | Name for the primary objective. The controller calculates its effect from per-case scores, not by looking up a same-named aggregate metric. |
+| `direction` | `maximize` or `minimize`; makes a favorable difference positive. |
+| `minimumImprovement` / `minimum_improvement` | Finite, nonnegative absolute difference in the declared score units. Acceptance requires strictly greater, not equal. |
+| `range` | Two finite numbers with upper greater than lower. Every baseline and candidate case score must lie inside this interval. |
+| `alpha` | Strictly between 0 and 1; used by the default fixed-sample audit bound. It does not make invalid statistical assumptions valid. |
+| `guardrails` | Nonempty array of exact metric names, `gte`/`lte`, and finite thresholds. All must pass. Missing metrics do not pass; non-finite values are invalid. |
+| `auditMethod` / `audit_method` | Optional trusted method name/version. Requires matching evaluator uncertainty fields and valid assumptions; not a license to return an arbitrary favorable bound. |
+
+A value of `0.03` on a `[0,1]` accuracy scale means **three percentage points**, not
+3% relative improvement. A cost-minimizing workflow must score cost, not correctness,
+and enforce quality separately. Document currency, token pricing date, latency statistic,
+abstention cost and slice definitions in your versioned evaluator.
+
+## Evidence requirements
+
+| Node / Python | Rule |
+| --- | --- |
+| `minimumNewUnits` / `minimum_new_units` | Positive integer. Minimum eligible optimization units and minimum previously unused optimization entity IDs for a fresh cycle. |
+| `minimumValidationUnits` / `minimum_validation_units` | Positive integer after filtering/deduplication, not raw event count. |
+| `minimumAuditUnits` / `minimum_audit_units` | Positive integer after filtering/deduplication. Audit units must also be unconsumed. |
+| `outcomeMaturityMs` / `outcome_maturity_ms` | Nonnegative integer milliseconds after `observedAt` / `observed_at` before a dataset outcome is eligible. |
+| `maximumRows` / `maximum_rows` | Positive integer maximum per raw partition, checked before exclusions. Overflow is an error, not truncation. |
+
+All three partitions are required and checked before proposing, **even in recommend
+mode**. The SDK does not automatically split your application records into datasets.
+See [datasets and evaluation](/closing-the-loop/datasets-and-evaluation) for leakage,
+contradictions, identity, audit reuse and sample-size considerations.
+
+## Spending, call and deployment limits
+
+Daily counters are scoped by **client namespace + workflow ID + UTC calendar date**.
+They are not an organization-wide cloud billing quota. Changing workflow IDs or
+namespaces creates separate counters; prevent that from bypassing your application budget.
+Reservations survive worker restarts and competing ticks.
+
+- `daily.modelRequests` / `model_requests` and `daily.tokens` are nonnegative integers.
+  Zero permits no metered requests/tokens respectively, useful for deterministic callbacks.
+- `daily.deployments` is a positive integer. Use the authorization flag, pause or
+  deployment-disable switch—not a zero deployment ceiling—to disable changes.
+- `callbackReservation` / `callback_reservation` bounds requests and the **sum of
+  maximum-token reservations** within one callback. It is not a per-request output limit.
+- Defaults: at most three proposal callbacks, three distinct candidates and three
+  consecutive unsuccessful terminal cycles before review is required. Explicit positive
+  integer overrides are accepted; increasing them is a risk/spending decision.
+- The first nonempty proposal batch ends proposing. Returning one candidate on each
+  repeated tick does not automatically collect three candidates. Return alternatives
+  in a single bounded batch if you want them compared.
+
+For each `meter(1000, call)`, one request and up to 1000 tokens are reserved before
+dispatch. If the call reports 600 tokens, daily charged tokens become 600, but that
+callback has still used 1000 of its cumulative reservation envelope. Unknown usage
+keeps the reservation. Missing model usage must not be reported as zero.
+Loopiter does not convert token counts to dollars or enforce a provider's global quota.
+
+An evaluation that invokes two models for each of 500 examples needs up to 1000
+requests, plus defensible input/output token reservations. Size both daily and callback
+limits for the actual implementation, or use provider batching with honest accounting.
+Do not raise budgets automatically because a candidate failed a gate.
+
+## Observation and fixed fallback behavior
+
+| Node / Python | Rule |
+| --- | --- |
+| `cooldownMs` / `cooldown_ms` | Nonnegative milliseconds after a terminal cycle before another cycle is eligible. Not a scheduler interval. |
+| `rollout.mode` | `immediate` or `canary`. Canary requires application promote/inspect adapters and stable assignments. |
+| `observation.minimumDurationMs` / `minimum_duration_ms` | Nonnegative milliseconds since deployment; checked together with mature samples and completeness before completion. |
+| `observation.timeoutMs` / `timeout_ms` | Positive milliseconds, strictly greater than minimum duration. Timeout takes priority once reached. |
+| `observation.minimumUnits` / `minimum_units` | Positive mature independent-unit count. Canary additionally requires enough distinct control units. |
+| `observation.guardrails` | Nonempty independent production metric constraints, supplied by the observation adapter. |
+
+The only accepted alpha fallback values are `onTimeout/onFailure: rollback`,
+`onInsufficientEvidence: wait`, and `onUncertainDeployment: reconcile` (snake_case
+in Python). Arbitrary keep-serving-on-timeout policies are **not implemented**.
+
+Automatic quality-failure rollback requires a complete report and minimum units;
+it does not wait for the minimum duration once those conditions establish a failing
+guardrail. Incomplete telemetry waits until sufficient evidence or timeout. If you
+need emergency shutdown on a single serious event, implement that application-level
+circuit breaker separately rather than assuming statistical observation supplies it.
+
+## Configuration changes during a run
+
+Version the workflow, optimizer, evaluator, policy and dataset. The controller copies
+trusted policy configuration; mutating your original dictionary/object is not an
+administrative update mechanism. Reconfigure workers deliberately and consistently.
+Changed definitions during an active run produce a recovery requirement instead of
+reinterpreting its prior approval under new rules. Keep the old configuration available
+for inspection/recovery. A flag change cannot undo an already dispatched operation.

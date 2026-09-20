@@ -1,0 +1,226 @@
+---
+title: Autonomous operations and recovery
+---
+
+The application owns scheduling, alarms, credentials and serving infrastructure.
+Loopiter persists work so another authorized invocation can inspect or resume it.
+It does not run in the background after you construct a controller.
+
+## Scheduler integration in both languages
+
+Invoke one tick per scheduled job, log its structured result, and let the application
+schedule another invocation. Honor `nextEligibleAt` / `next_eligible_at` when present.
+Use bounded backoff and jitter when waiting or competing with another worker; do not
+spin in an unbounded `while true` loop until the AI “improves.”
+
+<Tabs>
+  <Tab title="Node.js">
+
+```typescript
+import type { ImprovementController, TickResult } from "loopiter";
+
+export async function improvementJob(
+  controller: ImprovementController,
+  workflowId: string,
+  log: (result: TickResult) => void,
+) {
+  const result = await controller.tick(workflowId, AbortSignal.timeout(600_000));
+  log(result);
+  return {
+    runId: result.runId,
+    state: result.state,
+    reason: result.reason,
+    nextEligibleAt: result.nextEligibleAt ?? null,
+  };
+}
+
+export async function stopNewChanges(controller: ImprovementController, workflowId: string) {
+  await controller.pause(workflowId, "Operator incident review");
+}
+```
+
+  </Tab>
+  <Tab title="Python">
+
+```python
+import asyncio
+from loopiter import ImprovementController
+
+async def improvement_job(controller: ImprovementController, workflow_id: str, log):
+    cancellation = asyncio.Event()
+    async with asyncio.timeout(600):
+        result = await controller.tick(workflow_id, cancellation)
+    log(result)
+    return {
+        "run_id": result["run_id"],
+        "state": result["state"],
+        "reason": result["reason"],
+        "next_eligible_at": result.get("next_eligible_at"),
+    }
+
+async def stop_new_changes(controller: ImprovementController, workflow_id: str):
+    await controller.pause(workflow_id, "Operator incident review")
+```
+
+  </Tab>
+</Tabs>
+
+These functions accept a configured controller from your application. They do not
+create database credentials, adapters or a daemon. Catch infrastructure/validation
+exceptions at your job boundary as well as inspecting returned states. Not every
+configuration or database failure can be represented as a durable run result.
+
+Use one authoritative workflow configuration across workers. Leases prevent stale
+finalization, not unlimited concurrent work or global provider calls. The PostgreSQL
+adapter serializes namespace transactions; high-volume application writes need
+measurement against your database and namespace layout.
+
+## Reading the result correctly
+
+| Field (Node / Python) | How to use it |
+| --- | --- |
+| `runId` / `run_id` | Null when no durable experiment was started. Not every waiting response creates a run. |
+| `state` | Lifecycle phase or an immediate waiting/paused result. Read together with reason and durable history. |
+| `reason` | What happened or why work stopped. Preserve this verbatim in structured logs. |
+| `candidateIds` / `candidate_ids` | References, not proof that any candidate passed or deployed. |
+| `nextEligibleAt` / `next_eligible_at` | Earliest useful retry time when supplied, not a promised completion time. |
+| `budget` | Current UTC-day workflow usage/reservations, not a lifetime dollar bill. |
+
+`getRun` / `get_run` reads the run's frozen configuration, data, baseline, comparisons,
+selected candidate, audit evaluation, operation references, receipt/observation links
+and accounting. Accounting includes charged-or-reserved tokens and outstanding operations.
+Use paginated `listRuns` / `list_runs` for history; do not assume the first page is complete.
+
+**`completed` alone does not mean deployed or improved.** Recommendation mode finishes
+with `recommendations_only`; experiment mode with `experiment_only`. Immediate autonomous
+completion uses `offline_pass_and_production_limits_met_not_causal_proof`. Canary completion
+uses `canary_promoted`. Build success dashboards from these distinctions, not a single boolean.
+
+## Lifecycle interpretation
+
+| State | Interpretation |
+| --- | --- |
+| `waiting_for_evidence` | No eligible work yet, cooldown, insufficient samples, or a transient coordination response. Inspect reason. |
+| `proposing` | Bounded candidate generation from approved optimization evidence. |
+| `evaluating` | Frozen-baseline validation of the candidate set. |
+| `selected` | One validation winner; independent audit/authorization still matters. |
+| `deploying` | A consequential apply is planned or dispatched; never manually reset this phase. |
+| `observing` | Candidate serves or is staged; target remains reserved while evidence matures. |
+| `completed` | Mode-specific terminal outcome; not a universal claim of improvement. |
+| `no_improvement` | No eligible proposal or no passing validation/audit winner. Valid outcome. |
+| `paused` | Administrative/authorization waiting result. The stored run may retain its recovery phase. |
+| `failed` | Experiment failed; inspect callback error and retained spending before reconsideration. |
+| `reconciliation_required` | External state uncertain; inspect, do not blindly reapply. |
+| `rolling_back` | Predecessor restoration/withdrawal in progress. |
+| `rolled_back` | Restored predecessor confirmed, or reviewed rollback recognized. Verify serving behavior too. |
+
+Typically successive ticks advance phases; one call is not promised to finish the
+whole cycle. A crash can leave a pending operation whose result must be reconciled.
+The library does not claim universal exactly-once effects across arbitrary systems.
+
+## Waiting and blocked-reason playbook
+
+Reasons can also be error codes returned from application callbacks. This table covers
+important built-in reasons, not an exhaustive promise that every string is a stable enum.
+
+| Reason | First check | Appropriate action |
+| --- | --- | --- |
+| `self_improvement_disabled` | Flag and mode in every scheduler worker | Keep disabled unless intentionally authorizing a complete workflow. |
+| `workflow_paused` | Incident/admin history | Resolve cause, then explicitly resume. |
+| `insufficient_evidence` | Eligible counts after filtering, all three partitions | Wait for trusted mature units; do not lower gates automatically. |
+| `insufficient_new_evidence` | Previously used optimization entities | Obtain genuinely new evidence. |
+| `unchanged_evidence` | Prior run and exact decision identity | Read the existing result; repeated ticks should not buy new proposals. |
+| `cooldown` | Next eligible time | Schedule later. |
+| `repeated_failures_require_review` | Recent failed/no-improvement/rolled-back cycles | Diagnose data/strategy; resume only after explicit review. |
+| `run_busy` / `target_busy` | Other worker or unresolved target cycle | Back off; inspect the owning run. Do not delete locks. |
+| `budget_exhausted` | UTC daily counters and per-callback reservation totals | Stop paid work; inspect expected provider costs and unknown reservations. |
+| `ambiguous_callback` | Pending proposer/evaluator/other operation | Do not replay automatically; retain spending and investigate completion externally. |
+| `audit_consumed` | Reused row/episode/entity across namespace audits | Supply a fresh independently selected audit set. |
+| `stale_baseline` | Actual model/config/artifact changed | Start a fresh experiment against the true baseline after resolving active work. |
+| `audit_evaluation_conflict` | Reviewer or concurrent evaluation replaced the selected audit identity | Preserve that work; do not overwrite approval to force deployment. |
+| `policy_changed_requires_recovery` | Mixed worker definitions or updated policy during a run | Recover using the authorized original configuration; then re-evaluate under the new one. |
+| `deployment_unknown` | Durable attempt and external receipt | Inspection-only reconciliation. |
+| `waiting_for_mature_outcomes` | Version attribution, outcome lag, count, duration, completeness | Keep observing within timeout; do not label silence as success. |
+| `production_guardrail_failed` | Immutable observation and actual serving version | Continue authorized rollback/reconciliation and alert operators. |
+| `observation_timeout` | Missing/immature data or too little traffic | Restore predecessor through the adapter; investigate telemetry and sample assumptions. |
+| `canary_not_superior` | Control/candidate evidence and predeclared lower bound | Do not promote; continue within the bounded observation window. |
+| `promotion_requires_reconciliation` | Durable promotion operation | Inspect exposure state; never promote again blindly. |
+
+`invalid_input`, `invalid_policy`, `invalid_evaluation`, `invalid_observation`,
+`dataset_leakage`, `forbidden_change` and `integrity_error` generally indicate data,
+configuration or adapter problems—not reasons to increase retries. Preserve diagnostics
+without logging secrets or full customer payloads by default.
+
+## Incident: apply timed out
+
+1. Stop new autonomous changes using workflow pause and/or the deployment-disable switch.
+   Keep a recovery worker able to inspect and roll back.
+2. Record run ID, attempt ID, candidate hash, expected baseline and provider request ID.
+3. Inspect the serving registry's durable receipt, not just an HTTP status or local log.
+4. If applied, return the authoritative receipt. The SDK finalizes it and resumes
+   observation without calling apply again.
+5. If definitely not applied, fence that attempt externally before reporting not_applied.
+6. If unknown, keep it unknown and blocked. Escalate to an operator with serving-system access.
+
+Do not delete a pending attempt, edit the active pointer by SQL, change its ID, or
+generate a new candidate merely to bypass a target reservation. A delayed request may
+still arrive. Inspect-and-fence semantics are what make recovery safe.
+
+## Incident: production quality regresses
+
+Read the recorded observation and check its version/configuration and independent units.
+Automatic rollback begins when the configured complete, sufficiently sampled report
+fails a guardrail, or when observation times out. The external adapter must restore
+the saved predecessor only if the candidate is still current.
+
+If an operator has already hotfixed the target outside Loopiter, do not roll back over
+that unrelated version. Reconcile the change and use an explicit reviewed recovery
+decision. A rollback performed through the core retains lineage; the controller can
+recognize it after checking the actual artifact and matching receipt.
+
+After rollback, make a request through the real application to verify the restored
+version is used. A database receipt without consistent cache/serving behavior is not
+enough. Retain the failed strategy's evidence and outcome for future analysis.
+
+## Pause, disable and resume are different controls
+
+- `pause(workflowId, reason)` / Python equivalent persists an administrative stop.
+- `selfImproving: false` / `self_improving=False` blocks new autonomous changes when
+  the configured controller is invoked. It is not a remote process kill signal.
+- `deploymentsEnabled` / `deployments_enabled` on the client provides an application
+  switch for new applies; inspect/rollback remain recovery operations.
+- `resume` records an administrative action and resets the repeated-failure stop.
+  It does not refund budgets, erase consumed audits, invalidate receipts or force an
+  unchanged failed experiment to rerun.
+
+Pause does not undo dispatched work. Continue inspection and appropriate recovery.
+For canaries, paused authorization prevents a new promotion but does not magically
+remove already-exposed traffic; withdrawal belongs to the deployment adapter.
+
+## Monitoring and event consumption
+
+Page lifecycle `events` and persist your consumer cursor/checkpoint. Event delivery is
+not a push service or exactly-once queue. Make your logger/alert sink idempotent by event
+ID. Combine controller reasons with external serving telemetry and provider usage.
+
+Useful operator views include current target version, owning run, pending attempts,
+time in observation, complete/mature unit counts, guardrail values, charged/reserved
+tokens, unknown operations, cooldown and consecutive failures. Keep deployment success,
+offline audit pass and observed acceptance as distinct metrics.
+
+Alert on unresolved receipts, stale actual versions, prolonged incomplete telemetry,
+unexpected budget consumption, repeated failures and policy-definition conflicts.
+Avoid alerting every scheduled tick for an unchanged expected waiting state.
+
+## Data retention, backup and upgrades
+
+Autonomous history includes copied dataset content, comparisons, receipts, observations
+and coordination records. There is no built-in retention daemon or universal per-user
+erasure workflow. Apply application retention/privacy rules, document backups and
+provider copies, and avoid deleting evidence needed for an active recovery.
+
+Before schema migration: back up, stop old writers, inspect pending external operations,
+apply the explicit language-specific migrations, run conformance in a disposable namespace,
+and resume one controlled workflow. Never treat a database restore as an external rollback:
+the serving system may have advanced after that backup.
+See [migration](/operate/migrating-to-0-3) and [storage](/operate/storage-adapters).

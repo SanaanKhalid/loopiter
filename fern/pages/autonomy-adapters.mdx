@@ -1,0 +1,240 @@
+---
+title: Building application adapters
+---
+
+Loopiter coordinates a lifecycle; your application supplies the real data, inference
+and serving boundaries. The core does not discover a database, choose a provider,
+change a production prompt file, authenticate reviewers or reroute traffic by itself.
+
+## Integration inventory
+
+| Component | Application responsibility | Loopiter responsibility |
+| --- | --- | --- |
+| Feedback ingestion | Authorized source, stable IDs, redaction, episode/version attribution | Validated scoped insert-only records and revision updates |
+| Dataset | Query/filter relevant records, construct independent partitions, freeze versions | Validate, deduplicate, reject leakage, persist experiment snapshot |
+| Artifact | Read the actual serving version and pinned model/configuration | Bind evaluation and selection to this baseline |
+| Optimizer | Produce schema-bounded changes from optimization examples | Limit callbacks/candidates, validate proposals, retain identities |
+| Evaluator | Replay actual behavior, compute scores and guardrails independently | Validate results, rank one winner, enforce audit gates |
+| Deployment | Atomic serving update, idempotency, receipt storage, fencing, inspection, rollback | Durable attempt, target coordination, lifecycle finalization |
+| Observation | Mature version-attributed outcomes and honest completeness | Record reports, enforce duration/sample/gates/timeout, initiate recovery |
+| Scheduler | Invoke ticks, backoff, log, alert, manage process lifetime | Resumable operations, leases, explicit state/reasons |
+
+Choose one language as lifecycle owner for each external target. Python and Node have
+separate tables, hashes and locks; using the same PostgreSQL server does not make them
+coordinate the same deployment.
+
+## Workflow identity and callback context
+
+Node uses an `ImprovementWorkflow` object; Python uses the `ImprovementWorkflow`
+dataclass. Both declare workflow ID/version, optimizer/evaluator versions, policy and
+callbacks. Their precise types are available in the installed package and the
+[TypeScript](/reference/type-script-api) / [Python](/reference/python-api) references.
+
+Every callback receives:
+
+| Node | Python | Purpose |
+| --- | --- | --- |
+| `operationId` | `operation_id` | Stable operation identity for logs and application-side correlation. Not a credential. |
+| `signal` | `cancellation` | AbortSignal / asyncio.Event for cooperative cancellation. |
+| `configuration` | `configuration` | Workflow, policy, optimizer/evaluator and definition identities. Never model-written authorization. |
+| `meter(maximumTokens, call)` | `meter(maximum_tokens, call)` | Reserve before a metered provider call and account for returned usage. |
+
+Read-only `dataset` and `artifact` callbacks cannot use `meter` to call models.
+Keep them bounded database/configuration reads. Meter proposing/evaluating/observing
+model calls when those callbacks need a provider. Deterministic callbacks need not
+pretend they used model tokens.
+
+### Metering wrapper examples
+
+These are typed adapter building blocks, not a complete provider implementation. The
+caller supplies an already configured provider function that forwards cancellation,
+enforces payload/output limits and reports total billable token usage when known.
+
+<Tabs>
+  <Tab title="Node.js">
+
+```typescript
+import type { CallbackContext } from "loopiter";
+
+export async function meteredRequest<T>(
+  context: CallbackContext,
+  maximumTokens: number,
+  request: (signal: AbortSignal) => Promise<{ value: T; tokens: number | null }>,
+): Promise<T> {
+  return context.meter(maximumTokens, async () => {
+    context.signal.throwIfAborted();
+    return request(context.signal);
+  });
+}
+```
+
+  </Tab>
+  <Tab title="Python">
+
+```python
+import asyncio
+from loopiter import CallbackContext
+
+async def metered_request(context: CallbackContext, maximum_tokens: int, request):
+    async def dispatch():
+        if context.cancellation.is_set():
+            raise asyncio.CancelledError()
+        # request returns {"value": parsed_result, "tokens": integer_or_none}.
+        return await request(context.cancellation)
+
+    return await context.meter(maximum_tokens, dispatch)
+```
+
+  </Tab>
+</Tabs>
+
+Provider retries inside `request` are still requests: meter each dispatch separately.
+Do not hide an internal retry loop behind one reservation. If a timeout leaves completion
+or usage unknown, retain the reservation and stop; do not optimistically refund or replay.
+For optional provider code, inspect `examples/autonomous/providers.ts` and
+`python/examples/autonomous_provider.py`. Neither is imported by core.
+
+## Dataset adapter
+
+Return immutable JSON with three arrays and a stable version; see
+[the dataset contract](/closing-the-loop/datasets-and-evaluation). Implement bounded
+pagination yourself and reject overflow, rather than silently exporting the first page.
+Decide what failure segment is eligible before purchasing a proposal. Keep dataset
+selection separate from a proposing model's preferences.
+
+Database records can contain untrusted text. Sanitize before persistence and before
+external transfer. An SDK sanitization hook is not a provider data-processing agreement
+or an authorization mechanism. Document which fields leave the application and which
+provider account receives them.
+
+## Artifact adapter
+
+Return `{artifactVersion, configurationHash}` in Node or
+`{"artifact_version": ..., "configuration_hash": ...}` in Python.
+The artifact version may be null only when there is genuinely no artifact. The
+configuration fingerprint must be nonempty and cover the relevant pinned execution
+context: model deployment/version, safety instructions, labels, features and pricing
+configuration if it affects evaluation.
+
+**Do not include the editable fragment in the configuration fingerprint.** It belongs
+in the artifact version. Otherwise applying a valid fragment would look like an
+out-of-band model/configuration change during observation. Conversely, a fingerprint
+constant that ignores actual model changes can hide a stale experiment.
+
+The read must reflect the version actually used for inference, not the latest proposal
+in an editor or the SDK's active-candidate pointer alone. Multiple serving processes
+must see consistent registry/cache behavior. Your deployment receipt should mean the
+documented activation point, and prediction logs must show which version served each request.
+
+## Proposer and evaluator
+
+The proposer input supplies frozen baseline identity, approved optimization examples,
+call ordinal and recent terminal reasons. Return an array of candidate **values**, not
+candidate records with approval fields. Loopiter creates immutable records and IDs.
+An empty array means no proposal this call; the configured call limit still applies.
+
+The evaluator receives baseline identity, proposed change, supplied examples and
+`partition: validation | audit`. Load the exact original artifact from your registry;
+do not substitute whatever happens to be current during the callback. Evaluate the
+candidate under the same pinned model/safety/features. Use exact labels or a separately
+trusted evaluator, not the proposing model's opinion about its own change.
+
+Return the [paired comparison contract](/closing-the-loop/datasets-and-evaluation).
+Refusals, malformed provider outputs and unsupported labels must fail or count according
+to predeclared scoring semantics; do not drop difficult examples after seeing results.
+
+## Deployment adapter: durable external protocol
+
+The Node request includes `attempt`, `candidate`, optional `restoreCandidate`,
+`idempotencyKey` and `signal`. Python uses `restore_candidate`, `idempotency_key`
+and `cancellation`. Implement all three operations: `apply`, `inspect`, `rollback`.
+
+Within your **external serving store's** transaction or equivalent atomic operation:
+
+1. Look up the stable attempt/idempotency key. If a matching receipt exists, return it.
+   If the same key has different request content, reject it rather than applying twice.
+2. Compare the actual current artifact with `attempt.expectedArtifactVersion` /
+   `expected_artifact_version`. Compare the pinned configuration against the candidate's
+   baseline too. A mismatch is a conflict, not an invitation to overwrite.
+3. Persist the new artifact/version or restore the explicit predecessor. Do not recompute
+   “previous” from whichever artifact is now second in a list.
+4. Persist the receipt atomically with the serving pointer update.
+5. Commit, then return the durable receipt.
+
+Never hold a Loopiter store transaction open while making an external deployment call.
+If both systems share a database, they still have distinct protocol responsibilities.
+An SDK lease controls who may finalize a run; it cannot stop a delayed external request.
+
+### Receipt and inspection semantics
+
+| Node receipt field | Python field | Meaning |
+| --- | --- | --- |
+| `attemptId` | `attempt_id` | Exact saved attempt ID. |
+| `artifactVersion` | `artifact_version` | Resulting actual serving version; null only for a real removal. |
+| `previousArtifactVersion` | `previous_artifact_version` | Actual predecessor, including null only when none existed. |
+| `metadata` (optional) | `metadata` (optional) | JSON correlation details, never credentials. |
+
+`inspect` returns `status: applied` with the receipt, `status: unknown`, or
+`status: not_applied`. **not_applied means fenced**: that attempt cannot take effect
+later. A transient missing row or an unavailable server is not enough.
+Persist a cancellation/fence marker that any late apply must honor before reporting
+not_applied. Unknown keeps the target blocked until authoritative evidence resolves it.
+
+Rollback must compare the currently serving version too. Do not restore a predecessor
+over an unrelated operator hotfix. Repeated rollback must not revive a version that
+was already rolled back. Test lost responses after both apply and rollback commit.
+
+Reference implementations: `examples/autonomous/postgres-registry.ts` and
+`python/examples/autonomous_registry.py`. They use developer-owned pools and explicit
+application-side migrations. They are examples, not automatic installations or a
+universal adapter for your deployment platform.
+
+## Observation adapter
+
+Input includes run ID, deployed artifact version, baseline and deployment time.
+Return a JSON report containing actual artifact/configuration identity, `startedAt`
+equal to the deployment timestamp, `endedAt` no later than the SDK clock, a boolean
+`complete`, unique mature `unitIds`, and finite metrics. Python uses snake_case.
+
+The report is a cumulative window from deployment, not an arbitrary sliding interval.
+Select only outcomes attributed to that actual version; deduplicate at your declared
+independent unit. The observer—not the core—verifies label maturity and whether the
+denominator is representative. `complete` must describe data completeness honestly;
+the core cannot infer dropped telemetry from a list of successful requests.
+
+If there are no mature units, an empty list can represent waiting. Any finite placeholder
+metric must not be confused with measured success: minimum units still gate completion.
+If data is missing rather than simply immature, mark incomplete and report a coverage
+metric where appropriate. NaN/Infinity are never valid representations of missing data.
+
+## Canary adapter differences
+
+In canary mode, `apply` stages a candidate with stable application-owned assignment;
+`rollback` withdraws it. Additional `rollout.promote` and `rollout.inspect` operations
+manage durable exposure. `promote` must be idempotent by operation ID and preserve
+the same candidate artifact/configuration. `inspect` returns `promoted`, `unknown`
+or fenced `not_applied`.
+
+Observation also supplies the baseline control version, stable assignment hash,
+independent nonoverlapping mature control IDs and a predeclared improvement lower
+bound. The SDK does not compute a randomized production estimate or implement a
+traffic ramp. Do not reinterpret `assignCohort` / `assign_cohort` as a traffic service.
+Changing exposure/assignment definitions mid-experiment requires careful application
+coordination; changing the reported assignment fingerprint blocks the current cycle.
+
+## Adapter acceptance tests before real traffic
+
+- Same apply request twice yields the same receipt and one activation.
+- Same ID with different content fails.
+- Concurrent expected-version changes have one winner or an explicit conflict.
+- Crash before dispatch, after external commit and before SDK receipt persistence.
+- Inspect unknown, then applied; verify no blind apply replay.
+- Inspect fenced not_applied, then let a delayed request arrive; verify it cannot apply.
+- Roll back twice and attempt rollback after an unrelated hotfix.
+- Serve requests through multiple instances/caches and verify recorded version attribution.
+- Return malformed/non-finite evaluation and incomplete/immature observation data.
+- Cancel a callback, then let it finish late; verify it cannot advance the stale run.
+
+Run store conformance separately: a correct database adapter does not prove a correct
+serving adapter. The [mock support lab](/get-started/release-validation) demonstrates
+the complete boundary with real HTTP, PostgreSQL and independent worker processes.

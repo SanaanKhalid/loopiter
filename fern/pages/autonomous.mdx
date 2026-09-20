@@ -8,6 +8,15 @@ production enablement remain separate release actions.
 Autonomy means unattended changes inside your policy—not permission to change that policy.
 The core has no runtime dependencies, telemetry, daemon, hosted scheduler or agent runtime.
 
+## Detailed guides
+
+Start with the [integration walkthrough](/get-started/integrate-an-improvement-workflow),
+then use the [complete policy reference](/closing-the-loop/autonomy-policy-reference),
+[dataset and evaluation guide](/closing-the-loop/datasets-and-evaluation),
+[adapter implementation guide](/closing-the-loop/building-application-adapters), and
+[operational runbook](/operate/autonomous-operations-and-recovery). Shared pages provide
+both-language examples and explain where the contracts differ.
+
 ## Modes and the explicit flag
 
 | Mode | Behavior |
@@ -102,7 +111,7 @@ the controller does not restrict corrections to bundled fixtures.
 Only optimization examples reach the proposer. All candidates use one frozen baseline.
 Validation ranks passing candidates by the primary objective, then serving cost, then
 stable ID. Only the winner sees the audit set. Audit row/episode/entity identities are
-consumed durably before exposure. Later cycles need fresh audit evidence. Fixed
+consumed durably across the namespace before exposure. Later cycles need fresh audit evidence. Fixed
 regression cases can be reused, but are not fresh evidence of improvement.
 
 Return one bounded baseline/candidate score per independent unit, separate guardrail

@@ -1,0 +1,137 @@
+---
+title: Integrate an improvement workflow
+---
+
+Use this sequence to move from a working SDK installation to one bounded application
+workflow. You do not need to replace your AI framework, model provider or serving stack.
+You do need trustworthy labels, a measurable objective and a reversible deployment boundary.
+
+## 1. Choose one target and one lifecycle owner
+
+Start with a single support-intent prompt fragment, one approved model-routing map,
+or one predict/abstain threshold around a fixed classifier. Give the artifact an exact
+key and choose Node or Python to own its lifecycle. Keep unrelated tenants/environments
+separate and never mix synthetic fixture outcomes with customer evidence.
+
+Write down what is **not** editable: safety instructions, labels, model permissions,
+feature processing, evaluation policy, credentials and deployment permissions.
+If a change cannot be independently evaluated or reliably reversed, keep it reviewed.
+
+## 2. Install, migrate and capture before enabling autonomy
+
+Install the explicit 0.3 alpha version using the
+[Node quickstart](/get-started/quickstart) or [Python quickstart](/get-started/python-quickstart).
+Use the developer-owned PostgreSQL adapter for durable workflows; memory/JSON stores
+are development tools. Constructors do not migrate customer databases.
+
+Capture predictions with episode/entity identity and actual model/artifact versions.
+Add authenticated corrections/outcomes with stable caller IDs, so webhook redelivery
+does not invent independent observations. Test malformed input, duplicate IDs and
+source authentication before making any model calls for improvement.
+
+## 3. Define what improvement means
+
+Choose one primary metric, its direction and its units. Add independent constraints
+for quality, latency, cost, coverage and sensitive failure slices as relevant.
+Choose outcome maturity and minimum evidence from the actual business process.
+
+Examples, not universal policies:
+
+| Workflow | Primary score | Independent constraints |
+| --- | --- | --- |
+| Support prompt | Per-ticket exact-match intent accuracy | Per-class floors, latency ceiling, fixed refusal/safety cases |
+| Model router | Measured serving cost per labeled task, minimize | Quality floor and latency bound on every affected segment |
+| Fixed ML decisions | Utility including escalation cost, maximize | Coverage, class-specific errors, unchanged model/features |
+
+Do not change thresholds after seeing candidate results. “No candidate passed” is an
+expected result, not an integration failure. See [policy reference](/closing-the-loop/autonomy-policy-reference).
+
+## 4. Build a real dataset export
+
+Create separate optimization, validation and audit partitions using independent
+episode/entity identities and separated execution-time windows. Do not use every captured
+message as one independent sample. Keep trusted correction provenance and data-transfer
+permissions attached to your application pipeline.
+
+Inspect raw count, filtered count, quarantined episodes, unique entities and mature
+outcomes. Pin a stable dataset version. Use the
+[dataset guide](/closing-the-loop/datasets-and-evaluation) before tuning statistical gates.
+
+## 5. Connect a versioned serving artifact
+
+Make the inference path load a versioned prompt/router from the same registry your
+deployment adapter updates. Store the original artifact so rollback has an actual
+predecessor. Test that a new request uses the updated version and records it.
+
+This is a frequent missing step: saving an “approved prompt” in Loopiter does not
+change an application that still reads a hard-coded prompt elsewhere.
+For an initial implementation, adapt the PostgreSQL registry examples and test
+expected-version conflicts, idempotent receipts, inspection and rollback.
+
+## 6. Implement generation and independent scoring
+
+The proposer sees only approved optimization examples and returns bounded change values.
+The evaluator executes both frozen baseline and candidate on the supplied partition.
+Use trusted exact labels/scoring rules and guardrails outside the generated artifact.
+Meter every actual provider request; request/output bounds belong in the provider adapter.
+
+Construct an `ImprovementWorkflow` from those callbacks plus your policy, dataset,
+artifact, deployment and observation adapters. Both language contracts are described
+in [building application adapters](/closing-the-loop/building-application-adapters).
+
+## 7. Exercise reviewed and experiment modes first
+
+Default recommendation mode produces candidates without deploying. Experiment mode
+validates alternatives, selects one and audits it without automatic application.
+Inspect candidate content, per-example results, frozen identities, budget usage and
+reasons. Remember that audits are consumed even when not deployed.
+
+Test a bad candidate deliberately. It should fail without changing the serving artifact.
+Test unchanged evidence: it should not repeatedly purchase proposals. Test a new customer
+correction with an ordinary application ID; it must not depend on a fixture naming convention.
+
+## 8. Enable bounded autonomy in an isolated environment
+
+Set both autonomous mode and the explicit self-improvement flag. The application—not
+the SDK—calls `tick`. Use conservative provider quotas and exact target permissions.
+Do not expose real users merely because an offline sample passed.
+
+Deploy once and observe version-specific outcomes. Confirm that missing labels wait,
+low traffic eventually times out according to policy, and a controlled regression restores
+the predecessor. Inject a lost deployment response to test inspection-only recovery.
+For operational steps see [autonomous recovery](/operate/autonomous-operations-and-recovery).
+
+## 9. Move to representative traffic gradually
+
+Immediate mode has no concurrent control, so describe completion as meeting offline and
+production limits—not proof of causal improvement. Canary mode requires your own stable
+assignment, exposure storage, comparison design, promotion and withdrawal adapters.
+Neither mode supplies universal safe thresholds or a built-in traffic controller.
+
+Keep a human escalation path for blocked states and uncertain receipts. Monitor actual
+cost, telemetry completeness, version drift, rollback success and user-facing outcomes.
+Broaden targets only after measuring the reliability of your own adapters and label pipeline.
+
+## Runnable examples and what they establish
+
+| Example | Where | What is real / simulated |
+| --- | --- | --- |
+| Three autonomous scenarios | Node `examples/autonomous/demo.ts`; Python `python/examples/autonomous_demo.py` | Controller and scoring real; fixture inputs, model behavior and clock simulated |
+| HTTP support application | `npm run test:mock-support` from checkout | HTTP, PostgreSQL and separate workers real; labels/model/clock simulated |
+| Fixed scikit-learn classifier | `python/examples/sklearn_decision_demo.py` | Actual classifier predictions; synthetic setup data; weights frozen before the loop |
+| Azure retained demonstration | Repository live report | Real model requests and isolated registry deployment; synthetic labels, short observation, injected lost receipt |
+
+The reusable workflow factories are application-side examples, not additional package
+exports. Copy/adapt them deliberately and keep their provider/scientific dependencies
+outside your SDK core. The example commands and limitations are listed in the
+[autonomy overview](/closing-the-loop/opt-in-autonomous-improvement) and
+[release evidence](/get-started/release-validation).
+
+## Before calling the integration ready
+
+You can follow a single execution from its original serving version to an authorized
+correction, eligible dataset row, candidate, validation comparison, selected audit,
+approval identity, external receipt, observed outcome and any rollback receipt.
+You can also show a rejected change, missing-evidence waiting state and interrupted
+deployment recovery without weakening the configured gates. This trace is more useful
+than a dashboard that only says “the agent improved itself.”

@@ -13,6 +13,18 @@ PACKAGE = Path(__file__).resolve().parents[1]
 
 
 class DocumentationTests(unittest.TestCase):
+    def test_complete_autonomy_policy(self):
+        page = ROOT / "fern/pages/autonomy-policy.mdx"
+        if not page.exists():
+            self.skipTest("Fern pages are outside the Python source distribution")
+        from loopiter.improvement_evidence import validate_policy
+
+        examples = re.findall(r"```python\n(.*?)```", page.read_text(), flags=re.S)
+        self.assertEqual(len(examples), 1)
+        namespace = {}
+        exec(compile(examples[0], str(page), "exec"), namespace)
+        validate_policy(namespace["support_policy"])
+
     def check_examples(self, content, filename):
         examples = re.findall(r"```python\n(.*?)```", content, flags=re.S)
         self.assertGreaterEqual(len(examples), 1, filename)

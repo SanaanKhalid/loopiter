@@ -1,0 +1,176 @@
+---
+title: Datasets and evaluation
+---
+
+Feedback capture and autonomous evaluation are different layers. `recordSignal` /
+`record_signal` stores an application assertion. It does not authenticate a reviewer,
+infer ground truth from a conversation, or automatically build a safe evaluation set.
+Your dataset adapter turns authorized, relevant records into a frozen experiment.
+
+## From an application outcome to a scoring unit
+
+1. Capture the execution with input, output, episode/entity IDs and actual serving
+   artifact/model versions. An episode is a task/ticket/session, not necessarily one turn.
+2. Authenticate the outcome source outside Loopiter. Record who/what supplied a label,
+   its verification method, the time it became known and the execution it concerns.
+3. Resolve which business metric this outcome can support. A thumbs-down may identify
+   an issue, but does not necessarily provide the correct label or a safe replacement.
+4. Wait for relevant outcomes to mature. Do not count still-open tasks as successes.
+5. Select one relevant failure segment and produce optimization, validation and audit
+   partitions. Keep independent regression fixtures separate from new improvement evidence.
+
+Use the existing [capture guide](/core-concepts/executions-and-episodes) and
+[signal guide](/core-concepts/signals-and-outcomes). Late labels can reference older
+executions: use separate execution-cohort and outcome-observation windows when analyzing.
+
+## Exact dataset contract
+
+`dataset(context)` returns a JSON snapshot with `version`, `optimization`, `validation`
+and `audit`. Each partition is an array. Every row has:
+
+| Node | Python | Meaning |
+| --- | --- | --- |
+| `id` | `id` | Stable observation/example ID; retries must not invent new IDs. |
+| `episodeId` | `episode_id` | Task-level independence/deduplication key. |
+| `entityId` | `entity_id` | Customer/device/entity key used for conservative independence. |
+| `occurredAt` | `occurred_at` | Execution time as an ISO timestamp. Use UTC `Z` timestamps in both languages. |
+| `observedAt` | `observed_at` | Outcome time, not earlier than execution. |
+| `source` | `source` | Trusted application provenance identifier. |
+| `input` | `input` | JSON input the evaluator can actually replay. |
+| `label` | `label` | Authorized JSON ground truth; not necessarily a string. |
+
+Do not add arbitrary row fields: place necessary replay context inside `input` and
+version it. Keep sensitive identifiers pseudonymous where possible. The controller
+stores the frozen snapshot in run history; deleting upstream raw records does not
+erase that copy. Apply your data policy before returning it.
+
+### Filtering and deduplication order
+
+The raw partition size is checked first. Every row is validated; invalid data does
+not become acceptable because its source would later be excluded. Sources not in the
+allowlist and outcomes not yet mature are filtered out. Remaining rows group by episode.
+
+- Reusing an ID with different content within a partition raises `conflicting_correction`.
+- Different trusted eligible labels within one episode quarantine that episode.
+- An episode must belong to a single entity.
+- Equal-label duplicate rows collapse deterministically; the selected row is ordered by ID.
+- Repeated entities cannot inflate support: at most one selected unit per entity per partition.
+- Raw row/episode/entity identities cannot overlap across partitions, including identities
+  from rows filtered out of an earlier partition.
+
+Consequently 100 messages from five customers need not equal 100 samples. An application
+that needs a different independence model must design its identifiers and evaluator
+honestly, not mint artificial entities to get through a gate.
+
+## Partition boundaries and time separation
+
+Optimization examples inform the proposal. Validation examples select among alternatives.
+Audit examples authorize deployment of the selected winner. They are not interchangeable.
+
+| Partition | Allowed use | Example selection window |
+| --- | --- | --- |
+| Optimization | Show verified corrections to proposer | Older completed tasks from distinct entities |
+| Validation | Evaluate every candidate against the same baseline | Later tasks with no overlapping entities/episodes |
+| Audit | Evaluate the single selected winner once | Still later tasks, not used in any prior audit in this namespace |
+| Production observation | Judge the actually deployed version's limits | New version-attributed outcomes after deployment |
+
+The controller enforces strictly separated **execution timestamps** across eligible
+partitions: a later partition's earliest selected execution must be after the earlier
+partition's latest selected execution. Equal boundary timestamps do not pass.
+Outcome maturity uses outcome time, which can be much later than execution time.
+
+The SDK cannot detect paraphrases of the same underlying event, leaked labels embedded
+inside text, shared households hidden behind different IDs, or an optimizer's external
+training data. Audit your export pipeline for these forms of leakage yourself.
+
+## Frozen identity, new evidence and audit consumption
+
+The decision key includes namespace, workflow ID/definition, actual baseline and prepared
+dataset content. An unchanged failed/inconclusive experiment is remembered before an
+optimizer is called. Keep dataset versions and IDs stable for the same data; do not
+stamp every export with a new timestamp merely to force another run.
+
+Fresh cycles also require enough unused optimization entity IDs. New policy/evaluator
+versions alone do not manufacture new independent evidence. Audit identities are consumed
+across workflows in the namespace before the audit callback runs, including when a request subsequently fails or its outcome
+is ambiguous. Refresh audit evidence through a trusted, documented selection process.
+The alpha has no general API for resetting consumed audits or administratively erasing
+deduplication. Never delete coordination records to force progress.
+
+Your proposer receives optimization examples, baseline identity, ordinal and bounded
+previous terminal reasons. It does not receive audit examples through this interface.
+Application callbacks share a process and are trusted: the SDK is not a data-access sandbox
+that prevents malicious code from opening your audit database.
+
+## Evaluator outputs and ranking
+
+The autonomous `evaluate(input, context)` callback returns:
+
+- `cases`: exactly one record per supplied example, with its ID and finite bounded
+  baseline/candidate primary-objective scores. No missing, duplicated or extra IDs.
+- `metrics`: finite aggregate guardrails, each in explicitly documented units.
+- `estimatedServingCost` / `estimated_serving_cost`: finite nonnegative comparable
+  serving-cost estimate. Zero is appropriate only when genuinely justified, such as
+  a deterministic offline mock—not when provider usage is unavailable.
+- Optional `uncertainty`, required when a custom audit method is configured.
+
+The evaluator must actually execute both frozen baseline and candidate behavior. Do not
+return a model's claim that its new prompt is better. Built-in workflow factories use
+deterministic scoring of predictions and application-authored labels; generation and
+evaluation criteria remain separate.
+
+Validation requires enough units, all guardrails, and mean favorable effect strictly
+greater than the minimum. Passing candidates rank by mean primary score in the chosen
+direction, then lower serving cost, then stable candidate ID. One winner proceeds to
+audit; passing candidates are not applied sequentially.
+
+The low-level reviewed `evaluateCandidate` / `evaluate_candidate` instead uses a
+`passed` boolean and optional metrics/notes. Do not return that smaller reviewed result
+from an autonomous evaluator: it omits required paired evidence.
+
+## Default paired audit bound
+
+For `n` examples, let `a_i` and `b_i` be baseline and candidate scores, each in `[lo, hi]`.
+Define the favorable mean difference as `mean(b_i - a_i)` for maximization, or
+`mean(a_i - b_i)` for minimization. The implemented one-sided lower bound is:
+
+```text
+width = hi - lo
+lower = favorable_mean_difference - width * sqrt(2 * ln(1 / alpha) / n)
+```
+
+Audit passes only if sample count and all independent guardrails pass and
+`lower > minimumImprovement`. A tie is not acceptance.
+
+For illustration, width 1, alpha 0.05 and 500 units give a penalty of about 0.1095.
+An observed gain of 0.10 therefore would not establish a positive lower bound under
+this conservative method. If the required minimum is 0.03, an observed 0.15 gain would
+have a lower bound around 0.0405, subject to valid assumptions and all other gates.
+These are arithmetic examples, not claims about expected improvements or power.
+
+Assumptions include bounded independent units, a fixed audit set/sample size, no
+candidate selection using the audit results and a predeclared objective. Repeated
+testing across cycles still needs an application-level statistical plan; the alpha
+does not supply a universal sequential-testing or multiple-comparison correction.
+Correlated synthetic templates demonstrate software behavior, not calibrated confidence.
+
+A custom method must declare a matching name/version, finite lower bound, and
+`assumptionsValid: true` / `assumptions_valid: True`. The controller also checks that
+the bound is consistent with the observed bounded effect. Your statistical implementation
+and truthful declaration remain your responsibility.
+
+## Guardrail design mistakes to avoid
+
+- Accuracy improving only because a rare but important class was dropped: enforce
+  representative slices and per-class floors in the evaluator.
+- Cost looking better because unknown usage was omitted: reject incomplete cost data.
+- Escalating everything winning an abstention policy: charge escalation utility/cost
+  and require coverage and class-specific error limits.
+- Optimizing latency and correctness through an undocumented average: choose one
+  objective and give the others independent gates.
+- Quiet production traffic appearing healthy: require sample count, maturity, duration
+  and truthful telemetry completeness; use an observation timeout with recovery.
+
+For a complete capture-to-dataset example, run the
+[HTTP/PostgreSQL mock support lab](/get-started/release-validation). Its implementation
+reads captured records, computes scores from predictions and tests contradictory labels.

@@ -73,6 +73,8 @@ navigation:
             path: pages/overview.mdx
           - page: Quickstart
             path: pages/quickstart.mdx
+          - page: Integrate an improvement workflow
+            path: pages/autonomy-integration.mdx
           - page: Architecture
             path: pages/architecture.mdx
           - page: Classification starter
@@ -95,6 +97,12 @@ navigation:
         contents:
           - page: Opt-in autonomous improvement
             path: pages/autonomous.mdx
+          - page: Autonomy policy reference
+            path: pages/autonomy-policy.mdx
+          - page: Datasets and evaluation
+            path: pages/autonomy-datasets.mdx
+          - page: Building application adapters
+            path: pages/autonomy-adapters.mdx
           - page: Governed self-improvement
             path: pages/self-improvement.mdx
           - page: Evaluation and deployment
@@ -111,6 +119,8 @@ navigation:
             path: pages/security.mdx
           - page: Production operation
             path: pages/production.mdx
+          - page: Autonomous operations and recovery
+            path: pages/autonomy-operations.mdx
           - page: Migrating from the prototype
             path: pages/migration.mdx
           - page: Migrating to 0.3
@@ -131,6 +141,16 @@ navigation:
             path: pages/python-examples.mdx
           - page: Autonomous improvement in Python
             path: pages/python-autonomy.mdx
+          - link: Integration walkthrough
+            href: /get-started/integrate-an-improvement-workflow
+          - link: Complete policy reference
+            href: /closing-the-loop/autonomy-policy-reference
+          - link: Datasets and evaluation
+            href: /closing-the-loop/datasets-and-evaluation
+          - link: Building application adapters
+            href: /closing-the-loop/building-application-adapters
+          - link: Operations and recovery
+            href: /operate/autonomous-operations-and-recovery
       - section: Reference
         contents:
           - page: Python API

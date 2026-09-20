@@ -78,6 +78,18 @@ try {
   console.log(
     `Compiled ${snippets.length} complete documentation examples, including the landing page.`,
   );
+  // Validate the complete documented policy at runtime, not just its TypeScript shape.
+  const policyExample = snippets.find((s) => s.file === "fern/pages/autonomy-policy.mdx");
+  assert.ok(policyExample, "Complete autonomy policy example is required");
+  const compiledPolicy = ts.transpileModule(policyExample.code, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
+  }).outputText;
+  const { supportPolicy } = await import(
+    `data:text/javascript;base64,${Buffer.from(compiledPolicy).toString("base64")}`
+  );
+  const { validatePolicy } = await import("../dist/src/improvement-evidence.js");
+  validatePolicy(supportPolicy);
+  console.log("Documented complete Node autonomy policy passed runtime validation.");
 } finally {
   await rm(directory, { recursive: true, force: true });
 }
