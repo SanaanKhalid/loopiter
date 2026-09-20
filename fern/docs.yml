@@ -4,7 +4,7 @@ instances:
   - url: loopiter.docs.buildwithfern.com
 
 title: Loopiter Documentation
-default-language: typescript
+default-language: python
 favicon: assets/favicon.svg
 
 logo:
@@ -55,44 +55,36 @@ navbar-links:
 
 # Language tabs do not add URL prefixes: existing npm, PyPI and website links stay valid.
 tabs:
-  nodejs:
-    display-name: Node.js
-    icon: brands node-js
-    skip-slug: true
   python:
     display-name: Python
     icon: brands python
     skip-slug: true
+  nodejs:
+    display-name: Node.js
+    icon: brands node-js
+    skip-slug: true
 
 navigation:
-  - tab: nodejs
+  - tab: python
     layout:
       - section: Get started
         contents:
           - page: Overview
             path: pages/overview.mdx
-          - page: Quickstart
-            path: pages/quickstart.mdx
+          - page: Python quickstart
+            path: pages/python.mdx
+          - page: Python examples
+            path: pages/python-examples.mdx
+          - page: Autonomous improvement in Python
+            path: pages/python-autonomy.mdx
           - page: Integrate an improvement workflow
             path: pages/autonomy-integration.mdx
           - page: Architecture
             path: pages/architecture.mdx
-          - page: Classification starter
-            path: pages/starter.mdx
           - page: Supported capabilities
             path: pages/supported.mdx
           - page: Release validation
             path: pages/release-validation.mdx
-      - section: Core concepts
-        contents:
-          - page: Executions and episodes
-            path: pages/executions.mdx
-          - page: Signals and outcomes
-            path: pages/signals.mdx
-          - page: Pattern analysis
-            path: pages/analysis.mdx
-          - page: Improvement candidates
-            path: pages/candidates.mdx
       - section: Closing the loop
         contents:
           - page: Opt-in autonomous improvement
@@ -105,42 +97,38 @@ navigation:
             path: pages/autonomy-adapters.mdx
           - page: Governed self-improvement
             path: pages/self-improvement.mdx
-          - page: Evaluation and deployment
-            path: pages/evaluation-deployment.mdx
           - page: Fine-tuning
             path: pages/fine-tuning.mdx
           - page: Agent systems
             path: pages/agent-systems.mdx
       - section: Operate
         contents:
-          - page: Storage adapters
-            path: pages/storage.mdx
+          - link: Python PostgreSQL setup
+            href: /get-started/python-quickstart#postgresql-optional
           - page: Security and privacy
             path: pages/security.mdx
           - page: Production operation
             path: pages/production.mdx
           - page: Autonomous operations and recovery
             path: pages/autonomy-operations.mdx
-          - page: Migrating from the prototype
-            path: pages/migration.mdx
           - page: Migrating to 0.3
             path: pages/autonomy-migration.mdx
       - section: Reference
         contents:
-          - page: TypeScript API
-            path: pages/api-reference.mdx
+          - page: Python API
+            path: pages/python-api.mdx
           - page: Common pitfalls and FAQ
             path: pages/faq.mdx
-  - tab: python
+  - tab: nodejs
     layout:
       - section: Get started
         contents:
-          - page: Python quickstart
-            path: pages/python.mdx
-          - page: Python examples
-            path: pages/python-examples.mdx
-          - page: Autonomous improvement in Python
-            path: pages/python-autonomy.mdx
+          - page: Quickstart
+            path: pages/quickstart.mdx
+          - page: Classification starter
+            path: pages/starter.mdx
+          - link: Overview
+            href: /get-started/overview
           - link: Integration walkthrough
             href: /get-started/integrate-an-improvement-workflow
           - link: Complete policy reference
@@ -151,10 +139,32 @@ navigation:
             href: /closing-the-loop/building-application-adapters
           - link: Operations and recovery
             href: /operate/autonomous-operations-and-recovery
+      - section: Core concepts
+        contents:
+          - page: Executions and episodes
+            path: pages/executions.mdx
+          - page: Signals and outcomes
+            path: pages/signals.mdx
+          - page: Pattern analysis
+            path: pages/analysis.mdx
+          - page: Improvement candidates
+            path: pages/candidates.mdx
+      - section: Closing the loop
+        contents:
+          - link: Opt-in autonomous improvement
+            href: /closing-the-loop/opt-in-autonomous-improvement
+          - page: Evaluation and deployment
+            path: pages/evaluation-deployment.mdx
+      - section: Operate
+        contents:
+          - page: Storage adapters
+            path: pages/storage.mdx
+          - page: Migrating from the prototype
+            path: pages/migration.mdx
       - section: Reference
         contents:
-          - page: Python API
-            path: pages/python-api.mdx
+          - page: TypeScript API
+            path: pages/api-reference.mdx
           - link: Node.js and Python capabilities
             href: /get-started/supported-capabilities
           - link: Migrating to 0.3

@@ -19,6 +19,57 @@ effect threshold does not mean 500 cases will establish that effect. Choose limi
 from your risk, traffic, label delay and independently designed evaluation.
 
 <Tabs>
+  <Tab title="Python">
+
+```python
+support_policy = {
+    "version": "support-policy-v1",
+    "target": {"kind": "prompt", "key": "support/intent-guidance"},
+    "change_schema": {
+        "type": "object",
+        "properties": {"fragment": {"type": "string", "maxLength": 2000}},
+        "required": ["fragment"],
+        "additionalProperties": False,
+    },
+    "objective": {
+        "metric": "accuracy", "direction": "maximize",
+        "minimum_improvement": 0.03, "range": [0, 1], "alpha": 0.05,
+    },
+    "guardrails": [
+        {"metric": "accuracy:billing", "comparator": "gte", "value": 0.90},
+        {"metric": "accuracy:access", "comparator": "gte", "value": 0.90},
+        {"metric": "maxLatencyMs", "comparator": "lte", "value": 2500},
+    ],
+    "trusted_sources": ["support-reviewer-v1"],
+    "minimum_new_units": 30,
+    "minimum_validation_units": 150,
+    "minimum_audit_units": 500,
+    "outcome_maturity_ms": 86_400_000,
+    "maximum_rows": 5000,
+    "daily": {"model_requests": 5000, "tokens": 5_000_000, "deployments": 1},
+    "callback_reservation": {"model_requests": 1200, "tokens": 1_200_000},
+    "cooldown_ms": 86_400_000,
+    "rollout": {"mode": "immediate"},
+    "observation": {
+        "minimum_duration_ms": 86_400_000,
+        "timeout_ms": 604_800_000,
+        "minimum_units": 200,
+        "guardrails": [
+            {"metric": "errorRate", "comparator": "lte", "value": 0.10},
+            {"metric": "telemetryCoverage", "comparator": "gte", "value": 0.99},
+        ],
+        "on_timeout": "rollback",
+        "on_failure": "rollback",
+    },
+    "on_insufficient_evidence": "wait",
+    "on_uncertain_deployment": "reconcile",
+    "maximum_candidates": 3,
+    "maximum_proposal_calls": 3,
+    "maximum_consecutive_failures": 3,
+}
+```
+
+  </Tab>
   <Tab title="Node.js">
 
 ```typescript
@@ -69,57 +120,6 @@ export const supportPolicy: AutonomyPolicy = {
   maximumProposalCalls: 3,
   maximumConsecutiveFailures: 3,
 };
-```
-
-  </Tab>
-  <Tab title="Python">
-
-```python
-support_policy = {
-    "version": "support-policy-v1",
-    "target": {"kind": "prompt", "key": "support/intent-guidance"},
-    "change_schema": {
-        "type": "object",
-        "properties": {"fragment": {"type": "string", "maxLength": 2000}},
-        "required": ["fragment"],
-        "additionalProperties": False,
-    },
-    "objective": {
-        "metric": "accuracy", "direction": "maximize",
-        "minimum_improvement": 0.03, "range": [0, 1], "alpha": 0.05,
-    },
-    "guardrails": [
-        {"metric": "accuracy:billing", "comparator": "gte", "value": 0.90},
-        {"metric": "accuracy:access", "comparator": "gte", "value": 0.90},
-        {"metric": "maxLatencyMs", "comparator": "lte", "value": 2500},
-    ],
-    "trusted_sources": ["support-reviewer-v1"],
-    "minimum_new_units": 30,
-    "minimum_validation_units": 150,
-    "minimum_audit_units": 500,
-    "outcome_maturity_ms": 86_400_000,
-    "maximum_rows": 5000,
-    "daily": {"model_requests": 5000, "tokens": 5_000_000, "deployments": 1},
-    "callback_reservation": {"model_requests": 1200, "tokens": 1_200_000},
-    "cooldown_ms": 86_400_000,
-    "rollout": {"mode": "immediate"},
-    "observation": {
-        "minimum_duration_ms": 86_400_000,
-        "timeout_ms": 604_800_000,
-        "minimum_units": 200,
-        "guardrails": [
-            {"metric": "errorRate", "comparator": "lte", "value": 0.10},
-            {"metric": "telemetryCoverage", "comparator": "gte", "value": 0.99},
-        ],
-        "on_timeout": "rollback",
-        "on_failure": "rollback",
-    },
-    "on_insufficient_evidence": "wait",
-    "on_uncertain_deployment": "reconcile",
-    "maximum_candidates": 3,
-    "maximum_proposal_calls": 3,
-    "maximum_consecutive_failures": 3,
-}
 ```
 
   </Tab>

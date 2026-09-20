@@ -19,9 +19,22 @@ const files = [
 ];
 const directory = await mkdtemp(join(root, ".doccheck-"));
 try {
+  const navigation = await readFile(join(root, "fern/docs.yml"), "utf8");
+  assert.match(navigation, /^default-language: python$/m);
+  assert.match(navigation, /tabs:\s+python:/);
+  assert.match(navigation, /navigation:\s+- tab: python/);
+  const pythonNavigation = navigation.split("navigation:")[1].split("  - tab: nodejs")[0];
+  for (const page of ["overview", "python", "python-api", "autonomy-integration", "autonomy-policy", "autonomy-datasets", "autonomy-adapters", "autonomy-operations"]) {
+    assert.ok(pythonNavigation.includes(`path: pages/${page}.mdx`), `${page} must remain in the Python documentation path`);
+  }
   const snippets = [];
   for (const file of files) {
     const content = await readFile(join(root, file), "utf8");
+    for (const group of content.matchAll(/<Tabs>([\s\S]*?)<\/Tabs>/g)) {
+      if (group[1].includes('title="Python"') && group[1].includes('title="Node.js"')) {
+        assert.ok(group[1].indexOf('title="Python"') < group[1].indexOf('title="Node.js"'), `${file}: shared examples must show Python first`);
+      }
+    }
     assert.ok(
       !content.includes("YOUR_REPOSITORY_URL"),
       `${file}: placeholder clone instruction`,

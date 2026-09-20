@@ -6,29 +6,22 @@ Loopiter is an MIT-licensed SDK that coordinates feedback-driven AI
 improvements. It is not an LLM, trainer, hosted observability service or rollout daemon.
 The **0.3 alpha** (`0.3.0-alpha.1` on npm; `0.3.0a1` on PyPI) adds
 [opt-in autonomous improvement](/closing-the-loop/opt-in-autonomous-improvement) in both SDKs.
-Autonomy remains disabled by default. The alpha supports Node.js 22 and 24 as an ESM library
-with **zero core runtime dependencies**. Formerly Feloop.
+Autonomy remains disabled by default. Start with the native, async **Python 3.11+ SDK**:
+capture predictions and verified corrections, evaluate proposed changes, and deploy
+through your own application adapters. The core has **zero runtime dependencies**
+and no telemetry; PostgreSQL support is optional. No Node.js installation is needed
+to use the Python package. Formerly Feloop.
 
-A native **Python 3.11+ alpha** is also available, with
-capture, analysis, reviewed deployment and an optional PostgreSQL adapter. Python
-installation via `python -m pip install 'loopiter==0.3.0a1'`. Start with the
-[Python quickstart](/get-started/python-quickstart) for installation and explicit
-language differences. Both SDKs have native controllers and optional provider examples;
-the original reviewed classification CLI below remains Node-only.
+These docs are Python-first. Follow the [Python quickstart](/get-started/python-quickstart)
+to install and capture feedback, then the
+[Python autonomous workflow guide](/get-started/autonomous-improvement-in-python)
+when you are ready to configure bounded improvement. The separate Node.js ESM SDK
+supports Node.js 22 and 24, also without core runtime dependencies.
 
-Use the **Node.js** and **Python** tabs at the top of the docs to switch SDK guides.
+Use the **Python** and **Node.js** tabs at the top of the docs to switch SDK guides.
 Both packages are named `loopiter`, but npm and PyPI distribute separate SDKs.
 
 <Tabs>
-<Tab title="Node.js" language="typescript">
-
-```sh
-npm install loopiter@0.3.0-alpha.1
-```
-
-Requires Node.js 22 or 24. Follow the [Node.js quickstart](/get-started/quickstart).
-
-</Tab>
 <Tab title="Python" language="python">
 
 ```sh
@@ -36,6 +29,15 @@ python -m pip install 'loopiter==0.3.0a1'
 ```
 
 Requires Python 3.11+. Follow the [Python quickstart](/get-started/python-quickstart).
+
+</Tab>
+<Tab title="Node.js" language="typescript">
+
+```sh
+npm install loopiter@0.3.0-alpha.1
+```
+
+Requires Node.js 22 or 24. Follow the [Node.js quickstart](/get-started/quickstart).
 
 </Tab>
 </Tabs>
@@ -61,7 +63,8 @@ callbacks. Loopiter stores evidence, bounds orchestration and protects lifecycle
 - Node store v3 / Python store v2 contracts, optional PostgreSQL 16/17 reference adapters and conformance suites.
 - Review-first defaults with explicitly enabled prompt/routing autonomy, independent audit,
   production observation and automatic rollback through application adapters.
-- A complete standalone PostgreSQL/OpenAI or Azure OpenAI support-intent starter, plus offline fixtures.
+- Native Python and Node.js autonomous workflow examples, plus offline fixtures.
+- A separate Node.js reviewed support-intent CLI with PostgreSQL and OpenAI/Azure integration.
 
 ## What does not ship
 
@@ -70,7 +73,21 @@ jobs, automatic fine-tuning, unrestricted code execution
 or universal self-improvement. Other target kinds can be represented and evaluated;
 their optimization and deployment require application adapters.
 
-Use the [quickstart](/get-started/quickstart) to run a measured example. Read
-[storage](/operate/storage-adapters) and [recovery](/closing-the-loop/evaluation-and-deployment)
-before connecting a real system. An alpha narrows support, not correctness obligations.
+## Your first Python integration
+
+1. Follow the [Python quickstart](/get-started/python-quickstart) to install the package,
+   run a simulated example, and record your first prediction and correction.
+2. Connect your database using the quickstart's PostgreSQL instructions. In-memory
+   stores are development tools, not durable production storage.
+3. Follow the [integration walkthrough](/get-started/integrate-an-improvement-workflow)
+   to define trusted feedback, dataset partitions, an objective and application adapters.
+4. Start in reviewed or experiment mode. Enable autonomous changes only with
+   `self_improving=True`, `mode="autonomous"` and a complete validated policy.
+5. Read [operations and recovery](/operate/autonomous-operations-and-recovery)
+   before scheduling repeated ticks or connecting real traffic.
+
+Use the [Python API reference](/reference/python-api) for method signatures and
+the [Python examples](/get-started/python-examples) for runnable workflows.
+For JavaScript or TypeScript, start with the [Node.js quickstart](/get-started/quickstart).
+An alpha narrows support, not correctness obligations.
 The supplied small fixture dataset is not evidence of production accuracy or revenue.

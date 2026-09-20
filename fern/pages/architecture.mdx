@@ -2,9 +2,11 @@
 title: Architecture
 ---
 
-Loopiter lives inside your Node application. It never opens a listening server or
+Loopiter lives inside your Python or Node.js application. The Python SDK is native
+and async; it does not call a Node.js subprocess. Neither SDK opens a listening server or
 schedules itself. Your infrastructure owns ingestion, credentials, database, jobs,
-model calls, deployments and operations.
+model calls, deployments and operations. Use one SDK as the lifecycle owner for a
+target: the two SDKs have separate storage contracts and are not shared-database clients.
 
 | Layer | Responsibility |
 | --- | --- |

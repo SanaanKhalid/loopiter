@@ -51,6 +51,23 @@ caller supplies an already configured provider function that forwards cancellati
 enforces payload/output limits and reports total billable token usage when known.
 
 <Tabs>
+  <Tab title="Python">
+
+```python
+import asyncio
+from loopiter import CallbackContext
+
+async def metered_request(context: CallbackContext, maximum_tokens: int, request):
+    async def dispatch():
+        if context.cancellation.is_set():
+            raise asyncio.CancelledError()
+        # request returns {"value": parsed_result, "tokens": integer_or_none}.
+        return await request(context.cancellation)
+
+    return await context.meter(maximum_tokens, dispatch)
+```
+
+  </Tab>
   <Tab title="Node.js">
 
 ```typescript
@@ -66,23 +83,6 @@ export async function meteredRequest<T>(
     return request(context.signal);
   });
 }
-```
-
-  </Tab>
-  <Tab title="Python">
-
-```python
-import asyncio
-from loopiter import CallbackContext
-
-async def metered_request(context: CallbackContext, maximum_tokens: int, request):
-    async def dispatch():
-        if context.cancellation.is_set():
-            raise asyncio.CancelledError()
-        # request returns {"value": parsed_result, "tokens": integer_or_none}.
-        return await request(context.cancellation)
-
-    return await context.meter(maximum_tokens, dispatch)
 ```
 
   </Tab>

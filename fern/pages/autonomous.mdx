@@ -31,6 +31,21 @@ Setting the flag alone does nothing. The application calls `tick` repeatedly. Th
 is false. Legacy approvals never authorize fresh autonomous cycles.
 
 <Tabs>
+  <Tab title="Python">
+
+```python
+from loopiter import FeedbackLoop, ImprovementController, ImprovementWorkflow
+
+def attach_autonomy(loop: FeedbackLoop, workflow: ImprovementWorkflow):
+    return ImprovementController(
+        loop, workflows=[workflow], self_improving=True, mode="autonomous"
+    )
+
+async def scheduled_tick(controller: ImprovementController, workflow_id: str):
+    return await controller.tick(workflow_id)
+```
+
+  </Tab>
   <Tab title="Node.js">
 
 ```typescript
@@ -45,21 +60,6 @@ export function attachAutonomy(loop: FeedbackLoop, workflow: ImprovementWorkflow
 export async function scheduledTick(controller: ImprovementController, workflowId: string) {
   return controller.tick(workflowId, AbortSignal.timeout(600_000));
 }
-```
-
-  </Tab>
-  <Tab title="Python">
-
-```python
-from loopiter import FeedbackLoop, ImprovementController, ImprovementWorkflow
-
-def attach_autonomy(loop: FeedbackLoop, workflow: ImprovementWorkflow):
-    return ImprovementController(
-        loop, workflows=[workflow], self_improving=True, mode="autonomous"
-    )
-
-async def scheduled_tick(controller: ImprovementController, workflow_id: str):
-    return await controller.tick(workflow_id)
 ```
 
   </Tab>
