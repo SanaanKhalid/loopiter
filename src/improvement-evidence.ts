@@ -151,7 +151,7 @@ export function validatePolicy(p: AutonomyPolicy): void {
   ]);
   nonempty(p.version, "policy version");
   target(p.target);
-  enumeration(p.target.kind, ["prompt", "routing"], "autonomous target");
+  enumeration(p.target.kind, ["prompt", "routing", "agent_release"], "autonomous target");
   validateSchema(p.changeSchema);
   fields(p.objective, [
     "metric",

@@ -112,6 +112,16 @@ export class ImprovementController {
       ] as const)
         nonempty(w[k], k);
       validatePolicy(w.policy);
+      if (
+        w.evaluateBatch !== undefined &&
+        typeof w.evaluateBatch !== "function"
+      )
+        fail("invalid_adapter", "Invalid evaluateBatch.");
+      if (w.evaluationBatchSize !== undefined) {
+        integer(w.evaluationBatchSize, "evaluationBatchSize");
+        if (w.evaluationBatchSize > 32)
+          fail("invalid_input", "Maximum batch size is 32.");
+      }
       for (const k of [
         "dataset",
         "artifact",
@@ -143,6 +153,7 @@ export class ImprovementController {
           version: w.version,
           optimizer: w.optimizerVersion,
           evaluator: w.evaluatorVersion,
+          ...(w.evaluateBatch ? { batchSize: w.evaluationBatchSize ?? 4 } : {}),
           policy: w.policy,
         }),
       );
@@ -925,22 +936,21 @@ export class ImprovementController {
         for (const cid of d.candidateIds) {
           if (comparisons[cid]) continue;
           const candidate = (await this.loop.getCandidate(cid))!;
-          const report = await this.operation(
+          const report = await this.evaluatePartition(
             run,
             owner,
-            `validation:${cid}`,
-            (c) =>
-              w.evaluate(
-                {
-                  baseline: d.baseline,
-                  change: candidate.proposedChange,
-                  examples: clone(d.dataset.validation),
-                  partition: "validation",
-                },
-                c,
-              ),
+            cid,
+            "validation",
             signal2,
           );
+          if (!report)
+            return {
+              runId: rid,
+              state: "evaluating",
+              reason: "evaluation_batch_saved",
+              candidateIds: d.candidateIds,
+              budget: await this.budget(w),
+            };
           compare(report, d.dataset.validation, w.policy);
           comparisons[cid] = report;
           run = await this.save(rid, owner, {
@@ -995,22 +1005,21 @@ export class ImprovementController {
             }
           }
         });
-        const audit = await this.operation(
+        const audit = await this.evaluatePartition(
           run,
           owner,
-          `audit:${cid}`,
-          (c) =>
-            w.evaluate(
-              {
-                baseline: d.baseline,
-                change: candidate.proposedChange,
-                examples: clone(d.dataset.audit),
-                partition: "audit",
-              },
-              c,
-            ),
+          cid,
+          "audit",
           signal2,
         );
+        if (!audit)
+          return {
+            runId: rid,
+            state: "selected",
+            reason: "audit_batch_saved",
+            candidateIds: d.candidateIds,
+            budget: await this.budget(w),
+          };
         const gates = compare(audit, d.dataset.audit, w.policy, true);
         const auditMetrics = {
           ...audit.metrics,
@@ -1522,6 +1531,67 @@ export class ImprovementController {
         : {}),
     };
   }
+  private async evaluatePartition(
+    run: ImprovementRun,
+    owner: string,
+    cid: string,
+    partition: "validation" | "audit",
+    signal: AbortSignal,
+  ): Promise<Comparison | undefined> {
+    const w = this.workflow(run.data.workflowId);
+    const candidate = (await this.loop.getCandidate(cid))!;
+    const key = `${partition}:${cid}`;
+    const input = {
+      baseline: run.data.baseline,
+      change: candidate.proposedChange,
+      examples: clone(run.data.dataset[partition]),
+      partition,
+    };
+    if (!w.evaluateBatch)
+      return this.operation(
+        run,
+        owner,
+        key,
+        (c) => w.evaluate(input, c),
+        signal,
+      );
+    const batches = run.data.evaluationBatches?.[key] ?? [];
+    const size = w.evaluationBatchSize ?? 4;
+    const offset = batches.length * size;
+    if (offset < input.examples.length) {
+      const result = await this.operation(
+        run,
+        owner,
+        `${key}:batch:${offset}`,
+        (c) =>
+          w.evaluateBatch!(
+            {
+              ...input,
+              offset,
+              examples: input.examples.slice(offset, offset + size),
+            },
+            c,
+          ),
+        signal,
+      );
+      json(result, 1024 * 1024);
+      await this.save(run.id, owner, {
+        evaluationBatches: {
+          ...run.data.evaluationBatches,
+          [key]: [...batches, result],
+        },
+        reason: `${partition}_batch_saved`,
+      });
+      return undefined;
+    }
+    return this.operation(
+      run,
+      owner,
+      key,
+      (c) => w.evaluate({ ...input, batchResults: clone(batches) }, c),
+      signal,
+    );
+  }
   private validateObservation(
     o: Observation,
     run: ImprovementRun,
@@ -1567,7 +1637,8 @@ export class ImprovementController {
       if (
         !Array.isArray(o.controlUnitIds) ||
         new Set(o.controlUnitIds).size !== o.controlUnitIds.length ||
-        o.controlUnitIds.length < w.policy.observation.minimumUnits
+        (o.complete &&
+          o.controlUnitIds.length < w.policy.observation.minimumUnits)
       )
         fail(
           "invalid_observation",

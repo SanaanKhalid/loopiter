@@ -162,12 +162,25 @@ export interface ImprovementWorkflow {
     },
     context: CallbackContext,
   ): Promise<JsonValue[]>;
+  /** Optional durable evaluation. One batch is executed per tick; evaluate aggregates batchResults. */
+  evaluateBatch?(
+    input: {
+      baseline: ArtifactBaseline;
+      change: JsonValue;
+      examples: DatasetRow[];
+      partition: "validation" | "audit";
+      offset: number;
+    },
+    context: CallbackContext,
+  ): Promise<JsonValue>;
+  evaluationBatchSize?: number;
   evaluate(
     input: {
       baseline: ArtifactBaseline;
       change: JsonValue;
       examples: DatasetRow[];
       partition: "validation" | "audit";
+      batchResults?: JsonValue[];
     },
     context: CallbackContext,
   ): Promise<Comparison>;
@@ -207,6 +220,7 @@ export interface ImprovementRunData {
   dataset: DatasetSnapshot;
   candidateIds: string[];
   comparisons: Record<string, Comparison>;
+  evaluationBatches?: Record<string, JsonValue[]>;
   selectedId?: string;
   audit?: Comparison;
   auditEvaluationId?: string;

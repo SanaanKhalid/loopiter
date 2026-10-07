@@ -23,6 +23,7 @@ export const signalKinds = [
 ] as const;
 export type SignalKind = (typeof signalKinds)[number];
 export const targetKinds = [
+  "agent_release",
   "prompt",
   "routing",
   "rule",

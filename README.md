@@ -1,4 +1,13 @@
-# Loopiter
+# Loopiter SDKs
+
+This repository contains the standalone TypeScript/Node.js SDK and native Python library.
+Neither requires a Loopiter platform account, API key, network connection, or hosted service.
+You provide storage, model/evaluation callbacks, scheduling, and deployment integration.
+
+The optional console, REST API, MCP server, knowledge integrations and managed workers
+live in the separate `loopiter-platform` repository (local sibling `../loopiter-platform`).
+Its HTTP client calls the platform; it is distinct from these standalone libraries.
+The marketing website and SDK documentation remain here.
 
 ## 0.3 opt-in autonomous alpha
 

@@ -730,3 +730,52 @@ test("stable cohorts retain assignment as exposure increases", () => {
     "candidate",
   );
 });
+
+test("batched evaluation resumes across controllers and runs at most one batch per tick", async () => {
+  const x = setup();
+  x.workflow.policy.target.kind = "agent_release";
+  x.workflow.evaluationBatchSize = 4;
+  const dispatched = new Set<string>();
+  let batchCalls = 0;
+  x.workflow.evaluateBatch = async (input, context) => {
+    assert.ok(input.examples.length <= 4);
+    assert.ok(
+      !dispatched.has(context.operationId),
+      "batch must not be replayed",
+    );
+    dispatched.add(context.operationId);
+    batchCalls++;
+    return input.examples.map((row) => ({
+      id: row.id,
+      baseline: 0,
+      candidate: (input.change as { score: number }).score,
+    }));
+  };
+  x.workflow.evaluate = async (input) => ({
+    cases: input.batchResults!.flat() as unknown as {
+      id: string;
+      baseline: number;
+      candidate: number;
+    }[],
+    metrics: { errors: 0 },
+    estimatedServingCost: 1,
+  });
+  let result;
+  for (let i = 0; i < 60; i++) {
+    const before = batchCalls;
+    result = await x.controller().tick("classification");
+    assert.ok(batchCalls - before <= 1, "only one live batch per tick");
+    if (result.state === "observing") x.advance();
+    if (result.state === "completed") break;
+    assert.notEqual(result.state, "failed", result.reason);
+  }
+  assert.equal(result!.state, "completed");
+  assert.equal(batchCalls, 23); // 2 * ceil(20/4) validation + ceil(50/4) audit
+  assert.equal(x.registry.applications, 1);
+});
+
+test("batch configuration is pinned and invalid batch sizes are rejected", () => {
+  const x = setup();
+  x.workflow.evaluationBatchSize = 33;
+  assert.throws(() => x.controller(), { code: "invalid_input" });
+});
