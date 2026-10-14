@@ -1,0 +1,737 @@
+{
+  "terraform": {
+    "required_version": ">= 1.5.0",
+    "backend": {
+      "azurerm": {}
+    },
+    "required_providers": {
+      "azurerm": {
+        "source": "hashicorp/azurerm",
+        "version": "~> 4.0"
+      },
+      "random": {
+        "source": "hashicorp/random",
+        "version": "~> 3.6"
+      }
+    }
+  },
+  "provider": {
+    "azurerm": {
+      "features": {},
+      "subscription_id": "${var.subscription_id}"
+    }
+  },
+  "variable": {
+    "subscription_id": {
+      "type": "string",
+      "default": "d865e614-32e3-4149-860e-36ccec037536"
+    },
+    "location": {
+      "type": "string",
+      "default": "centralus"
+    },
+    "environment": {
+      "type": "string",
+      "default": "dev",
+      "validation": {
+        "condition": "${contains([\"dev\", \"prod\"], var.environment)}",
+        "error_message": "Choose dev or prod."
+      }
+    },
+    "image": {
+      "type": "string",
+      "default": "",
+      "validation": {
+        "condition": "${startswith(var.image, \"loopiterregistry7536.azurecr.io/loopiter:\")}",
+        "error_message": "Use a versioned image from the Loopiter registry."
+      }
+    },
+    "owner_email": {
+      "type": "string",
+      "default": ""
+    },
+    "encryption_key": {
+      "type": "string",
+      "default": "",
+      "sensitive": true,
+      "validation": {
+        "condition": "${length(var.encryption_key) == 44}",
+        "error_message": "Supply the 32-byte base64 environment encryption key."
+      }
+    },
+    "auth_secret": {
+      "type": "string",
+      "default": "",
+      "sensitive": true,
+      "validation": {
+        "condition": "${length(var.auth_secret) >= 32}",
+        "error_message": "Supply an authentication secret of at least 32 characters."
+      }
+    }
+  },
+  "resource": {
+    "azurerm_resource_group": {
+      "app": {
+        "name": "rg-${local.name}",
+        "location": "${var.location}",
+        "tags": "${local.tags}"
+      }
+    },
+    "azurerm_virtual_network": {
+      "app": {
+        "name": "vnet-${local.name}",
+        "address_space": [
+          "10.74.0.0/16"
+        ],
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "location": "${var.location}"
+      }
+    },
+    "azurerm_subnet": {
+      "containers": {
+        "name": "containers",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "virtual_network_name": "${azurerm_virtual_network.app.name}",
+        "address_prefixes": [
+          "10.74.0.0/23"
+        ],
+        "delegation": [
+          {
+            "name": "container-apps",
+            "service_delegation": {
+              "name": "Microsoft.App/environments",
+              "actions": [
+                "Microsoft.Network/virtualNetworks/subnets/join/action"
+              ]
+            }
+          }
+        ]
+      },
+      "postgres": {
+        "name": "postgres",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "virtual_network_name": "${azurerm_virtual_network.app.name}",
+        "address_prefixes": [
+          "10.74.2.0/24"
+        ],
+        "delegation": [
+          {
+            "name": "postgres",
+            "service_delegation": {
+              "name": "Microsoft.DBforPostgreSQL/flexibleServers",
+              "actions": [
+                "Microsoft.Network/virtualNetworks/subnets/join/action"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "azurerm_private_dns_zone": {
+      "postgres": {
+        "name": "${local.name}.postgres.database.azure.com",
+        "resource_group_name": "${azurerm_resource_group.app.name}"
+      }
+    },
+    "azurerm_private_dns_zone_virtual_network_link": {
+      "postgres": {
+        "name": "postgres",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "private_dns_zone_name": "${azurerm_private_dns_zone.postgres.name}",
+        "virtual_network_id": "${azurerm_virtual_network.app.id}"
+      }
+    },
+    "random_password": {
+      "admin": {
+        "length": 40,
+        "special": false
+      },
+      "runtime": {
+        "length": 40,
+        "special": false
+      }
+    },
+    "azurerm_postgresql_flexible_server": {
+      "db": {
+        "name": "${local.name}-7536",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "location": "${var.location}",
+        "version": "17",
+        "administrator_login": "loopiter_admin",
+        "administrator_password": "${random_password.admin.result}",
+        "sku_name": "${var.environment == \"prod\" ? \"B_Standard_B2s\" : \"B_Standard_B1ms\"}",
+        "storage_mb": 32768,
+        "backup_retention_days": "${var.environment == \"prod\" ? 14 : 7}",
+        "delegated_subnet_id": "${azurerm_subnet.postgres.id}",
+        "private_dns_zone_id": "${azurerm_private_dns_zone.postgres.id}",
+        "public_network_access_enabled": false,
+        "auto_grow_enabled": true,
+        "depends_on": [
+          "azurerm_private_dns_zone_virtual_network_link.postgres"
+        ],
+        "lifecycle": {
+          "prevent_destroy": true,
+          "ignore_changes": [
+            "zone"
+          ]
+        }
+      }
+    },
+    "azurerm_postgresql_flexible_server_configuration": {
+      "extensions": {
+        "name": "azure.extensions",
+        "server_id": "${azurerm_postgresql_flexible_server.db.id}",
+        "value": "VECTOR"
+      }
+    },
+    "azurerm_postgresql_flexible_server_database": {
+      "app": {
+        "name": "loopiter",
+        "server_id": "${azurerm_postgresql_flexible_server.db.id}",
+        "charset": "UTF8",
+        "collation": "en_US.utf8"
+      }
+    },
+    "azurerm_storage_account": {
+      "app": {
+        "name": "${local.storage_name}",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "location": "${var.location}",
+        "account_tier": "Standard",
+        "account_replication_type": "LRS",
+        "min_tls_version": "TLS1_2",
+        "allow_nested_items_to_be_public": false,
+        "blob_properties": {
+          "versioning_enabled": true,
+          "delete_retention_policy": {
+            "days": 7
+          }
+        },
+        "tags": "${local.tags}",
+        "lifecycle": {
+          "prevent_destroy": true
+        }
+      }
+    },
+    "azurerm_storage_container": {
+      "files": {
+        "name": "files",
+        "storage_account_id": "${azurerm_storage_account.app.id}",
+        "container_access_type": "private"
+      }
+    },
+    "azurerm_storage_queue": {
+      "jobs": {
+        "name": "jobs",
+        "storage_account_name": "${azurerm_storage_account.app.name}"
+      }
+    },
+    "azurerm_log_analytics_workspace": {
+      "app": {
+        "name": "logs-${local.name}",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "location": "${var.location}",
+        "sku": "PerGB2018",
+        "retention_in_days": 30,
+        "daily_quota_gb": 0.1
+      }
+    },
+    "azurerm_container_app_environment": {
+      "app": {
+        "name": "cae-${local.name}",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "location": "${var.location}",
+        "log_analytics_workspace_id": "${azurerm_log_analytics_workspace.app.id}",
+        "infrastructure_subnet_id": "${azurerm_subnet.containers.id}",
+        "workload_profile": [
+          {
+            "name": "Consumption",
+            "workload_profile_type": "Consumption"
+          }
+        ]
+      }
+    },
+    "azurerm_user_assigned_identity": {
+      "runtime": {
+        "name": "id-${local.name}-runtime",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "location": "${var.location}"
+      },
+      "migration": {
+        "name": "id-${local.name}-migration",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "location": "${var.location}"
+      }
+    },
+    "azurerm_key_vault": {
+      "app": {
+        "name": "kv-${local.name}-7536",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "location": "${var.location}",
+        "tenant_id": "${data.azurerm_client_config.current.tenant_id}",
+        "sku_name": "standard",
+        "rbac_authorization_enabled": true,
+        "purge_protection_enabled": true,
+        "soft_delete_retention_days": 7
+      }
+    },
+    "azurerm_role_assignment": {
+      "vault_owner": {
+        "scope": "${azurerm_key_vault.app.id}",
+        "role_definition_name": "Key Vault Secrets Officer",
+        "principal_id": "${data.azurerm_client_config.current.object_id}"
+      },
+      "runtime_secrets": {
+        "for_each": "${local.secrets}",
+        "scope": "${azurerm_key_vault_secret.runtime[each.key].resource_versionless_id}",
+        "role_definition_name": "Key Vault Secrets User",
+        "principal_id": "${azurerm_user_assigned_identity.runtime.principal_id}"
+      },
+      "migration_secrets": {
+        "scope": "${azurerm_key_vault.app.id}",
+        "role_definition_name": "Key Vault Secrets User",
+        "principal_id": "${azurerm_user_assigned_identity.migration.principal_id}"
+      },
+      "blob": {
+        "scope": "${azurerm_storage_account.app.id}",
+        "role_definition_name": "Storage Blob Data Contributor",
+        "principal_id": "${azurerm_user_assigned_identity.runtime.principal_id}"
+      },
+      "queue": {
+        "scope": "${azurerm_storage_account.app.id}",
+        "role_definition_name": "Storage Queue Data Contributor",
+        "principal_id": "${azurerm_user_assigned_identity.runtime.principal_id}"
+      },
+      "acr_runtime": {
+        "scope": "${data.azurerm_container_registry.images.id}",
+        "role_definition_name": "AcrPull",
+        "principal_id": "${azurerm_user_assigned_identity.runtime.principal_id}"
+      },
+      "acr_migration": {
+        "scope": "${data.azurerm_container_registry.images.id}",
+        "role_definition_name": "AcrPull",
+        "principal_id": "${azurerm_user_assigned_identity.migration.principal_id}"
+      },
+      "migration_blob": {
+        "scope": "${azurerm_storage_account.app.id}",
+        "role_definition_name": "Storage Blob Data Contributor",
+        "principal_id": "${azurerm_user_assigned_identity.migration.principal_id}"
+      },
+      "operator_blob": {
+        "scope": "${azurerm_storage_account.app.id}",
+        "role_definition_name": "Storage Blob Data Contributor",
+        "principal_id": "${data.azurerm_client_config.current.object_id}"
+      },
+      "search_blob": {
+        "scope": "${azurerm_storage_account.app.id}",
+        "role_definition_name": "Storage Blob Data Reader",
+        "principal_id": "${azurerm_search_service.knowledge.identity[0].principal_id}"
+      },
+      "search_service": {
+        "scope": "${azurerm_search_service.knowledge.id}",
+        "role_definition_name": "Search Service Contributor",
+        "principal_id": "${azurerm_user_assigned_identity.runtime.principal_id}"
+      },
+      "search_data": {
+        "scope": "${azurerm_search_service.knowledge.id}",
+        "role_definition_name": "Search Index Data Contributor",
+        "principal_id": "${azurerm_user_assigned_identity.runtime.principal_id}"
+      }
+    },
+    "azurerm_key_vault_secret": {
+      "runtime": {
+        "for_each": "${local.secrets}",
+        "name": "${each.key}",
+        "value": "${each.value}",
+        "key_vault_id": "${azurerm_key_vault.app.id}",
+        "depends_on": [
+          "azurerm_role_assignment.vault_owner"
+        ]
+      },
+      "admin": {
+        "name": "migration-database-url",
+        "value": "postgresql://loopiter_admin:${random_password.admin.result}@${azurerm_postgresql_flexible_server.db.fqdn}:5432/loopiter?sslmode=verify-full",
+        "key_vault_id": "${azurerm_key_vault.app.id}",
+        "depends_on": [
+          "azurerm_role_assignment.vault_owner"
+        ]
+      }
+    },
+    "azurerm_container_app": {
+      "web": {
+        "name": "web-${local.name}",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "container_app_environment_id": "${azurerm_container_app_environment.app.id}",
+        "revision_mode": "Single",
+        "identity": {
+          "type": "UserAssigned",
+          "identity_ids": [
+            "${azurerm_user_assigned_identity.runtime.id}"
+          ]
+        },
+        "registry": [
+          {
+            "server": "${data.azurerm_container_registry.images.login_server}",
+            "identity": "${azurerm_user_assigned_identity.runtime.id}"
+          }
+        ],
+        "secret": [
+          {
+            "name": "database-url",
+            "identity": "${azurerm_user_assigned_identity.runtime.id}",
+            "key_vault_secret_id": "${azurerm_key_vault_secret.runtime[\"database-url\"].id}"
+          },
+          {
+            "name": "encryption-key",
+            "identity": "${azurerm_user_assigned_identity.runtime.id}",
+            "key_vault_secret_id": "${azurerm_key_vault_secret.runtime[\"encryption-key\"].id}"
+          },
+          {
+            "name": "auth-secret",
+            "identity": "${azurerm_user_assigned_identity.runtime.id}",
+            "key_vault_secret_id": "${azurerm_key_vault_secret.runtime[\"auth-secret\"].id}"
+          }
+        ],
+        "template": {
+          "min_replicas": 1,
+          "max_replicas": 2,
+          "container": [
+            {
+              "name": "web",
+              "image": "${var.image}",
+              "cpu": 0.5,
+              "memory": "1Gi",
+              "env": [
+                {
+                  "name": "AZURE_CLIENT_ID",
+                  "value": "${azurerm_user_assigned_identity.runtime.client_id}"
+                },
+                {
+                  "name": "AZURE_STORAGE_ACCOUNT",
+                  "value": "${azurerm_storage_account.app.name}"
+                },
+                {
+                  "name": "DEPLOYMENT_ENV",
+                  "value": "production"
+                },
+                {
+                  "name": "LOCAL_API_ENABLED",
+                  "value": "false"
+                },
+                {
+                  "name": "MANAGED_KB_PROVIDER",
+                  "value": "azure"
+                },
+                {
+                  "name": "BETA_OWNER_EMAILS",
+                  "value": "${var.owner_email}"
+                },
+                {
+                  "name": "APP_ORIGIN",
+                  "value": "https://web-${local.name}.${azurerm_container_app_environment.app.default_domain}"
+                },
+                {
+                  "name": "DATABASE_URL",
+                  "secret_name": "database-url"
+                },
+                {
+                  "name": "ENCRYPTION_KEY",
+                  "secret_name": "encryption-key"
+                },
+                {
+                  "name": "BETTER_AUTH_SECRET",
+                  "secret_name": "auth-secret"
+                },
+                {
+                  "name": "AZURE_SEARCH_ENDPOINT",
+                  "value": "https://${azurerm_search_service.knowledge.name}.search.windows.net"
+                },
+                {
+                  "name": "AZURE_STORAGE_RESOURCE_ID",
+                  "value": "${azurerm_storage_account.app.id}"
+                }
+              ],
+              "readiness_probe": [
+                {
+                  "transport": "HTTP",
+                  "port": 8080,
+                  "path": "/health",
+                  "interval_seconds": 10,
+                  "failure_count_threshold": 5
+                }
+              ]
+            }
+          ]
+        },
+        "ingress": {
+          "external_enabled": true,
+          "target_port": 8080,
+          "transport": "http",
+          "traffic_weight": [
+            {
+              "percentage": 100,
+              "latest_revision": true
+            }
+          ]
+        },
+        "depends_on": [
+          "azurerm_role_assignment.runtime_secrets",
+          "azurerm_role_assignment.acr_runtime",
+          "azurerm_role_assignment.blob",
+          "azurerm_role_assignment.queue",
+          "azurerm_role_assignment.search_service",
+          "azurerm_role_assignment.search_data",
+          "azurerm_role_assignment.search_blob"
+        ],
+        "workload_profile_name": "Consumption"
+      },
+      "worker": {
+        "name": "worker-${local.name}",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "container_app_environment_id": "${azurerm_container_app_environment.app.id}",
+        "revision_mode": "Single",
+        "identity": {
+          "type": "UserAssigned",
+          "identity_ids": [
+            "${azurerm_user_assigned_identity.runtime.id}"
+          ]
+        },
+        "registry": [
+          {
+            "server": "${data.azurerm_container_registry.images.login_server}",
+            "identity": "${azurerm_user_assigned_identity.runtime.id}"
+          }
+        ],
+        "secret": [
+          {
+            "name": "database-url",
+            "identity": "${azurerm_user_assigned_identity.runtime.id}",
+            "key_vault_secret_id": "${azurerm_key_vault_secret.runtime[\"database-url\"].id}"
+          },
+          {
+            "name": "encryption-key",
+            "identity": "${azurerm_user_assigned_identity.runtime.id}",
+            "key_vault_secret_id": "${azurerm_key_vault_secret.runtime[\"encryption-key\"].id}"
+          },
+          {
+            "name": "auth-secret",
+            "identity": "${azurerm_user_assigned_identity.runtime.id}",
+            "key_vault_secret_id": "${azurerm_key_vault_secret.runtime[\"auth-secret\"].id}"
+          }
+        ],
+        "template": {
+          "min_replicas": 1,
+          "max_replicas": 1,
+          "container": [
+            {
+              "name": "worker",
+              "image": "${var.image}",
+              "cpu": 0.5,
+              "memory": "1Gi",
+              "env": [
+                {
+                  "name": "AZURE_CLIENT_ID",
+                  "value": "${azurerm_user_assigned_identity.runtime.client_id}"
+                },
+                {
+                  "name": "AZURE_STORAGE_ACCOUNT",
+                  "value": "${azurerm_storage_account.app.name}"
+                },
+                {
+                  "name": "DEPLOYMENT_ENV",
+                  "value": "production"
+                },
+                {
+                  "name": "LOCAL_API_ENABLED",
+                  "value": "false"
+                },
+                {
+                  "name": "MANAGED_KB_PROVIDER",
+                  "value": "azure"
+                },
+                {
+                  "name": "BETA_OWNER_EMAILS",
+                  "value": "${var.owner_email}"
+                },
+                {
+                  "name": "APP_ORIGIN",
+                  "value": "https://web-${local.name}.${azurerm_container_app_environment.app.default_domain}"
+                },
+                {
+                  "name": "DATABASE_URL",
+                  "secret_name": "database-url"
+                },
+                {
+                  "name": "ENCRYPTION_KEY",
+                  "secret_name": "encryption-key"
+                },
+                {
+                  "name": "BETTER_AUTH_SECRET",
+                  "secret_name": "auth-secret"
+                },
+                {
+                  "name": "AZURE_SEARCH_ENDPOINT",
+                  "value": "https://${azurerm_search_service.knowledge.name}.search.windows.net"
+                },
+                {
+                  "name": "AZURE_STORAGE_RESOURCE_ID",
+                  "value": "${azurerm_storage_account.app.id}"
+                }
+              ],
+              "command": [
+                "node",
+                "--import",
+                "tsx",
+                "apps/azure/worker.ts"
+              ]
+            }
+          ]
+        },
+        "depends_on": [
+          "azurerm_role_assignment.runtime_secrets",
+          "azurerm_role_assignment.acr_runtime",
+          "azurerm_role_assignment.blob",
+          "azurerm_role_assignment.queue",
+          "azurerm_role_assignment.search_service",
+          "azurerm_role_assignment.search_data",
+          "azurerm_role_assignment.search_blob"
+        ],
+        "workload_profile_name": "Consumption"
+      }
+    },
+    "azurerm_container_app_job": {
+      "migration": {
+        "name": "migrate-${local.name}",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "location": "${var.location}",
+        "container_app_environment_id": "${azurerm_container_app_environment.app.id}",
+        "replica_timeout_in_seconds": 1800,
+        "replica_retry_limit": 0,
+        "manual_trigger_config": {
+          "parallelism": 1,
+          "replica_completion_count": 1
+        },
+        "identity": {
+          "type": "UserAssigned",
+          "identity_ids": [
+            "${azurerm_user_assigned_identity.migration.id}"
+          ]
+        },
+        "registry": [
+          {
+            "server": "${data.azurerm_container_registry.images.login_server}",
+            "identity": "${azurerm_user_assigned_identity.migration.id}"
+          }
+        ],
+        "secret": [
+          {
+            "name": "database-url",
+            "identity": "${azurerm_user_assigned_identity.migration.id}",
+            "key_vault_secret_id": "${azurerm_key_vault_secret.admin.id}"
+          },
+          {
+            "name": "runtime-url",
+            "identity": "${azurerm_user_assigned_identity.migration.id}",
+            "key_vault_secret_id": "${azurerm_key_vault_secret.runtime[\"database-url\"].id}"
+          }
+        ],
+        "template": {
+          "container": [
+            {
+              "name": "migration",
+              "image": "${var.image}",
+              "cpu": 0.5,
+              "memory": "1Gi",
+              "command": [
+                "node",
+                "--import",
+                "tsx",
+                "scripts/azure-migrate.ts"
+              ],
+              "env": [
+                {
+                  "name": "DATABASE_URL",
+                  "secret_name": "database-url"
+                },
+                {
+                  "name": "RUNTIME_DATABASE_URL",
+                  "secret_name": "runtime-url"
+                },
+                {
+                  "name": "AZURE_CLIENT_ID",
+                  "value": "${azurerm_user_assigned_identity.migration.client_id}"
+                },
+                {
+                  "name": "AZURE_STORAGE_ACCOUNT",
+                  "value": "${azurerm_storage_account.app.name}"
+                },
+                {
+                  "name": "BOOTSTRAP_BLOB",
+                  "value": "migration/bootstrap.json"
+                }
+              ]
+            }
+          ]
+        },
+        "depends_on": [
+          "azurerm_role_assignment.migration_secrets",
+          "azurerm_role_assignment.acr_migration",
+          "azurerm_postgresql_flexible_server_configuration.extensions",
+          "azurerm_postgresql_flexible_server_database.app"
+        ],
+        "workload_profile_name": "Consumption"
+      }
+    },
+    "azurerm_search_service": {
+      "knowledge": {
+        "name": "search-${local.name}-7536",
+        "resource_group_name": "${azurerm_resource_group.app.name}",
+        "location": "${var.location}",
+        "sku": "basic",
+        "local_authentication_enabled": false,
+        "identity": {
+          "type": "SystemAssigned"
+        }
+      }
+    }
+  },
+  "data": {
+    "azurerm_client_config": {
+      "current": {}
+    },
+    "azurerm_container_registry": {
+      "images": {
+        "name": "loopiterregistry7536",
+        "resource_group_name": "rg-loopiter-infrastructure"
+      }
+    }
+  },
+  "output": {
+    "url": {
+      "value": "https://${azurerm_container_app.web.ingress[0].fqdn}"
+    },
+    "resource_group": {
+      "value": "${azurerm_resource_group.app.name}"
+    },
+    "storage_account": {
+      "value": "${azurerm_storage_account.app.name}"
+    },
+    "database_host": {
+      "value": "${azurerm_postgresql_flexible_server.db.fqdn}"
+    }
+  },
+  "locals": {
+    "name": "loopiter-${var.environment}",
+    "tags": {
+      "application": "loopiter",
+      "environment": "${var.environment}",
+      "managed_by": "terraform"
+    },
+    "storage_name": "loopiter${var.environment}7536",
+    "secrets": {
+      "database-url": "postgresql://loopiter_runtime:${random_password.runtime.result}@${azurerm_postgresql_flexible_server.db.fqdn}:5432/loopiter?sslmode=verify-full",
+      "encryption-key": "${var.encryption_key}",
+      "auth-secret": "${var.auth_secret}"
+    }
+  }
+}

@@ -1,216 +1,53 @@
-import Link from "next/link";
-import { SdkExample } from '../components/sdk-example';
 import { docsHref } from '../lib/docs-links';
 
-function Mark() {
-  return (
-    <span className="mark" aria-hidden="true">
-      <span />
-      <span />
-      <span />
-    </span>
-  );
+const github = 'https://github.com/SanaanKhalid/loopiter';
+
+function LoopMark() {
+  return <svg width="31" height="25" viewBox="0 0 38 28" fill="none" aria-hidden="true"><path d="M24 6a10 10 0 1 1 0 16L14 6a10 10 0 1 0 0 16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" /></svg>;
 }
 
-function SiteHeader() {
-  return (
-    <header className="site-header">
-      <Link href="/" className="brand" aria-label="Loopiter home">
-        <Mark />
-        <span>Loopiter</span>
-      </Link>
-      <nav className="main-nav" aria-label="Main navigation">
-        <a href="#how-it-works">How it works</a>
-        <a href="#autonomy">Autonomy</a>
-        <a href="#safety">Safety</a>
-      </nav>
-      <a href={docsHref()} className="nav-cta">
-        DOCS <span aria-hidden="true">↗</span>
-      </a>
-    </header>
-  );
+function LoopArtwork() {
+  return <svg className="loop-art" viewBox="0 0 1400 950" fill="none" aria-hidden="true">
+    <defs>
+      <linearGradient id="thread" x1="280" y1="50" x2="1100" y2="900" gradientUnits="userSpaceOnUse"><stop stopColor="#d7ece0" stopOpacity=".75"/><stop offset=".48" stopColor="#9cbdb0" stopOpacity=".1"/><stop offset="1" stopColor="#8da99c" stopOpacity=".65"/></linearGradient>
+      <radialGradient id="light"><stop stopColor="#adc9b9" stopOpacity=".21"/><stop offset="1" stopColor="#adc9b9" stopOpacity="0"/></radialGradient>
+    </defs>
+    <ellipse cx="1020" cy="320" rx="580" ry="480" fill="url(#light)"/>
+    <g transform="rotate(-27 700 475)" stroke="url(#thread)" strokeWidth="1">
+      {Array.from({length: 30}, (_, i) => <ellipse key={i} cx="700" cy="475" rx={330 + i * 7} ry={145 + i * 7} />)}
+    </g>
+    <circle cx="1052" cy="218" r="6" fill="#ddebc7"/>
+    <circle cx="1052" cy="218" r="15" stroke="#ddebc7" strokeOpacity=".25"/>
+  </svg>;
 }
-
-const code = `import { FeedbackLoop, InMemoryStore } from "loopiter"
-
-const loop = new FeedbackLoop({
-  store: new InMemoryStore(), // local demo
-  namespace: "acme/dev"
-})
-
-const turn = await loop.recordExecution({
-  kind: "agent",
-  artifacts: { prompt: "support@18" }
-})
-
-await loop.recordSignal({
-  executionId: turn.id,
-  kind: "outcome",
-  name: "resolved",
-  value: true,
-  source: "ticket-system"
-})
-
-// Next: connect your database and evaluator.
-// Recommendations do not deploy automatically.`;
-
-const pythonCode = `import asyncio
-from loopiter import FeedbackLoop, InMemoryStore
-
-async def main():
-    loop = FeedbackLoop(
-        store=InMemoryStore(),  # local demo
-        namespace="acme/dev",
-    )
-    turn = await loop.record_execution(
-        kind="agent",
-        artifacts={"prompt": "support@18"},
-    )
-    await loop.record_signal(
-        execution_id=turn["id"],
-        kind="outcome",
-        name="resolved",
-        value=True,
-        source="ticket-system",
-    )
-    await loop.close()
-
-asyncio.run(main())
-# Next: connect your database and evaluator.
-# Recommendations do not deploy automatically.`;
-
-const loopSteps = [
-  ["01", "Capture", "Record the decisions, tools, models, and versions behind every outcome."],
-  ["02", "Connect", "Attach human feedback, delayed outcomes, cost, latency, and operational signals."],
-  ["03", "Discover", "Find recurring segments with enough support, recurrence, and measurable effect."],
-  ["04", "Improve", "Propose, replay, gate, deploy, measure, and roll back through one lifecycle."],
-];
-
-const targets = [
-  "PROMPTS", "ROUTING", "RETRIEVAL", "MODELS", "DATASETS", "THRESHOLDS",
-  "TOOLS", "WORKFLOWS", "AGENT TOPOLOGY", "CODE", "CAPACITY",
-];
 
 export default function Home() {
-  return (
-    <main>
-      <div className="announcement">
-        <span className="pulse-dot" />
-        MIT-LICENSED ALPHA · MODEL-AGNOSTIC · ZERO CORE RUNTIME DEPENDENCIES
+  return <main id="top">
+    <a className="skip-link" href="#how-it-works">Skip to content</a>
+    <section className="hero" aria-labelledby="hero-title">
+      <LoopArtwork />
+      <header className="site-header">
+        <a className="brand" href="#top" aria-label="Loopiter home"><LoopMark /><span>loopiter</span></a>
+        <nav aria-label="Main navigation"><a className="nav-about" href="#how-it-works">The idea</a><a className="nav-link" href="https://web-loopiter-prod.redmushroom-e2f381a3.centralus.azurecontainerapps.io/login">Sign in</a><a className="nav-link" href={github}>Explore the SDK <span aria-hidden="true">↗</span></a></nav>
+      </header>
+      <div className="hero-copy">
+        <p className="availability"><span /> In development</p>
+        <h1 id="hero-title">AI that learns<br />from every correction.</h1>
+        <p className="hero-description">Turn real feedback into better prompts and knowledge.<br className="desktop-break" /> Keep your agent. Close the loop.</p>
+        <a className="button" href="#how-it-works">Meet Loopiter <span aria-hidden="true">↓</span></a>
       </div>
-      <div className="page-shell">
-        <SiteHeader />
+      <div className="hero-bottom"><span>Your agent. Your models. A better next answer.</span><span className="scroll-note">A continuous feedback loop <span aria-hidden="true">↓</span></span></div>
+    </section>
 
-        <section className="hero grid-surface">
-          <div className="hero-copy">
-            <div className="eyebrow"><span>CONTROL PLANE</span> FOR CONTINUOUS AI IMPROVEMENT</div>
-            <h1>AI systems that learn from what happens next.</h1>
-            <p className="hero-lede">
-              Loopiter connects production behavior to verified outcomes, finds recurring failure modes, and turns evidence into governed improvements.
-            </p>
-            <div className="hero-actions">
-              <a href={docsHref()} className="button button-primary">READ THE DOCS <span>→</span></a>
-              <a href="#how-it-works" className="button button-ghost">EXPLORE THE LOOP</a>
-            </div>
-            <p className="hero-note">Native Python and Node.js SDKs. Keep your models, database, and deployment stack.</p>
-          </div>
-
-          <SdkExample pythonCode={pythonCode} nodeCode={code} />
-
-          <div className="signal-path" aria-hidden="true">
-            <span>EXECUTION</span><i />
-            <span>OUTCOME</span><i />
-            <span>FINDING</span><i />
-            <span>CANDIDATE</span><i />
-            <span>BETTER SYSTEM</span>
-          </div>
-        </section>
-
-        <section className="section" id="how-it-works">
-          <div className="section-heading">
-            <div className="section-label">[ THE CORE LOOP ]</div>
-            <h2>One feedback primitive.<br />Every AI system.</h2>
-            <p>From an LLM support agent to a glucose predictor, the mechanics are the same: observe a decision, connect the outcome, and improve only when the evidence survives evaluation.</p>
-          </div>
-          <div className="step-grid">
-            {loopSteps.map(([number, title, body]) => (
-              <article className="step-card" key={number}>
-                <span className="step-number">{number}</span>
-                <div className="step-icon" aria-hidden="true"><span /></div>
-                <h3>{title}</h3>
-                <p>{body}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="architecture-section">
-          <div className="architecture-copy">
-            <div className="section-label">[ TRACE THE WHOLE SYSTEM ]</div>
-            <h2>See the model—and everything around it.</h2>
-            <p>Executions form a tree. Trace the root agent, delegated agents, retrievals, model calls, and tools inside one episode. The bottleneck might be a prompt. It might be a queue.</p>
-            <a href={docsHref('execution-model')} className="text-link">EXPLORE THE EXECUTION MODEL <span>→</span></a>
-          </div>
-          <figure className="trace-diagram" aria-label="Illustrative hierarchical AI execution trace" style={{ margin: 0 }}>
-            <div className="trace-root"><span className="node-dot hot" />ROOT AGENT<small>episode_1042</small></div>
-            <div className="trace-children">
-              <div className="trace-node"><span className="node-dot" />CLASSIFIER<small>124 ms</small></div>
-              <div className="trace-node active"><span className="node-dot hot" />RESEARCH AGENT<small>1,840 ms</small></div>
-              <div className="trace-node"><span className="node-dot" />RESPONSE<small>438 ms</small></div>
-            </div>
-            <div className="trace-tool"><span className="node-dot warn" />EXTERNAL LOOKUP<small>queue wait: 1,316 ms</small><b>BOTTLENECK</b></div>
-            <figcaption className="trace-caption"><span />Illustrative trace · not measured customer results</figcaption>
-          </figure>
-        </section>
-
-        <section className="section autonomy-section" id="autonomy">
-          <div className="section-heading compact">
-            <div className="section-label">[ AUTONOMY, GRADUATED ]</div>
-            <h2>Choose how far the loop can go.</h2>
-            <p>Start by observing. Add autonomy only when your evidence, replay suite, and application policies are ready.</p>
-          </div>
-          <div className="mode-list">
-            <div className="mode-row"><span>01</span><strong>OBSERVE</strong><p>Detect and rank findings.</p><b>NO MUTATION</b></div>
-            <div className="mode-row"><span>02</span><strong>RECOMMEND</strong><p>Create reviewable improvement candidates.</p><b>HUMAN REVIEW</b></div>
-            <div className="mode-row"><span>03</span><strong>EXPERIMENT</strong><p>Run your evaluator. Callbacks are application-owned, not sandboxed.</p><b>NO AUTO-DEPLOY</b></div>
-            <div className="mode-row selected"><span>04</span><strong>AUTONOMOUS</strong><p>Enable the self-improvement flag and an exact prompt/routing policy. Evaluate, deploy, observe, retain or roll back.</p><b>OPT-IN ALPHA</b></div>
-          </div>
-        </section>
-
-        <section className="targets-section">
-          <div className="section-label">[ CANDIDATE TYPES · IMPLEMENTATIONS PROVIDED THROUGH ADAPTERS ]</div>
-          <div className="ticker" aria-label="Supported improvement targets">
-            {targets.map((target) => <span key={target}>{target}<i>↗</i></span>)}
-          </div>
-        </section>
-
-        <section className="safety-section" id="safety">
-          <div>
-            <div className="section-label">[ GOVERNED BY DEFAULT ]</div>
-            <h2>Your evidence. Your policies. Your decision to deploy.</h2>
-          </div>
-          <div className="safety-grid">
-            <article><span>01</span><h3>Explicit change boundaries</h3><p>Autonomy is off by default. Allow exact prompt or routing targets, bounded fields, and daily budgets.</p></article>
-            <article><span>02</span><h3>Versioned evaluation</h3><p>Approval references the exact candidate, evidence, evaluator version, and passing evaluation.</p></article>
-            <article><span>03</span><h3>Application-owned boundaries</h3><p>Keep authentication, authorization, tool allowlists, and evaluator code outside generated artifacts.</p></article>
-            <article><span>04</span><h3>Recoverable deployment</h3><p>Transactional state, explicit predecessors, and adapter receipts support inspection and rollback after failures.</p></article>
-          </div>
-        </section>
-
-        <section className="final-cta grid-surface">
-          <div className="loop-glyph" aria-hidden="true">↻</div>
-          <div className="section-label">[ CLOSE THE LOOP ]</div>
-          <h2>Your model is replaceable.<br />Your learning loop compounds.</h2>
-          <p>Start with one execution, one outcome, and one recurring pattern.</p>
-          <a href="https://loopiter.docs.buildwithfern.com/get-started/python-quickstart" className="button button-primary">GET STARTED WITH PYTHON <span>→</span></a>
-        </section>
-
-        <footer className="site-footer">
-          <div className="brand"><Mark /><span>Loopiter</span></div>
-          <p>A lightweight control plane for measurable AI improvement.</p>
-          <div><a href={docsHref()}>Docs</a><a href="https://loopiter.docs.buildwithfern.com/get-started/release-validation">Validation</a><a href="https://github.com/SanaanKhalid/loopiter">GitHub</a><span>v0.3.0-alpha.1</span></div>
-        </footer>
-      </div>
-    </main>
-  );
+    <section id="how-it-works" className="explanation" aria-labelledby="idea-title">
+      <div className="intro"><h2 id="idea-title">Good feedback shouldn’t<br />end a conversation.</h2><p>It should improve the next one. Loopiter connects what your agent gets wrong to the prompts and knowledge behind its answers.</p></div>
+      <ol className="steps">
+        <li><span className="step-number">01</span><h3>Bring your agent.</h3><p>Connect your existing application through the API or SDK. Keep the models and tools you already use.</p></li>
+        <li><span className="step-number">02</span><h3>Close the loop.</h3><p>Send corrections from wherever your users respond. Loopiter looks for a useful change to the prompt or knowledge.</p></li>
+        <li><span className="step-number">03</span><h3>Improve with evidence.</h3><p>Loopiter tests changes against your examples and automatically activates improvements that pass, with a version to roll back to.</p></li>
+      </ol>
+      <div className="closing"><p>We’re building this in the open.<br /><span>The platform is in development. The SDK is yours to explore.</span></p><a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a></div>
+    </section>
+    <footer><a className="brand footer-brand" href="#top"><LoopMark /><span>loopiter</span></a><span>Better, with every loop.</span><a href={github}>GitHub</a></footer>
+  </main>;
 }
