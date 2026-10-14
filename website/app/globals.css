@@ -77,3 +77,24 @@ footer > a:last-child { margin-left: auto; font-size: 12px; }
  footer > span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+.agent-start .button { cursor:pointer; font:inherit; }
+.agent-start-hint { color:#bbcdc3; font-size:13px; margin-top:14px; }
+.agent-start-panel { max-width:580px; padding:20px; margin-top:20px; background:#152e27; border:1px solid #688478; border-radius:12px; }
+.agent-start-panel label { font-size:14px; color:#e1eae4; }
+.agent-start-panel textarea { box-sizing:border-box; width:100%; margin:12px 0; padding:12px; background:#10241e; color:#e1eae4; border:1px solid #688478; border-radius:8px; font:13px/1.6 monospace; resize:vertical; }
+.agent-start-panel button { background:none; border:0; cursor:pointer; color:#e1eae4; }
+/* Keep the expanded setup prompt in the hero's document flow. */
+.hero { display:flex; flex-direction:column; height:auto; min-height:clamp(780px,100svh,940px); }
+.hero-copy { position:relative; top:auto; left:auto; right:auto; transform:none; flex:1; padding:65px 24px 60px; }
+.hero-bottom { position:relative; bottom:auto; left:auto; right:auto; padding:29px 48px; }
+.agent-start-panel { margin:24px auto 0; }
+@media(max-width:700px) {
+ .hero { min-height:690px; max-height:none; }
+ .site-header { flex-wrap:wrap; gap:16px; }
+ .site-header .brand { flex-shrink:0; }
+ .site-header nav { margin-left:auto; gap:8px; flex-shrink:0; }
+ .nav-link { padding:9px 12px; }
+ .hero-copy { padding:35px 20px 40px; }
+ .hero-bottom { padding:20px 23px 25px; }
+}
