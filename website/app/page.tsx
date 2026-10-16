@@ -1,10 +1,5 @@
 import { docsHref } from '../lib/docs-links';
-
-const github = 'https://github.com/SanaanKhalid/loopiter';
-
-function LoopMark() {
-  return <svg width="31" height="25" viewBox="0 0 38 28" fill="none" aria-hidden="true"><path d="M24 6a10 10 0 1 1 0 16L14 6a10 10 0 1 0 0 16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" /></svg>;
-}
+import { SiteFooter, SiteHeader } from '../components/site-chrome';
 
 function LoopArtwork() {
   return <svg className="loop-art" viewBox="0 0 1400 950" fill="none" aria-hidden="true">
@@ -26,10 +21,7 @@ export default function Home() {
     <a className="skip-link" href="#how-it-works">Skip to content</a>
     <section className="hero" aria-labelledby="hero-title">
       <LoopArtwork />
-      <header className="site-header">
-        <a className="brand" href="#top" aria-label="Loopiter home"><LoopMark /><span>loopiter</span></a>
-        <nav aria-label="Main navigation"><a className="nav-about" href="#how-it-works">The idea</a><a className="nav-link" href="https://web-loopiter-prod.redmushroom-e2f381a3.centralus.azurecontainerapps.io/login">Sign in</a><a className="nav-link" href={github}>Explore the SDK <span aria-hidden="true">↗</span></a></nav>
-      </header>
+      <SiteHeader />
       <div className="hero-copy">
         <p className="availability"><span /> In development</p>
         <h1 id="hero-title">AI that learns<br />from every correction.</h1>
@@ -48,6 +40,12 @@ export default function Home() {
       </ol>
       <div className="closing"><p>We’re building this in the open.<br /><span>The platform is in development. The SDK is yours to explore.</span></p><a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a></div>
     </section>
-    <footer><a className="brand footer-brand" href="#top"><LoopMark /><span>loopiter</span></a><span>Better, with every loop.</span><a href={github}>GitHub</a></footer>
+    <section className="manifesto-invitation" aria-labelledby="manifesto-invitation-title">
+      <p className="eyebrow">Why we’re building Loopiter</p>
+      <h2 id="manifesto-invitation-title">Someone took the time<br />to tell you what went wrong.</h2>
+      <p>The next person should get a better answer. That’s the whole reason we’re here.</p>
+      <a className="text-link" href="/manifesto">Read our manifesto <span aria-hidden="true">↗</span></a>
+    </section>
+    <SiteFooter />
   </main>;
 }
