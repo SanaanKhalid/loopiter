@@ -35,15 +35,15 @@ export default function Home() {
       <div className="intro"><h2 id="idea-title">Good feedback shouldn’t<br />end a conversation.</h2><p>It should improve the next one. Loopiter connects what your agent gets wrong to the prompts and knowledge behind its answers.</p></div>
       <ol className="steps">
         <li><span className="step-number">01</span><h3>Bring your agent.</h3><p>Connect your existing application through the API or SDK. Keep the models and tools you already use.</p></li>
-        <li><span className="step-number">02</span><h3>Close the loop.</h3><p>Send corrections from wherever your users respond. Loopiter looks for a useful change to the prompt or knowledge.</p></li>
-        <li><span className="step-number">03</span><h3>Improve with evidence.</h3><p>Loopiter tests changes against your examples and automatically activates improvements that pass, with a version to roll back to.</p></li>
+        <li><span className="step-number">02</span><h3>Give it feedback.</h3><p>Send a correction tied to an actual answer. Loopiter works out whether to change the prompt or knowledge and tests a candidate.</p></li>
+        <li><span className="step-number">03</span><h3>Let it improve.</h3><p>Once enabled, the loop runs on its own. Changes that improve answers and pass your checks go live automatically, with a version to roll back to.</p></li>
       </ol>
       <div className="closing"><p>We’re building this in the open.<br /><span>The platform is in development. The SDK is yours to explore.</span></p><a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a></div>
     </section>
     <section className="manifesto-invitation" aria-labelledby="manifesto-invitation-title">
       <p className="eyebrow">Why we’re building Loopiter</p>
-      <h2 id="manifesto-invitation-title">Someone took the time<br />to tell you what went wrong.</h2>
-      <p>The next person should get a better answer. That’s the whole reason we’re here.</p>
+      <h2 id="manifesto-invitation-title">Give feedback.<br />Let it improve.</h2>
+      <p>Your agent should do the work between a useful correction and a better next answer. Test the change. Put it to work when it passes. Keep going.</p>
       <a className="text-link" href="/manifesto">Read our manifesto <span aria-hidden="true">↗</span></a>
     </section>
     <SiteFooter />

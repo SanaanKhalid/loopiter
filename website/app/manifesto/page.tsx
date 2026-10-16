@@ -3,8 +3,8 @@ import { SiteFooter, SiteHeader } from '../../components/site-chrome';
 import { docsHref } from '../../lib/docs-links';
 
 export const metadata: Metadata = {
-  title: 'The Loopiter Manifesto — A correction should count',
-  description: 'Someone took the time to tell you what went wrong. The next person should get a better answer. Why we’re building Loopiter.',
+  title: 'The Loopiter Manifesto — Give feedback. Let it improve.',
+  description: 'Your agent should turn useful feedback into tested prompt and knowledge improvements, then put passing changes to work automatically. Why we’re building Loopiter.',
   alternates: { canonical: 'https://loopiter.co/manifesto' },
 };
 
@@ -16,48 +16,48 @@ export default function Manifesto() {
       <article aria-labelledby="manifesto-title">
         <header className="manifesto-heading">
           <p className="eyebrow">The Loopiter manifesto</p>
-          <h1 id="manifesto-title">A correction<br />should count.</h1>
-          <p className="manifesto-deck">Someone took the time to tell you what went wrong.<br className="desktop-break" /> The next person should get a better answer.</p>
+          <h1 id="manifesto-title">Give feedback.<br />Let it improve.</h1>
+          <p className="manifesto-deck">Your agent should turn a useful correction into a tested improvement, without waiting for someone to rewrite its prompt.</p>
         </header>
 
         <div className="manifesto-body">
           <p>A support agent gives the wrong warranty period. You correct it. It apologizes. A week later, another customer gets the same wrong answer.</p>
-          <p>The correction fixed one conversation. Everything behind the answer stayed the same.</p>
-          <p>Someone already knew what was wrong. They explained it. That should have been useful beyond the moment they said it.</p>
+          <p>You already explained the mistake. Now someone has to find that conversation, figure out what to change, edit the prompt or knowledge, run the checks, and ship an update.</p>
+          <p>We think an agent should be able to carry that work through. You give the feedback. It works on making the next answer better.</p>
 
-          <section aria-labelledby="after-launch">
-            <h2 id="after-launch">The work starts after launch.</h2>
-            <p>You can spend weeks choosing a model, writing a prompt, and getting a demo to behave. Then people use it. They ask questions you didn’t think of. They find gaps in your documentation. Your policy changes. A good answer from last month becomes a bad one.</p>
-            <p>That’s normal. The trouble is what happens next. A correction lands in a support ticket, a chat, or a developer’s notes. Someone has to find it, work out what caused the mistake, change something, and check whether the change broke anything else.</p>
-            <p>Useful feedback piles up while the agent keeps running.</p>
-          </section>
-
-          <section aria-labelledby="people-know">
-            <h2 id="people-know">People know things your model doesn’t.</h2>
+          <section aria-labelledby="feedback-starts-work">
+            <h2 id="feedback-starts-work">Feedback should start the work.</h2>
             <p>The person handling returns knows the exceptions. The engineer on call knows which warning matters. The customer can tell you exactly where an answer stopped being helpful.</p>
-            <p>Some of that knowledge belongs in a prompt. Some belongs in the knowledge behind it. Some feedback needs a follow-up question before it belongs anywhere.</p>
-            <p>We want to make it easier to use that knowledge. The person who spots a mistake should be able to explain it where they’re already working, with the original answer attached. A useful correction deserves a path into the application.</p>
+            <p>That knowledge usually arrives as a correction, in the middle of someone’s day. It shouldn’t need a separate project before the application can use it.</p>
+            <p>Attach the feedback to the answer it’s about. Give the agent enough context to understand what went wrong. That should be enough to start an improvement attempt.</p>
           </section>
 
-          <section aria-labelledby="earn-change">
-            <h2 id="earn-change">A change has to earn its place.</h2>
-            <p>A confident correction can still be wrong. Advice that fixes one answer can spoil ten others. An agent can agree with a customer and contradict the actual policy.</p>
-            <p>So “it listened to the feedback” isn’t enough. Keep the original answer. Make a candidate change. Try it against the correction and the things the application already needs to get right. Compare the results.</p>
-            <p>When the evidence is missing or the checks fail, keep the current version. When a change passes, record what changed and keep a way back. Those checks have limits, too. Passing your examples gives you evidence about those examples.</p>
+          <section aria-labelledby="finish-the-job">
+            <h2 id="finish-the-job">Let the agent finish the job.</h2>
+            <p>It should examine the original answer and the feedback, work out whether a change is needed, and propose a small update to its prompt or knowledge. Then it should test that update against the correction and the things it already needs to get right.</p>
+            <p>When the checks pass and the change improves on the current version, it should go live automatically. Future answers should use the improved version. You should be able to see what happened without having to move every change through by hand.</p>
+            <p>This is the loop we’re building: feedback comes in, the agent does the improvement work, and passing changes become part of the application. Once you enable it, that work can continue between your visits.</p>
+          </section>
+
+          <section aria-labelledby="set-the-rules">
+            <h2 id="set-the-rules">You decide what good means.</h2>
+            <p>You set the instructions that must stay fixed, the examples that must keep working, and the budget for improvement. The agent works within those limits. It doesn’t get to rewrite its own checks to make a change pass.</p>
+            <p>A vague complaint may need more information. A correction may conflict with an earlier one. A promising change may fail a regression. In those cases, the current version stays in place and the reason is recorded.</p>
+            <p>Passing checks is evidence about the cases you tested. Keep improving those checks as you learn. Every released change should have a history you can inspect and a previous version you can restore.</p>
           </section>
 
           <section aria-labelledby="keep-application">
             <h2 id="keep-application">You’ve already built an application.</h2>
             <p>You chose its models, connected its tools, and worked out what it’s allowed to do. Adding a feedback loop should fit that work.</p>
-            <p>Loopiter’s job is to help improve the prompt and knowledge you choose to put in the loop. Your application keeps its credentials, permissions, and execution logic. You decide what must stay fixed, what can change, and how much it can spend.</p>
+            <p>Loopiter automates improvement of the prompt and knowledge you put in the loop. Your application keeps its credentials, permissions, and execution logic. You choose the part that can improve on its own.</p>
             <p>Setup should work the same way. Tell your coding agent what you want to connect. Let it work through the integration with you, in the project where the code lives.</p>
           </section>
 
           <section aria-labelledby="why-loopiter">
             <h2 id="why-loopiter">That’s why we’re building Loopiter.</h2>
-            <p>We want the work people do to correct an agent to carry forward. A mistake should leave behind something useful: a clearer instruction, a missing fact, a test that catches it next time.</p>
-            <p>There will still be bad answers. People will still need to check important work. But the same correction shouldn’t have to start from scratch every time.</p>
-            <p className="manifesto-signoff">If someone teaches your application something worth keeping, it should have a way to keep it.</p>
+            <p>We want an agent to get better at its job while it’s being used. People supply the feedback and define what a good answer looks like. The agent takes on the work of turning that feedback into a change worth keeping.</p>
+            <p>A useful correction should leave the application better prepared for the next person, even when no developer is sitting there to make the edit.</p>
+            <p className="manifesto-signoff">Give the feedback. Let the agent do the follow-through.</p>
           </section>
         </div>
 
