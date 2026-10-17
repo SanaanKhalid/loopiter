@@ -36,9 +36,18 @@ Issues = "https://github.com/SanaanKhalid/loopiter/issues"
 packages = ["src/loopiter"]
 core-metadata-version = "2.4"
 
+[tool.hatch.build.targets.wheel.force-include]
+"AGENT_GUIDE.md" = "loopiter/AGENT_GUIDE.md"
+"examples/__init__.py" = "loopiter/starters/__init__.py"
+"examples/autonomous_demo.py" = "loopiter/starters/autonomous_demo.py"
+"examples/autonomous_workflows.py" = "loopiter/starters/autonomous_workflows.py"
+"examples/autonomous_registry.py" = "loopiter/starters/autonomous_registry.py"
+"examples/autonomous_provider.py" = "loopiter/starters/autonomous_provider.py"
+"examples/reviewed_loop.py" = "loopiter/starters/reviewed_loop.py"
+
 [tool.hatch.build.targets.sdist]
 core-metadata-version = "2.4"
-include = ["src", "tests", "examples", "README.md", "LICENSE", "pyproject.toml"]
+include = ["src", "tests", "examples", "README.md", "AGENT_GUIDE.md", "LICENSE", "pyproject.toml"]
 
 [tool.ruff]
 target-version = "py311"

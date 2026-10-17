@@ -26,6 +26,35 @@ python -m pip install 'loopiter[postgres]==0.3.0a1'
 Use an explicit version for this prerelease. The Node.js SDK is distributed separately
 on npm; installing either SDK does not install the other.
 
+## Self-hosted setup with your coding agent
+
+The onboarding build includes an agent-readable Markdown guide, packaged reference
+workflows and a foreground worker command. After installing that build in your app:
+
+```sh
+python -m loopiter init --directory loopiter
+python -m loopiter verify
+python -m loopiter doctor --directory loopiter
+```
+
+Ask your coding agent to read `loopiter/AGENT_GUIDE.md` and complete the integration
+using your application's storage, serving model, evaluator and deployment process.
+The guide includes in-app feedback, verification, optional Jev judging, budgets,
+activation, recovery and handoff. No platform account or Loopiter project key is
+needed. You pay the providers and infrastructure you select directly.
+
+`verify` uses isolated, simulated fixtures with zero provider calls. Initialization
+does not connect the real app or enable automatic releases; `doctor` initially lists
+the missing integration decisions. Once the application-owned module is implemented
+and verified, run it with `python -m loopiter worker --module loopiter/application.py
+--enable --mode recommend --once`. Omit `--once` for a supervised foreground worker.
+Automatic releases require deliberate autonomous mode and all policy/evidence gates.
+
+Read the installed guide with `python -m loopiter guide`, and reference code with
+`python -m loopiter reference`. The optional examples also ship under
+`loopiter.starters`; importing the core never imports providers or starts work.
+These commands require the onboarding build, not the previously published alpha.
+
 ## Run the offline example from source
 
 ```sh

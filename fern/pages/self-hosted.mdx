@@ -1,0 +1,98 @@
+---
+title: Self-hosted agent setup
+---
+
+The standalone SDK can be set up by your coding agent inside your application.
+You provide the model/judge credentials, storage, worker hosting and deployment
+integration, and pay those providers directly. No Loopiter platform account or
+project key is required.
+
+The onboarding build packages `AGENT_GUIDE.md` with both SDKs. Your agent reads the
+guide, inspects the project, proposes in-app feedback, connects serving and evaluation,
+sets budgets and verifies the integration. New commands require that build; they
+are not present in the previously published alpha.
+
+<Tabs>
+<Tab title="Python">
+
+```sh
+python -m loopiter init --directory loopiter
+python -m loopiter verify
+python -m loopiter doctor --directory loopiter
+```
+
+</Tab>
+<Tab title="Node.js">
+
+```sh
+npx --no-install loopiter init --directory loopiter
+npx --no-install loopiter verify
+npx --no-install loopiter doctor --directory loopiter
+```
+
+</Tab>
+</Tabs>
+
+Give the agent this prompt:
+
+> Read loopiter/AGENT_GUIDE.md and complete the self-hosted SDK integration in this
+> project. Inspect the application, recommend where to collect feedback, configure
+> evaluation and budgets, connect our storage and providers, verify the actual
+> integration, and explain how to run, pause and roll it back.
+
+Initialization never overwrites an existing directory. It creates a disabled,
+incomplete integration plan and local verification script. Your application-specific
+model, feedback intake, trusted verification, datasets, serving registry and worker
+module still need to be connected. Unverified user comments are not ground truth.
+
+`verify` exercises the actual SDK controller with simulated acceptance, rejection,
+insufficient-evidence, receipt-recovery and rollback paths, without provider calls.
+`doctor` checks declared configuration and required environment-variable names; it
+does not call models or establish production readiness.
+
+## Run on your infrastructure
+
+The Node integration module exports `async createIntegration({ signal })`, returning
+`{ loop, workflows, close? }`. The Python module exports
+`async create_integration(*, cancellation)`, returning a dictionary with `loop`,
+`workflows` and an optional async `close`. Supply real SDK workflows and a durable
+store. Use `reference` to inspect packaged examples; no repository clone is needed.
+
+<Tabs>
+<Tab title="Python">
+
+```sh
+python -m loopiter worker --module loopiter/application.py --enable --mode recommend --once
+```
+
+</Tab>
+<Tab title="Node.js">
+
+```sh
+npx --no-install loopiter worker --module loopiter/application.mjs --enable --mode recommend --once
+```
+
+</Tab>
+</Tabs>
+
+One tick advances one durable phase. Omit `--once` for a foreground worker ticking
+every 30 seconds, and supervise it with your deployment's process manager. Choose
+`--mode autonomous` deliberately for automatic releases after real verification.
+SDK budgets, leases, independent audit, observation and rollback gates remain in
+force. Inspect pending outcomes before any retries.
+
+## Choose the evaluator
+
+Exact checks should remain deterministic. For semantic judgments, your evaluator
+callback may call the serving provider or a separate judge, including Jev when it
+fits the rubric and performs well on reviewed examples. Compare judges without
+giving the trial judge release authority. Preserve the serving model/configuration
+for baseline and candidate responses; the judge has a separately versioned role.
+
+## What the platform adds
+
+The SDK supplies the feedback and improvement machinery inside your code. Your
+application operates authentication, reports/reviewer UI, storage, model connections,
+workers, deployment and monitoring. The optional hosted platform supplies accounts,
+projects, dashboard, REST/MCP, durable jobs and managed knowledge integrations.
+It uses a separate integration client and onboarding guide.

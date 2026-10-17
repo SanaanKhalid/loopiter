@@ -73,6 +73,8 @@ navigation:
             path: pages/overview.mdx
           - page: Python quickstart
             path: pages/python.mdx
+          - page: Self-hosted agent setup
+            path: pages/self-hosted.mdx
           - page: Python examples
             path: pages/python-examples.mdx
           - page: Autonomous improvement in Python
@@ -125,6 +127,8 @@ navigation:
         contents:
           - page: Quickstart
             path: pages/quickstart.mdx
+          - link: Self-hosted agent setup
+            href: /get-started/self-hosted-agent-setup
           - page: Classification starter
             path: pages/starter.mdx
           - link: Overview

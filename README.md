@@ -9,6 +9,40 @@ live in the separate `loopiter-platform` repository (local sibling `../loopiter-
 Its HTTP client calls the platform; it is distinct from these standalone libraries.
 The marketing website and SDK documentation remain here.
 
+## Set up with your coding agent
+
+The self-hosted onboarding build includes [AGENT_GUIDE.md](AGENT_GUIDE.md), runnable
+reference workflows, offline verification and an optional foreground worker. After
+installing that build in your application:
+
+```sh
+# Python
+python -m loopiter init --directory loopiter
+python -m loopiter verify
+
+# Node.js
+npx --no-install loopiter init --directory loopiter
+npx --no-install loopiter verify
+```
+
+Give your coding agent this prompt:
+
+> Read loopiter/AGENT_GUIDE.md and complete the self-hosted SDK integration in this
+> project. Inspect the application, recommend where to collect feedback, configure
+> evaluation and budgets, connect our own storage and model providers, verify the
+> integration, and explain how to run, pause and roll it back.
+
+The guide covers existing and new applications, verified feedback, optional Jev
+judging, durable storage, real serving attribution, deliberate autonomous activation
+and recovery. The generated plan starts incomplete and disabled. `doctor` checks
+declared configuration; `verify` tests isolated simulated SDK mechanics. Your agent
+must still verify the real application. No platform login or Loopiter project key
+is involved; you pay your own model/judge, database and hosting providers.
+
+Read the guide with `python -m loopiter guide` or `npx --no-install loopiter guide`.
+Use `reference` for packaged source. New commands require this onboarding build;
+publishing a new npm/PyPI release is separate.
+
 ## 0.3 opt-in autonomous alpha
 
 Release versions: `loopiter@0.3.0-alpha.1` and Python `loopiter==0.3.0a1`.
@@ -67,8 +101,11 @@ npm run starter -- demo --reject
 The repository is public. Both demos are **simulated fixtures, not live LLM results**. The accepting demo explicitly
 approves its fixture candidate; ordinary recommendations never do that automatically.
 
-The npm package contains the SDK and migrations. Clone the repository above to run
-the standalone starter; its provider-specific code is outside the core package.
+The npm package contains the SDK, migrations, agent guide and optional starter
+references. `npx --no-install loopiter starter demo` runs the packaged classification
+fixture without a checkout or credentials. Its live PostgreSQL path requires the
+application to install `pg` and explicitly select `--live`; provider code stays
+outside the default core import.
 
 ## Capture a local example
 

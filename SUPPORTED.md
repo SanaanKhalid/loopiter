@@ -45,6 +45,7 @@ Do not independently deploy both SDKs to the same external target. See
 | Autonomous changes | Flag + autonomous mode + exact prompt/routing policy; single winner, audit, observation/rollback | No universal improvement guarantee; adapters enforce external fencing and mature outcome attribution |
 | Canary | Stable bucket helper and inspectable promotion/withdrawal coordination | Durable cohort assignment/exposure, traffic routing and valid comparison method are application-owned |
 | Starter | OpenAI/Azure OpenAI Responses via fetch, PostgreSQL prompt registry, exact-match evaluation, CLI | User credentials/model or Azure deployment; synthetic example dataset must be replaced for customer claims |
+| Self-hosted onboarding | Packaged Markdown agent guide; init, doctor, offline verification, reference sources and opt-in foreground worker in both languages | Application-specific callbacks, reviewed evidence, durable storage, provider credentials and process supervision remain application-owned; new onboarding build required |
 | Other target kinds | Represent, recommend, evaluate and manually deploy through adapters | No built-in fine-tuning/training, code deployment, agent spawning or capacity scaling |
 | Telemetry / operations | Durable lifecycle events and structured controller reasons; no Loopiter telemetry | Existing logger, alerting, jobs, retention and incident response |
 | Hosted product | None | No dashboard, accounts, billing, SLA or managed service |

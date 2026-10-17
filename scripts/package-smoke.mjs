@@ -54,6 +54,15 @@ try {
   assert.equal(installed.license, "MIT");
   assert.equal(installed.bin?.loopiter, "dist/src/cli.js");
   assert.equal(Object.keys(installed.dependencies ?? {}).length, 0);
+  assert.ok(installed.exports["./onboarding"]);
+  assert.ok(installed.exports["./starters"]);
+  assert.equal(
+    await readFile(
+      join(temporary, "node_modules/loopiter/AGENT_GUIDE.md"),
+      "utf8",
+    ),
+    await readFile(join(root, "AGENT_GUIDE.md"), "utf8"),
+  );
   assert.match(
     await readFile(join(temporary, "node_modules/loopiter/LICENSE"), "utf8"),
     /MIT License/,
@@ -70,6 +79,15 @@ try {
 import { FeedbackLoop, InMemoryStore, ImprovementController, type ImprovementWorkflow } from 'loopiter';
 import { PostgresStore, migratePostgres } from 'loopiter/postgres';
 import { runStoreConformance } from 'loopiter/testing';
+import { readAgentGuide, readReference, initializeSelfHosted, inspectSelfHostedSetup } from 'loopiter/onboarding';
+import { migrateArtifactRegistry } from 'loopiter/starters';
+if (!(await readAgentGuide()).includes('self-hosted SDK/library')) throw Error('Packaged agent guide missing');
+if (!(await readReference('workflows')).includes('promptWorkflow')) throw Error('Packaged references missing');
+await initializeSelfHosted('./setup with spaces');
+if ((await inspectSelfHostedSetup('./setup with spaces')).configured) throw Error('Fresh setup falsely connected');
+let registryMigrated = false;
+await migrateArtifactRegistry({ connect: async () => ({ query: async (sql: string) => { registryMigrated ||= sql.includes('CREATE TABLE IF NOT EXISTS loopiter_example_artifacts'); return { rows: [], rowCount: 0 }; }, release() {} }) });
+if (!registryMigrated) throw Error('Packaged registry migration missing');
 const store = new InMemoryStore();
 let now = new Date('2026-02-01T00:00:00Z');
 const loop = new FeedbackLoop({ store, namespace: 'tarball', clock: () => now });
@@ -143,6 +161,66 @@ console.log('Clean installed tarball: declarations, capture, conformance, migrat
   );
   run(process.execPath, ["built/consumer.mjs"], temporary);
   run(process.execPath, ["node_modules/.bin/loopiter", "--help"], temporary);
+  run(process.execPath, ["node_modules/.bin/loopiter", "verify"], temporary);
+  const doctor = spawnSync(
+    process.execPath,
+    [
+      "node_modules/.bin/loopiter",
+      "doctor",
+      "--directory",
+      "setup with spaces",
+    ],
+    { cwd: temporary, encoding: "utf8" },
+  );
+  assert.equal(doctor.status, 1);
+  assert.equal(JSON.parse(doctor.stdout).configured, false);
+  for (const flags of [[], ["--reject"], ["--interrupt"]]) {
+    const demo = spawnSync(
+      process.execPath,
+      ["node_modules/.bin/loopiter", "starter", "demo", ...flags],
+      { cwd: temporary, encoding: "utf8" },
+    );
+    assert.equal(demo.status, 0, demo.stderr);
+    assert.equal(JSON.parse(demo.stdout).mode, "simulated");
+  }
+  await writeFile(
+    join(temporary, "worker.mjs"),
+    `
+import { FeedbackLoop, InMemoryStore } from 'loopiter';
+import { writeFile } from 'node:fs/promises';
+export async function createIntegration() {
+  const loop = new FeedbackLoop({store: new InMemoryStore(), namespace: 'installed/worker'});
+  const never = async () => { throw Error('No evidence: no model calls or deployments permitted'); };
+  return {loop, workflows: [{id:'installed-worker',version:'1',optimizerVersion:'1',evaluatorVersion:'1',
+    policy: ${JSON.stringify(fixture.policy)},
+    artifact: async () => ({artifactVersion:'baseline', configurationHash:'fixed'}),
+    dataset: async () => ({version:'1',optimization:[],validation:[],audit:[]}),
+    propose:never,evaluate:never,observe:never,deployment:{apply:never,inspect:never,rollback:never}}],
+    close: async () => { await loop.close(); await writeFile('worker-closed', 'closed'); }};
+}
+`,
+  );
+  const tick = spawnSync(
+    process.execPath,
+    [
+      "node_modules/.bin/loopiter",
+      "worker",
+      "--module",
+      "worker.mjs",
+      "--enable",
+      "--once",
+    ],
+    { cwd: temporary, encoding: "utf8" },
+  );
+  assert.equal(tick.status, 0, tick.stderr);
+  assert.equal(JSON.parse(tick.stdout).state, "waiting_for_evidence");
+  assert.equal(
+    await readFile(join(temporary, "worker-closed"), "utf8"),
+    "closed",
+  );
+  console.log(
+    "Installed self-hosted guide, initialization, disabled defaults, worker references, offline verification and packaged classification fixtures passed without pg.",
+  );
 } finally {
   // Only the exact temporary consumer directory created by this script is removed.
   await rm(temporary, { recursive: true, force: true });

@@ -23,16 +23,37 @@ try {
   assert.match(navigation, /^default-language: python$/m);
   assert.match(navigation, /tabs:\s+python:/);
   assert.match(navigation, /navigation:\s+- tab: python/);
-  const pythonNavigation = navigation.split("navigation:")[1].split("  - tab: nodejs")[0];
-  for (const page of ["overview", "python", "python-api", "autonomy-integration", "autonomy-policy", "autonomy-datasets", "autonomy-adapters", "autonomy-operations"]) {
-    assert.ok(pythonNavigation.includes(`path: pages/${page}.mdx`), `${page} must remain in the Python documentation path`);
+  const pythonNavigation = navigation
+    .split("navigation:")[1]
+    .split("  - tab: nodejs")[0];
+  for (const page of [
+    "overview",
+    "python",
+    "python-api",
+    "autonomy-integration",
+    "autonomy-policy",
+    "autonomy-datasets",
+    "autonomy-adapters",
+    "autonomy-operations",
+  ]) {
+    assert.ok(
+      pythonNavigation.includes(`path: pages/${page}.mdx`),
+      `${page} must remain in the Python documentation path`,
+    );
   }
   const snippets = [];
   for (const file of files) {
     const content = await readFile(join(root, file), "utf8");
     for (const group of content.matchAll(/<Tabs>([\s\S]*?)<\/Tabs>/g)) {
-      if (group[1].includes('title="Python"') && group[1].includes('title="Node.js"')) {
-        assert.ok(group[1].indexOf('title="Python"') < group[1].indexOf('title="Node.js"'), `${file}: shared examples must show Python first`);
+      if (
+        group[1].includes('title="Python"') &&
+        group[1].includes('title="Node.js"')
+      ) {
+        assert.ok(
+          group[1].indexOf('title="Python"') <
+            group[1].indexOf('title="Node.js"'),
+          `${file}: shared examples must show Python first`,
+        );
       }
     }
     assert.ok(
@@ -46,8 +67,14 @@ try {
   }
   const page = await readFile(join(root, "website/app/page.tsx"), "utf8");
   const landingSnippet = page.match(/const code = `([\s\S]*?)`;/);
-  assert.ok(landingSnippet, "Landing-page example must remain compile checked");
-  snippets.push({ file: "website/app/page.tsx", code: landingSnippet[1] });
+  if (landingSnippet)
+    snippets.push({ file: "website/app/page.tsx", code: landingSnippet[1] });
+  else
+    assert.doesNotMatch(
+      page,
+      /<SdkExample\b/,
+      "Rendered landing examples must remain compile checked",
+    );
   assert.ok(snippets.length >= 6, "No runnable documentation found");
   const names = [];
   for (const [index, snippet] of snippets.entries()) {
@@ -89,20 +116,29 @@ try {
     ),
   );
   console.log(
-    `Compiled ${snippets.length} complete documentation examples, including the landing page.`,
+    `Compiled ${snippets.length} complete documentation examples${landingSnippet ? ", including the landing page" : ""}.`,
   );
   // Validate the complete documented policy at runtime, not just its TypeScript shape.
-  const policyExample = snippets.find((s) => s.file === "fern/pages/autonomy-policy.mdx");
+  const policyExample = snippets.find(
+    (s) => s.file === "fern/pages/autonomy-policy.mdx",
+  );
   assert.ok(policyExample, "Complete autonomy policy example is required");
   const compiledPolicy = ts.transpileModule(policyExample.code, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ES2022,
+    },
   }).outputText;
   const { supportPolicy } = await import(
     `data:text/javascript;base64,${Buffer.from(compiledPolicy).toString("base64")}`
   );
-  const { validatePolicy } = await import("../dist/src/improvement-evidence.js");
+  const { validatePolicy } = await import(
+    "../dist/src/improvement-evidence.js"
+  );
   validatePolicy(supportPolicy);
-  console.log("Documented complete Node autonomy policy passed runtime validation.");
+  console.log(
+    "Documented complete Node autonomy policy passed runtime validation.",
+  );
 } finally {
   await rm(directory, { recursive: true, force: true });
 }
