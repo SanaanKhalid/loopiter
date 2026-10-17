@@ -1,3 +1,4 @@
+import { StartWithAgent } from '../components/start-with-agent';
 import { docsHref } from '../lib/docs-links';
 import { SiteFooter, SiteHeader } from '../components/site-chrome';
 
@@ -26,7 +27,7 @@ export default function Home() {
         <p className="availability"><span /> In development</p>
         <h1 id="hero-title">AI that learns<br />from every correction.</h1>
         <p className="hero-description">Turn real feedback into better prompts and knowledge.<br className="desktop-break" /> Keep your agent. Close the loop.</p>
-        <a className="button" href="#how-it-works">Meet Loopiter <span aria-hidden="true">↓</span></a>
+        <StartWithAgent />
       </div>
       <div className="hero-bottom"><span>Your agent. Your models. A better next answer.</span><span className="scroll-note">A continuous feedback loop <span aria-hidden="true">↓</span></span></div>
     </section>
@@ -34,9 +35,9 @@ export default function Home() {
     <section id="how-it-works" className="explanation" aria-labelledby="idea-title">
       <div className="intro"><h2 id="idea-title">Good feedback shouldn’t<br />end a conversation.</h2><p>It should improve the next one. Loopiter connects what your agent gets wrong to the prompts and knowledge behind its answers.</p></div>
       <ol className="steps">
-        <li><span className="step-number">01</span><h3>Bring your agent.</h3><p>Connect your existing application through the API or SDK. Keep the models and tools you already use.</p></li>
-        <li><span className="step-number">02</span><h3>Give it feedback.</h3><p>Send a correction tied to an actual answer. Loopiter works out whether to change the prompt or knowledge and tests a candidate.</p></li>
-        <li><span className="step-number">03</span><h3>Let it improve.</h3><p>Once enabled, the loop runs on its own. Changes that improve answers and pass your checks go live automatically, with a version to roll back to.</p></li>
+        <li><span className="step-number">01</span><h3>Start in your coding agent.</h3><p>Paste the setup prompt into Codex or Claude Code. It inspects your project, or helps you build a new one, and asks what good results look like.</p></li>
+        <li><span className="step-number">02</span><h3>Give it feedback.</h3><p>Your coding agent connects the app and evaluation worker. Send a correction tied to an actual answer; Loopiter proposes and tests a prompt or knowledge change.</p></li>
+        <li><span className="step-number">03</span><h3>Let it improve.</h3><p>Once enabled, the loop runs on its own. Passing improvements go live automatically. Follow them in your dashboard, with a version to roll back to.</p></li>
       </ol>
       <div className="closing"><p>We’re building this in the open.<br /><span>The platform is in development. The SDK is yours to explore.</span></p><a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a></div>
     </section>
