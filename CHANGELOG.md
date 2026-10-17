@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Package a self-hosted agent guide and application-side references with both SDKs.
+- Add initialization, configuration inspection, isolated offline verification and explicit foreground worker commands in native Python and Node.
+- Document application-owned feedback verification, storage, evaluator selection (including optional Jev), provider budgets, autonomous activation and recovery.
+- Keep the core dependency-free and platform-independent; initialization enables no spending or releases. npm/PyPI publication is separate.
+
 ## 0.3.0-alpha.1 / Python 0.3.0a1 — 2026-09-19
 
 - Add opt-in autonomous controllers with exact-target policies and namespace-scoped durable runs.

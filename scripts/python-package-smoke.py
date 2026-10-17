@@ -1,7 +1,9 @@
 """Build, inspect and install real artifacts into clean consumers. Never publishes."""
 
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -11,6 +13,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "python"
+
+
+def python_policy(value):
+    if isinstance(value, list):
+        return [python_policy(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower(): child
+            if key == "changeSchema"
+            else python_policy(child)
+            for key, child in value.items()
+        }
+    return value
 
 
 def run(*args, cwd=ROOT):
@@ -45,10 +60,18 @@ def main():
         run(sys.executable, "-m", "twine", "check", str(wheel), str(sdist))
         with zipfile.ZipFile(wheel) as archive:
             names = archive.namelist()
+            assert not any(
+                "__pycache__" in name or name.endswith(".pyc") for name in names
+            )
             assert "loopiter/py.typed" in names
             assert "loopiter/migrations/001-python-store.sql" in names
             assert "loopiter/migrations/002-autonomy.sql" in names
             assert "loopiter/improvement.py" in names
+            assert "loopiter/AGENT_GUIDE.md" in names
+            assert "loopiter/onboarding.py" in names
+            assert "loopiter/__main__.py" in names
+            assert "loopiter/starters/autonomous_demo.py" in names
+            assert "loopiter/starters/autonomous_workflows.py" in names
             metadata = archive.read(
                 next(n for n in names if n.endswith("/METADATA"))
             ).decode()
@@ -86,13 +109,87 @@ import asyncio, importlib.util
 from loopiter import FeedbackLoop, InMemoryStore
 from loopiter.postgres import migration_sql
 from loopiter.testing import run_store_conformance
+from loopiter.onboarding import read_agent_guide, read_reference
 assert importlib.util.find_spec('psycopg') is None
 assert 'CREATE TABLE' in migration_sql()
+assert 'self-hosted SDK/library' in read_agent_guide()
+assert 'prompt_workflow' in read_reference('workflows')
 asyncio.run(run_store_conformance(InMemoryStore()))
 print('Clean consumer capture/conformance/migration smoke passed')
 """,
                 cwd=work,
             )
+            setup = work / f"self-hosted-{index}"
+            run(
+                str(python),
+                "-I",
+                "-m",
+                "loopiter",
+                "init",
+                "--directory",
+                str(setup),
+                cwd=work,
+            )
+            doctor = subprocess.run(
+                [
+                    str(python),
+                    "-I",
+                    "-m",
+                    "loopiter",
+                    "doctor",
+                    "--directory",
+                    str(setup),
+                ],
+                cwd=work,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert doctor.returncode == 1 and '"configured": false' in doctor.stdout
+            run(str(python), "-I", "-m", "loopiter", "verify", cwd=work)
+            run(str(python), "-I", str(setup / "verify.py"), cwd=work)
+            policy = python_policy(
+                json.loads((PACKAGE / "tests/fixtures/autonomy.json").read_text())[
+                    "policy"
+                ]
+            )
+            module = setup / "worker.py"
+            marker = setup / "worker-closed"
+            module.write_text(f"""
+from pathlib import Path
+from loopiter import FeedbackLoop, InMemoryStore, ImprovementWorkflow
+async def create_integration(*, cancellation):
+    loop = FeedbackLoop(store=InMemoryStore(), namespace="installed/worker")
+    async def never(*args): raise AssertionError("No evidence: no model calls or deployments permitted")
+    async def artifact(context): return dict(artifact_version="baseline", configuration_hash="fixed")
+    async def dataset(context): return dict(version="1",optimization=[],validation=[],audit=[])
+    class Registry:
+        apply = inspect = rollback = never
+    async def close():
+        await loop.close()
+        Path({str(marker)!r}).write_text("closed")
+    workflow = ImprovementWorkflow(id="installed-worker",version="1",optimizer_version="1",evaluator_version="1",policy={policy!r},artifact=artifact,dataset=dataset,propose=never,evaluate=never,observe=never,deployment=Registry())
+    return dict(loop=loop, workflows=[workflow], close=close)
+""")
+            tick = subprocess.run(
+                [
+                    str(python),
+                    "-I",
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                ],
+                cwd=work,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            assert json.loads(tick.stdout)["state"] == "waiting_for_evidence"
+            assert marker.read_text() == "closed"
             run(
                 str(python),
                 "-I",

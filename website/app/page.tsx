@@ -1,10 +1,7 @@
+import Link from 'next/link';
+import { StartWithAgent } from '../components/start-with-agent';
 import { docsHref } from '../lib/docs-links';
-
-const github = 'https://github.com/SanaanKhalid/loopiter';
-
-function LoopMark() {
-  return <svg width="31" height="25" viewBox="0 0 38 28" fill="none" aria-hidden="true"><path d="M24 6a10 10 0 1 1 0 16L14 6a10 10 0 1 0 0 16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" /></svg>;
-}
+import { SiteFooter, SiteHeader } from '../components/site-chrome';
 
 function LoopArtwork() {
   return <svg className="loop-art" viewBox="0 0 1400 950" fill="none" aria-hidden="true">
@@ -26,15 +23,12 @@ export default function Home() {
     <a className="skip-link" href="#how-it-works">Skip to content</a>
     <section className="hero" aria-labelledby="hero-title">
       <LoopArtwork />
-      <header className="site-header">
-        <a className="brand" href="#top" aria-label="Loopiter home"><LoopMark /><span>loopiter</span></a>
-        <nav aria-label="Main navigation"><a className="nav-about" href="#how-it-works">The idea</a><a className="nav-link" href="https://web-loopiter-prod.redmushroom-e2f381a3.centralus.azurecontainerapps.io/login">Sign in</a><a className="nav-link" href={github}>Explore the SDK <span aria-hidden="true">↗</span></a></nav>
-      </header>
+      <SiteHeader />
       <div className="hero-copy">
         <p className="availability"><span /> In development</p>
         <h1 id="hero-title">AI that learns<br />from every correction.</h1>
         <p className="hero-description">Turn real feedback into better prompts and knowledge.<br className="desktop-break" /> Keep your agent. Close the loop.</p>
-        <a className="button" href="#how-it-works">Meet Loopiter <span aria-hidden="true">↓</span></a>
+        <StartWithAgent />
       </div>
       <div className="hero-bottom"><span>Your agent. Your models. A better next answer.</span><span className="scroll-note">A continuous feedback loop <span aria-hidden="true">↓</span></span></div>
     </section>
@@ -42,12 +36,18 @@ export default function Home() {
     <section id="how-it-works" className="explanation" aria-labelledby="idea-title">
       <div className="intro"><h2 id="idea-title">Good feedback shouldn’t<br />end a conversation.</h2><p>It should improve the next one. Loopiter connects what your agent gets wrong to the prompts and knowledge behind its answers.</p></div>
       <ol className="steps">
-        <li><span className="step-number">01</span><h3>Bring your agent.</h3><p>Connect your existing application through the API or SDK. Keep the models and tools you already use.</p></li>
-        <li><span className="step-number">02</span><h3>Close the loop.</h3><p>Send corrections from wherever your users respond. Loopiter looks for a useful change to the prompt or knowledge.</p></li>
-        <li><span className="step-number">03</span><h3>Improve with evidence.</h3><p>Loopiter tests changes against your examples and automatically activates improvements that pass, with a version to roll back to.</p></li>
+        <li><span className="step-number">01</span><h3>Start in your coding agent.</h3><p>Paste the setup prompt into Codex or Claude Code. It inspects your project, or helps you build a new one, and asks what good results look like.</p></li>
+        <li><span className="step-number">02</span><h3>Give it feedback.</h3><p>Your coding agent connects the app and evaluation worker. Send a correction tied to an actual answer; Loopiter proposes and tests a prompt or knowledge change.</p></li>
+        <li><span className="step-number">03</span><h3>Let it improve.</h3><p>Once enabled, the loop runs on its own. Passing improvements go live automatically. Follow them in your dashboard, with a version to roll back to.</p></li>
       </ol>
       <div className="closing"><p>We’re building this in the open.<br /><span>The platform is in development. The SDK is yours to explore.</span></p><a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a></div>
     </section>
-    <footer><a className="brand footer-brand" href="#top"><LoopMark /><span>loopiter</span></a><span>Better, with every loop.</span><a href={github}>GitHub</a></footer>
+    <section className="manifesto-invitation" aria-labelledby="manifesto-invitation-title">
+      <p className="eyebrow">Why we’re building Loopiter</p>
+      <h2 id="manifesto-invitation-title">Give feedback.<br />Let it improve.</h2>
+      <p>Your agent should do the work between a useful correction and a better next answer. Test the change. Put it to work when it passes. Keep going.</p>
+      <Link className="text-link" href="/manifesto">Read our manifesto <span aria-hidden="true">↗</span></Link>
+    </section>
+    <SiteFooter />
   </main>;
 }

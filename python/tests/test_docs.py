@@ -18,7 +18,11 @@ class DocumentationTests(unittest.TestCase):
         if not page.exists():
             self.skipTest("Website is outside the Python source distribution")
         snippet = re.search(r"const pythonCode = `(.*?)`;", page.read_text(), re.S)
-        self.assertIsNotNone(snippet)
+        if snippet is None:
+            self.assertNotRegex(
+                page.read_text(), r"<SdkExample\b", "Rendered landing examples must remain checked"
+            )
+            self.skipTest("Current landing page contains no runnable SDK example")
         self.check_examples("```python\n" + snippet[1] + "\n```", "landing page")
 
     def test_complete_autonomy_policy(self):

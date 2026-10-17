@@ -30,6 +30,14 @@
     "./worker": {
       "types": "./dist/src/worker.d.ts",
       "import": "./dist/src/worker.js"
+    },
+    "./onboarding": {
+      "types": "./dist/src/onboarding.d.ts",
+      "import": "./dist/src/onboarding.js"
+    },
+    "./starters": {
+      "types": "./dist/src/starters.d.ts",
+      "import": "./dist/src/starters.js"
     }
   },
   "bin": {
@@ -37,6 +45,13 @@
   },
   "files": [
     "dist/src",
+    "dist/examples/autonomous",
+    "dist/examples/prompt-improvement",
+    "examples/autonomous/*.ts",
+    "examples/autonomous/registry.sql",
+    "examples/prompt-improvement/*.ts",
+    "examples/prompt-improvement/README.md",
+    "AGENT_GUIDE.md",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",

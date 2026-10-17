@@ -6,12 +6,20 @@ import sys
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
-from autonomous_workflows import (
-    SAFETY,
-    decision_routing_workflow,
-    model_routing_workflow,
-    prompt_workflow,
-)
+if __package__:
+    from .autonomous_workflows import (
+        SAFETY,
+        decision_routing_workflow,
+        model_routing_workflow,
+        prompt_workflow,
+    )
+else:
+    from autonomous_workflows import (
+        SAFETY,
+        decision_routing_workflow,
+        model_routing_workflow,
+        prompt_workflow,
+    )
 
 from loopiter import FeedbackLoop, ImprovementController, InMemoryStore, fingerprint
 

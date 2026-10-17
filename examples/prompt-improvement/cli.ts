@@ -1,4 +1,3 @@
-import { Pool } from "pg";
 import { writeFile } from "node:fs/promises";
 import { FeedbackLoop, InMemoryStore } from "../../src/index.js";
 import { PostgresStore, migratePostgres } from "../../src/postgres.js";
@@ -31,7 +30,7 @@ async function main() {
   if (live && !process.env.DATABASE_URL)
     throw new Error("DATABASE_URL is required.");
   const pool = live
-    ? new Pool({ connectionString: process.env.DATABASE_URL })
+    ? new (await import("pg")).Pool({ connectionString: process.env.DATABASE_URL })
     : undefined;
   const store = pool ? new PostgresStore(pool) : new InMemoryStore();
   const loop = new FeedbackLoop({
