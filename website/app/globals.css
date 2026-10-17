@@ -8,7 +8,7 @@ a { color: inherit; text-decoration: none; }
 a:focus-visible { outline: 3px solid #a2c8a6; outline-offset: 6px; }
 ::selection { background: #c7dfc8; color: #163d3d; }
 .skip-link { position: absolute; top: -80px; left: 24px; padding: 12px 20px; background: white; z-index: 20; }
-.skip-link:focus { top: 20px; }
+.skip-link:focus-visible { top: 20px; }
 .hero { position: relative; min-height: 780px; height: min(940px, 100svh); overflow: hidden; color: var(--light); background: radial-gradient(ellipse at 85% 22%, #416257 0%, transparent 49%), radial-gradient(ellipse at 10% 90%, #234c4c 0%, transparent 50%), #123438; }
 .loop-art { position: absolute; width: 112%; height: 130%; top: -15%; left: -6%; pointer-events: none; opacity: .8; }
 .hero::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, #12343888, transparent 65%); }
