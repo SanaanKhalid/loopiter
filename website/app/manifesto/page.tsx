@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { SiteFooter, SiteHeader } from '../../components/site-chrome';
 import { docsHref } from '../../lib/docs-links';
 
@@ -62,7 +63,7 @@ export default function Manifesto() {
         </div>
 
         <div className="manifesto-next">
-          <a className="text-link" href="/#how-it-works">How Loopiter works <span aria-hidden="true">↗</span></a>
+          <Link className="text-link" href="/#how-it-works">How Loopiter works <span aria-hidden="true">↗</span></Link>
           <a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a>
         </div>
       </article>

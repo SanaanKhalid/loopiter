@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { StartWithAgent } from '../components/start-with-agent';
 import { docsHref } from '../lib/docs-links';
 import { SiteFooter, SiteHeader } from '../components/site-chrome';
@@ -45,7 +46,7 @@ export default function Home() {
       <p className="eyebrow">Why we’re building Loopiter</p>
       <h2 id="manifesto-invitation-title">Give feedback.<br />Let it improve.</h2>
       <p>Your agent should do the work between a useful correction and a better next answer. Test the change. Put it to work when it passes. Keep going.</p>
-      <a className="text-link" href="/manifesto">Read our manifesto <span aria-hidden="true">↗</span></a>
+      <Link className="text-link" href="/manifesto">Read our manifesto <span aria-hidden="true">↗</span></Link>
     </section>
     <SiteFooter />
   </main>;

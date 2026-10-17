@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 const github = 'https://github.com/SanaanKhalid/loopiter';
 
 function LoopMark() {
@@ -6,10 +8,10 @@ function LoopMark() {
 
 export function SiteHeader({ page = 'home' }: { page?: 'home' | 'manifesto' }) {
   return <header className={`site-header${page === 'manifesto' ? ' paper-header' : ''}`}>
-    <a className="brand" href="/" aria-label="Loopiter home"><LoopMark /><span>loopiter</span></a>
+    <Link className="brand" href="/" aria-label="Loopiter home"><LoopMark /><span>loopiter</span></Link>
     <nav aria-label="Main navigation">
-      <a className="nav-about" href={page === 'home' ? '#how-it-works' : '/#how-it-works'}>The idea</a>
-      <a className="nav-manifesto" href="/manifesto" aria-current={page === 'manifesto' ? 'page' : undefined}>Manifesto</a>
+      <Link className="nav-about" href={page === 'home' ? '#how-it-works' : '/#how-it-works'}>The idea</Link>
+      <Link className="nav-manifesto" href="/manifesto" aria-current={page === 'manifesto' ? 'page' : undefined}>Manifesto</Link>
       <a className="nav-link" href="https://web-loopiter-prod.redmushroom-e2f381a3.centralus.azurecontainerapps.io/login">Sign in</a>
       <a className="nav-link nav-sdk" href={github}>Explore the SDK <span aria-hidden="true">↗</span></a>
     </nav>
@@ -18,8 +20,8 @@ export function SiteHeader({ page = 'home' }: { page?: 'home' | 'manifesto' }) {
 
 export function SiteFooter() {
   return <footer>
-    <a className="brand footer-brand" href="/" aria-label="Loopiter home"><LoopMark /><span>loopiter</span></a>
+    <Link className="brand footer-brand" href="/" aria-label="Loopiter home"><LoopMark /><span>loopiter</span></Link>
     <span>Better, with every loop.</span>
-    <nav className="footer-links" aria-label="Footer navigation"><a href="/manifesto">Manifesto</a><a href={github}>GitHub <span aria-hidden="true">↗</span></a></nav>
+    <nav className="footer-links" aria-label="Footer navigation"><Link href="/manifesto">Manifesto</Link><a href={github}>GitHub <span aria-hidden="true">↗</span></a></nav>
   </footer>;
 }
