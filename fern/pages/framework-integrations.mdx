@@ -1,0 +1,166 @@
+---
+title: Framework integrations
+---
+
+Optional wrappers capture serving calls from OpenAI and the Vercel AI SDK into your
+own Loopiter store. They use isolated client/model facades adapted from Supermemory
+and preserve the original client. They do not contact a Loopiter service, activate
+autonomy, select a release for you, or treat conversation text as verified feedback.
+
+## Python: AsyncOpenAI
+
+Install `loopiter[openai]`. The wrapper supports OpenAI Python 2.x
+`chat.completions.create` and `responses.create`, including `stream=True`.
+
+```python
+from uuid import uuid4
+
+from loopiter.integrations.openai import with_loopiter
+
+
+async def answer(loop, client, episode_id, release):
+    execution_id = str(uuid4())
+    captured = with_loopiter(
+        client,
+        loop=loop,
+        context=lambda request: {
+            "id": execution_id,
+            "episode_id": episode_id,
+            "artifacts": {"prompt": release["version"]},
+            "guidance": release["guidance"],
+        },
+    )
+    response = await captured.chat.completions.create(
+        model="your-model",
+        messages=[
+            {"role": "system", "content": "Follow the application's protected rules."},
+            {"role": "user", "content": "Explain this charge."},
+        ],
+    )
+    return response, execution_id
+```
+
+Pass an existing async client, including `AsyncAzureOpenAI`, configured by your
+application. For streams, use `async with await captured.chat.completions.create(...,
+stream=True) as stream` and iterate inside that block. Exiting early closes the
+source and records cancellation. Raw-response, `parse()`, and `stream()` helpers
+are deliberately unsupported on the facade; use the documented `create` methods.
+
+## TypeScript: OpenAI
+
+Install `openai` alongside Loopiter. The optional entry supports OpenAI Node 6.x and
+7.x, Chat Completions and Responses, and `create({ stream: true })`.
+
+```typescript
+import OpenAI from "openai";
+import { FeedbackLoop, InMemoryStore } from "loopiter";
+import { withLoopiter } from "loopiter/integrations/openai";
+
+const loop = new FeedbackLoop({ store: new InMemoryStore(), namespace: "support/dev" });
+const client = withLoopiter(new OpenAI(), {
+  loop,
+  context: () => ({
+    episodeId: "ticket-123",
+    artifacts: { prompt: "support-v3" },
+    guidance: "The application-selected released task guidance.",
+  }),
+  onExecution: execution => { console.log(execution.id); },
+});
+const response = await client.chat.completions.create({
+  model: "your-model",
+  messages: [{ role: "user", content: "Explain this charge." }],
+});
+console.log(response.choices[0]?.message.content);
+```
+
+Use a durable store for production. The native return type, `.withResponse()`, and
+non-streaming `.asResponse()` remain available. Draining a parsed stream records
+its terminal status; breaking its iterator records cancellation. The convenience
+`stream()` helpers are unsupported. Reading an SSE body directly through
+`.asResponse()` bypasses parsed stream capture and leaves the execution pending.
+Only the documented `create` endpoints are instrumented; unrelated client APIs
+continue to use the original provider implementation.
+
+## TypeScript: Vercel AI SDK
+
+The structural model wrapper supports provider specifications v2/v3/v4 (AI SDK
+5/6/7). Framework packages are not imported by Loopiter's core or model wrapper.
+
+```typescript
+import { generateText } from "ai";
+import { MockLanguageModelV4 } from "ai/test";
+import { FeedbackLoop, InMemoryStore } from "loopiter";
+import { withLoopiter } from "loopiter/integrations/ai-sdk";
+
+const loop = new FeedbackLoop({ store: new InMemoryStore(), namespace: "fixture/dev" });
+// Simulated model for this example; pass your real provider's language model in your app.
+const model = withLoopiter(new MockLanguageModelV4({
+  doGenerate: async () => ({
+    content: [{ type: "text", text: "Fixture answer" }],
+    finishReason: { unified: "stop", raw: "stop" },
+    usage: {
+      inputTokens: { total: 2, noCache: 2, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 1, text: 1, reasoning: 0 },
+    },
+    warnings: [],
+  }),
+}), { loop, context: () => ({ artifacts: { prompt: "fixture-v1" } }) });
+const result = await generateText({ model, prompt: "Hello", maxRetries: 0 });
+console.log(result.text);
+```
+
+`generateText` and `streamText` retain their framework behavior. Every provider step
+gets its own execution; use a common episode ID to group a tool loop. The wrapper
+records prompt/tool-message order and provider parameters, excluding transport
+headers and abort signals. It does not execute or replay tools.
+
+## Capture contract
+
+1. Resolve your application-owned context and freeze its artifact identity.
+2. Persist a pending execution before dispatching to the provider.
+3. Preserve the provider result/stream while recording output, usage and finish information.
+4. Persist `completed`, `incomplete`, `failed` or `cancelled` before returning completion.
+
+These are transport/capture statuses, not correctness judgments. Feedback still
+uses `record_signal` / `recordSignal` with an authorized source and the captured
+execution ID. Dataset callbacks should exclude incomplete, failed and cancelled
+executions unless intentionally analyzing those failures. These wrappers do not
+meter `ImprovementController` budgets; use
+`CallbackContext.meter` for controller-driven provider calls.
+
+Context callbacks run once per provider call. Explicit execution IDs must be fresh
+per call, including retries and tool steps. Reusing one fails before another
+provider dispatch. Existing provider retry settings still apply inside a call;
+the wrappers do not add retries. A process crash, abandoned stream or failed store
+write can leave a pending record. Inspect the upstream operation before retrying;
+capture does not establish exactly-once inference or reconcile unknown charges.
+
+Capture failures propagate; pending executions remain available for investigation.
+`onExecution` / `on_execution` is awaited after the pending record and after final
+persistence. The normal SDK sanitizer and payload limit apply. Sanitizers must
+preserve reserved `loopiterCapture` / `loopiter_capture` identity and status fields.
+Output/stream buffering defaults to 65,536 bytes, configured through
+`maximumOutputBytes` / `maximum_output_bytes`; overflow stops capture and propagates
+an error. JSON-compatible payloads are required. TypeScript normalizes URL and
+binary parts; Python normalizes provider model responses and bytes. Unsupported
+objects fail rather than silently dropping content.
+
+## Released guidance
+
+Optional guidance is supplied by your application and requires a prompt version in
+`artifacts`. Helpers replace the SDK-owned marked block while retaining original
+system/developer instructions. An empty string removes the previous block. Guidance
+injection supports string instruction messages; content-part arrays require
+application-side formatting. The helpers provide formatting, not a prompt-injection
+defense or permission boundary. Only supply
+guidance selected through your application's reviewed release process.
+
+## Compatibility and attribution
+
+`npm run test:integrations` builds an actual package, installs it into separate
+AI SDK 5/6/7 and OpenAI Node 6/7 consumers, compiles their declarations and executes
+mock-provider generation/streaming fixtures. Python's `test_openai_compat.py` uses
+the actual async SDK with an in-process HTTP transport. No live model is called.
+
+Adapted Supermemory source and its MIT license are recorded in
+[THIRD_PARTY_NOTICES.md](https://github.com/SanaanKhalid/loopiter/blob/main/THIRD_PARTY_NOTICES.md).

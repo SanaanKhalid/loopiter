@@ -9,6 +9,18 @@ live in the separate `loopiter-platform` repository (local sibling `../loopiter-
 Its HTTP client calls the platform; it is distinct from these standalone libraries.
 The marketing website and SDK documentation remain here.
 
+## Optional framework integrations
+
+Capture serving calls with `loopiter/integrations/openai` (OpenAI Node 6/7),
+`loopiter/integrations/ai-sdk` (Vercel AI SDK 5/6/7), or
+`loopiter.integrations.openai.with_loopiter` (async OpenAI Python 2.x).
+The wrappers retain per-call artifact identity, isolate shared clients, replace
+released guidance and capture streaming completion/cancellation. Feedback remains
+explicit. Core imports have no provider dependencies.
+See [integration examples and limits](fern/pages/framework-integrations.mdx) and
+[Supermemory attribution](THIRD_PARTY_NOTICES.md). Run `npm run test:integrations`
+for packed-consumer compatibility checks using mock providers.
+
 ## Set up with your coding agent
 
 The self-hosted onboarding build includes [AGENT_GUIDE.md](AGENT_GUIDE.md), runnable

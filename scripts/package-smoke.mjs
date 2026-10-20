@@ -56,6 +56,11 @@ try {
   assert.equal(Object.keys(installed.dependencies ?? {}).length, 0);
   assert.ok(installed.exports["./onboarding"]);
   assert.ok(installed.exports["./starters"]);
+  assert.ok(installed.exports["./integrations/openai"]);
+  assert.ok(installed.exports["./integrations/ai-sdk"]);
+  await assert.rejects(readFile(join(temporary, "node_modules/openai/package.json")));
+  await assert.rejects(readFile(join(temporary, "node_modules/ai/package.json")));
+  assert.match(await readFile(join(temporary, "node_modules/loopiter/THIRD_PARTY_NOTICES.md"), "utf8"), /Supermemory Inc/);
   assert.equal(
     await readFile(
       join(temporary, "node_modules/loopiter/AGENT_GUIDE.md"),
@@ -81,6 +86,9 @@ import { PostgresStore, migratePostgres } from 'loopiter/postgres';
 import { runStoreConformance } from 'loopiter/testing';
 import { readAgentGuide, readReference, initializeSelfHosted, inspectSelfHostedSetup } from 'loopiter/onboarding';
 import { migrateArtifactRegistry } from 'loopiter/starters';
+import { withLoopiter as wrapModel } from 'loopiter/integrations/ai-sdk';
+import { replaceGuidance, stripGuidance } from 'loopiter/integrations/context';
+if (typeof wrapModel !== 'function' || stripGuidance(replaceGuidance('policy', 'guidance')) !== 'policy') throw Error('Optional dependency-free integration exports missing');
 if (!(await readAgentGuide()).includes('self-hosted SDK/library')) throw Error('Packaged agent guide missing');
 if (!(await readReference('workflows')).includes('promptWorkflow')) throw Error('Packaged references missing');
 await initializeSelfHosted('./setup with spaces');

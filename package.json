@@ -38,6 +38,18 @@
     "./starters": {
       "types": "./dist/src/starters.d.ts",
       "import": "./dist/src/starters.js"
+    },
+    "./integrations/openai": {
+      "types": "./dist/src/integrations/openai.d.ts",
+      "import": "./dist/src/integrations/openai.js"
+    },
+    "./integrations/ai-sdk": {
+      "types": "./dist/src/integrations/ai-sdk.d.ts",
+      "import": "./dist/src/integrations/ai-sdk.js"
+    },
+    "./integrations/context": {
+      "types": "./dist/src/integrations/context.d.ts",
+      "import": "./dist/src/integrations/context.js"
     }
   },
   "bin": {
@@ -54,6 +66,7 @@
     "AGENT_GUIDE.md",
     "README.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "CHANGELOG.md",
     "SECURITY.md",
     "SUPPORTED.md",
@@ -69,6 +82,7 @@
     "test:postgres": "npm run build && node --test dist/test/postgres.test.js",
     "test:mock-support": "npm run build && node scripts/mock-support.mjs",
     "test:package": "node scripts/package-smoke.mjs",
+    "test:integrations": "node scripts/integration-compat.mjs",
     "test:docs": "node scripts/check-docs.mjs",
     "test:fern": "node scripts/check-fern.mjs",
     "benchmark": "npm run build && node dist/examples/benchmark.js",
@@ -80,9 +94,17 @@
   "engines": {
     "node": "^22.0.0 || ^24.0.0"
   },
+  "peerDependencies": {
+    "openai": "^6.0.0 || ^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "openai": { "optional": true }
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/pg": "^8.15.0",
+    "ai": "^7.0.145",
+    "openai": "^7.39.0",
     "pg": "^8.16.0",
     "typescript": "^5.9.0"
   }

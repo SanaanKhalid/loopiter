@@ -83,6 +83,8 @@ navigation:
             path: pages/autonomy-integration.mdx
           - page: Architecture
             path: pages/architecture.mdx
+          - page: Framework integrations
+            path: pages/framework-integrations.mdx
           - page: Supported capabilities
             path: pages/supported.mdx
           - page: Release validation
@@ -135,6 +137,8 @@ navigation:
             href: /get-started/overview
           - link: Integration walkthrough
             href: /get-started/integrate-an-improvement-workflow
+          - link: Framework integrations
+            href: /get-started/framework-integrations
           - link: Complete policy reference
             href: /closing-the-loop/autonomy-policy-reference
           - link: Datasets and evaluation

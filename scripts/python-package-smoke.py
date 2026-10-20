@@ -69,6 +69,9 @@ def main():
             assert "loopiter/improvement.py" in names
             assert "loopiter/AGENT_GUIDE.md" in names
             assert "loopiter/onboarding.py" in names
+            assert "loopiter/integrations/openai.py" in names
+            assert "loopiter/integrations/context.py" in names
+            assert any(n.endswith("/licenses/THIRD_PARTY_NOTICES.md") for n in names)
             assert "loopiter/__main__.py" in names
             assert "loopiter/starters/autonomous_demo.py" in names
             assert "loopiter/starters/autonomous_workflows.py" in names
@@ -111,6 +114,11 @@ from loopiter.postgres import migration_sql
 from loopiter.testing import run_store_conformance
 from loopiter.onboarding import read_agent_guide, read_reference
 assert importlib.util.find_spec('psycopg') is None
+assert importlib.util.find_spec('openai') is None
+from loopiter.integrations.openai import with_loopiter
+from loopiter.integrations.context import replace_guidance, strip_guidance
+assert callable(with_loopiter)
+assert strip_guidance(replace_guidance('policy', 'guidance')) == 'policy'
 assert 'CREATE TABLE' in migration_sql()
 assert 'self-hosted SDK/library' in read_agent_guide()
 assert 'prompt_workflow' in read_reference('workflows')
