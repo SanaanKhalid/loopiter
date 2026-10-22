@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { capturePayload, type CapturePolicy } from "./privacy.js";
 import type {
   AiExecution,
   ArtifactVersions,
@@ -26,6 +27,8 @@ export interface CaptureRequest {
 }
 
 export interface CaptureOptions {
+  /** Optional privacy policy. Existing integrations retain their full-capture default. */
+  capture?: CapturePolicy;
   loop: FeedbackLoop;
   /** Resolve per request, rather than mutating a shared client with tenant state. */
   context(
@@ -130,6 +133,7 @@ export async function resolveContext(
 export class CaptureSession {
   private finalization: Promise<void> | undefined;
   private bytes = 0;
+  private truncated = false;
   private readonly events: JsonValue[] = [];
   private constructor(
     private readonly options: CaptureOptions,
@@ -146,6 +150,7 @@ export class CaptureSession {
     if (!Number.isSafeInteger(maximum) || maximum < 1)
       throw new TypeError("maximumOutputBytes must be a positive integer.");
     const attemptId = randomUUID();
+    const captured = options.capture ? capturePayload(request.input, options.capture) : undefined;
     const execution = await options.loop.recordExecution({
       ...(context.id === undefined ? {} : { id: context.id }),
       ...(context.episodeId === undefined
@@ -156,14 +161,15 @@ export class CaptureSession {
         ? {}
         : { parentExecutionId: context.parentExecutionId }),
       kind: "inference",
-      input: request.input,
+      input: captured?.value ?? request.input,
       artifacts: { ...context.artifacts, model: request.model },
       metadata: {
-        ...context.metadata,
+        ...(options.capture?.mode === "metadata-only" ? {} : options.capture ? capturePayload(context.metadata ?? {}, options.capture).value as JsonObject : context.metadata),
         loopiterCapture: {
           attemptId,
           integration: request.integration,
           status: "pending",
+          ...(options.capture ? { mode: options.capture.mode, truncated: captured!.truncated, replayEligible: false } : {}),
         },
       },
     });
@@ -185,8 +191,14 @@ export class CaptureSession {
   }
 
   append(event: unknown): void {
+    if (this.options.capture?.mode === "metadata-only" || this.truncated) return;
     const value = captureJson(event);
     this.bytes += Buffer.byteLength(JSON.stringify(value), "utf8");
+    if (this.bytes > this.maximum && this.options.capture) {
+      this.truncated = true;
+      this.events.length = 0;
+      return;
+    }
     if (this.bytes > this.maximum)
       throw new RangeError("Captured stream exceeded maximumOutputBytes.");
     this.events.push(value);
@@ -195,7 +207,12 @@ export class CaptureSession {
   async finish(status: CaptureStatus, output?: unknown): Promise<void> {
     if (this.finalization) return this.finalization;
     let value =
-      output === undefined ? { events: this.events } : captureJson(output);
+      this.options.capture?.mode === "metadata-only" ? null : output === undefined ? { events: this.events } : captureJson(output);
+    if (this.options.capture) {
+      const captured = capturePayload(value, this.options.capture);
+      this.truncated ||= captured.truncated;
+      value = this.truncated ? { omitted: true, truncated: true } : captured.value;
+    }
     if (Buffer.byteLength(JSON.stringify(value), "utf8") > this.maximum) {
       if (status === "completed" || status === "incomplete")
         throw new RangeError("Captured response exceeded maximumOutputBytes.");
@@ -214,6 +231,7 @@ export class CaptureSession {
           loopiterCapture: {
             ...(this.execution.metadata.loopiterCapture as JsonObject),
             status,
+            ...(this.options.capture ? { truncated: this.truncated || (this.execution.metadata.loopiterCapture as JsonObject).truncated, replayEligible: false } : {}),
           },
         },
       },

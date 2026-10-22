@@ -190,3 +190,7 @@ The complete PostgreSQL/OpenAI or Azure OpenAI starter includes real prompt sele
 holdout evaluation, review, rollback and recovery. Live mode is opt-in, requires
 your model/provider credentials/database, sends data to the selected provider and may incur charges. Its small
 synthetic dataset is a mechanics demonstration, not evidence of production ROI.
+
+### Application observation and existing telemetry
+
+Use [Application observation](docs/application-observation.md) for `loopiter/integrations/observe`, `loopiter/integrations/otel`, capture privacy, streaming lifecycle and stable trace identity. Reuse the app's OpenTelemetry provider. New observers/exporters default to metadata-only; existing provider wrappers need an explicit capture policy to change their full-capture default. Observational traces do not establish faithful application replay or automatically authorize improvements. Bind customer context on the authenticated server and keep approved replay artifacts separately.

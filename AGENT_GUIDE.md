@@ -119,3 +119,7 @@ Return the integration files, commands, accepted feedback placement, storage/mig
 Both paths organize feedback into tested, versioned improvements. With the SDK the application team operates storage, model/judge connections, worker scheduling, auth, reports, serving activation and observability, and pays its providers directly. The platform operates a hosted service with accounts/projects, REST/MCP, dashboard, durable jobs and managed knowledge integrations; connected applications still supply their serving/evaluation adapters as required. A hosted platform integration client is different from the standalone library.
 
 Do not add a platform API key or sign-in step to a self-hosted SDK integration. If the user chooses the hosted service instead, explain the change in operating model and use its agent guide.
+
+### Application observation and existing telemetry
+
+Use [Application observation](docs/application-observation.md) for `loopiter/integrations/observe`, `loopiter/integrations/otel`, capture privacy, streaming lifecycle and stable trace identity. Reuse the app's OpenTelemetry provider. New observers/exporters default to metadata-only; existing provider wrappers need an explicit capture policy to change their full-capture default. Observational traces do not establish faithful application replay or automatically authorize improvements. Bind customer context on the authenticated server and keep approved replay artifacts separately.

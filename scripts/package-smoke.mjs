@@ -58,6 +58,9 @@ try {
   assert.ok(installed.exports["./starters"]);
   assert.ok(installed.exports["./integrations/openai"]);
   assert.ok(installed.exports["./integrations/ai-sdk"]);
+  assert.ok(installed.exports["./integrations/observe"]);
+  assert.ok(installed.exports["./integrations/otel"]);
+  assert.match(await readFile(join(temporary,"node_modules/loopiter/docs/application-observation.md"),"utf8"), /metadata-only/);
   await assert.rejects(readFile(join(temporary, "node_modules/openai/package.json")));
   await assert.rejects(readFile(join(temporary, "node_modules/ai/package.json")));
   assert.match(await readFile(join(temporary, "node_modules/loopiter/THIRD_PARTY_NOTICES.md"), "utf8"), /Supermemory Inc/);
@@ -88,6 +91,9 @@ import { readAgentGuide, readReference, initializeSelfHosted, inspectSelfHostedS
 import { migrateArtifactRegistry } from 'loopiter/starters';
 import { withLoopiter as wrapModel } from 'loopiter/integrations/ai-sdk';
 import { replaceGuidance, stripGuidance } from 'loopiter/integrations/context';
+import { createObserver } from 'loopiter/integrations/observe';
+import { createLoopiterSpanExporter } from 'loopiter/integrations/otel';
+if (typeof createObserver !== 'function' || typeof createLoopiterSpanExporter !== 'function') throw Error('Observation exports missing');
 if (typeof wrapModel !== 'function' || stripGuidance(replaceGuidance('policy', 'guidance')) !== 'policy') throw Error('Optional dependency-free integration exports missing');
 if (!(await readAgentGuide()).includes('self-hosted SDK/library')) throw Error('Packaged agent guide missing');
 if (!(await readReference('workflows')).includes('promptWorkflow')) throw Error('Packaged references missing');

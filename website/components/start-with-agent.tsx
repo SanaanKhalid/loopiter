@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 const platform = 'https://web-loopiter-prod.redmushroom-e2f381a3.centralus.azurecontainerapps.io';
-const prompt = `Help me set up Loopiter in this project. Read ${platform}/agent/guide first and follow its workflow. Inspect my existing project to find where Loopiter can improve AI responses, or ask what I want to build if this is a new project. Ask about behavior, protected rules, examples and budgets, implement and test the integration, then give me the connected dashboard link.`;
+const prompt = `Help me connect this app to Loopiter so it can improve from feedback. Read ${platform}/agent/guide and inspect my project first. Infer the best fit from the app and my prior decisions. Choose sensible defaults and handle routine technical choices yourself. Explain your recommendation in plain language. Ask only when necessary information is missing, meaningful ambiguity remains, or new authorization is needed, including permitted data and the spending limit. Discuss spending in money. Build and verify the integration, then give me the dashboard link and explain anything still waiting.`;
 export function StartWithAgent() {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);

@@ -50,6 +50,14 @@
     "./integrations/context": {
       "types": "./dist/src/integrations/context.d.ts",
       "import": "./dist/src/integrations/context.js"
+    },
+    "./integrations/observe": {
+      "types": "./dist/src/integrations/observe.d.ts",
+      "import": "./dist/src/integrations/observe.js"
+    },
+    "./integrations/otel": {
+      "types": "./dist/src/integrations/otel.d.ts",
+      "import": "./dist/src/integrations/otel.js"
     }
   },
   "bin": {
@@ -73,7 +81,8 @@
     "docs/migration.md",
     "docs/autonomy-migration.md",
     "docs/autonomy-release-checklist.md",
-    "migrations"
+    "migrations",
+    "docs/application-observation.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -98,7 +107,9 @@
     "openai": "^6.0.0 || ^7.0.0"
   },
   "peerDependenciesMeta": {
-    "openai": { "optional": true }
+    "openai": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
