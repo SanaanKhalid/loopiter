@@ -219,6 +219,170 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         await task
         self.assertEqual(create.call_args.kwargs["messages"][0]["content"], "original")
 
+    async def test_payload_conversion_and_rejected_clients(self):
+        class Dumpable:
+            def model_dump(self, mode="json"):
+                if mode != "json":
+                    raise AssertionError(mode)
+                return {"dumped": True}
+
+        loop, create, base, wrapped = self.setup_capture()
+        base.models = {"object": "list"}
+        self.assertIs(wrapped.models, base.models)
+        await wrapped.chat.completions.create(
+            model=Dumpable(), messages=PARAMS["messages"], blob=b"\x00\xff"
+        )
+        recorded = (await self.rows(loop))[0]["input"]
+        self.assertEqual(recorded["model"], {"dumped": True})
+        self.assertEqual(recorded["blob"], {"encoding": "base64", "data": "AP8="})
+        with self.assertRaises(TypeError):
+            await wrapped.chat.completions.create(**PARAMS, bad=object())
+        self.assertEqual(create.await_count, 1)
+
+        sync = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_kwargs: RESULT)),
+            responses=SimpleNamespace(create=AsyncMock()),
+        )
+        wrapped = with_loopiter(
+            sync, loop=loop, context=lambda _request: {"artifacts": {"prompt": "v1"}}
+        )
+        with self.assertRaisesRegex(TypeError, "async OpenAI client"):
+            await wrapped.chat.completions.create(**PARAMS)
+        with self.assertRaisesRegex(ValueError, "maximum_output_bytes"):
+            with_loopiter(
+                base,
+                loop=loop,
+                context=lambda _request: {"artifacts": {}},
+                maximum_output_bytes=0,
+            )
+
+    async def test_context_and_capture_identity_fail_closed(self):
+        loop, create, base, _wrapped = self.setup_capture()
+        cases = (
+            {"artifacts": ["nope"]},
+            {"artifacts": {}, "guidance": "released"},
+            {"artifacts": {"prompt": "v1"}, "guidance": 1},
+        )
+        for context in cases:
+            with self.subTest(context=context):
+                wrapped = with_loopiter(
+                    base, loop=loop, context=lambda _request, context=context: context
+                )
+                with self.assertRaises(TypeError):
+                    await wrapped.chat.completions.create(**PARAMS)
+        self.assertEqual(create.await_count, 0)
+
+        async def tamper_pending(value):
+            capture = (
+                (value.get("metadata") or {}).get("loopiter_capture")
+                if isinstance(value, dict)
+                else None
+            )
+            if capture and capture.get("status") == "pending":
+                value = {
+                    **value,
+                    "metadata": {
+                        **value["metadata"],
+                        "loopiter_capture": {**capture, "status": "tampered"},
+                    },
+                }
+            return value
+
+        poisoned = FeedbackLoop(
+            store=InMemoryStore(), namespace="identity", sanitize=tamper_pending
+        )
+        wrapped = with_loopiter(
+            base, loop=poisoned, context=lambda _request: {"artifacts": {"prompt": "v1"}}
+        )
+        with self.assertRaises(LoopiterError) as caught:
+            await wrapped.chat.completions.create(**PARAMS)
+        self.assertEqual(caught.exception.code, "capture_identity")
+        self.assertEqual(create.await_count, 0)
+
+        async def tamper_completion(value):
+            if isinstance(value, dict) and set(value) <= {"output", "metadata", "completed_at"}:
+                capture = value.get("metadata", {}).get("loopiter_capture")
+                if capture:
+                    value = {
+                        **value,
+                        "metadata": {
+                            **value["metadata"],
+                            "loopiter_capture": {**capture, "attempt_id": "changed"},
+                        },
+                    }
+            return value
+
+        finishing = FeedbackLoop(
+            store=InMemoryStore(), namespace="finish-identity", sanitize=tamper_completion
+        )
+        wrapped = with_loopiter(
+            base, loop=finishing, context=lambda _request: {"artifacts": {"prompt": "v1"}}
+        )
+        with self.assertRaises(LoopiterError) as caught:
+            await wrapped.chat.completions.create(**PARAMS)
+        self.assertEqual(caught.exception.__context__.code, "capture_identity")
+
+    async def test_callbacks_responses_stream_and_output_limits(self):
+        seen = []
+
+        async def on_execution(row):
+            seen.append(row["metadata"]["loopiter_capture"]["status"])
+
+        loop, _create, _base, wrapped = self.setup_capture(on_execution=on_execution)
+        await wrapped.chat.completions.create(**PARAMS)
+        self.assertEqual(seen, ["pending", "completed"])
+
+        for kind, status in (
+            ("response.completed", "completed"),
+            ("response.failed", "failed"),
+            ("response.incomplete", "incomplete"),
+        ):
+            with self.subTest(kind=kind):
+                stream_loop, _create, base, stream_wrapped = self.setup_capture()
+                base.responses.create.return_value = Stream(
+                    [{"type": kind, "response": {"status": status}}]
+                )
+                stream = await stream_wrapped.responses.create(
+                    model="fixture", input="hello", stream=True
+                )
+                async for _event in stream:
+                    pass
+                self.assertEqual(
+                    (await self.rows(stream_loop))[0]["metadata"]["loopiter_capture"]["status"],
+                    status,
+                )
+
+        length_loop, _create, base, length_wrapped = self.setup_capture()
+        base.chat.completions.create.return_value = Stream(
+            [{"choices": [{"index": 0, "delta": {}, "finish_reason": "length"}]}]
+        )
+        stream = await length_wrapped.chat.completions.create(**PARAMS, stream=True)
+        async for _event in stream:
+            pass
+        self.assertEqual(
+            (await self.rows(length_loop))[0]["metadata"]["loopiter_capture"]["status"],
+            "incomplete",
+        )
+
+        for provider_status, expected in (("failed", None), ("completed", ValueError)):
+            with self.subTest(provider_status=provider_status):
+                limited, _create, base, limited_wrapped = self.setup_capture(
+                    maximum_output_bytes=32
+                )
+                base.responses.create.return_value = {
+                    "status": provider_status,
+                    "output": "x" * 80,
+                }
+                call = limited_wrapped.responses.create(model="fixture", input="hello")
+                if expected is None:
+                    self.assertIsNotNone(await call)
+                    row = (await self.rows(limited))[0]
+                    self.assertIsNone(row["output"])
+                    self.assertEqual(row["metadata"]["loopiter_capture"]["status"], "failed")
+                else:
+                    with self.assertRaises(expected):
+                        await call
+
 
 if __name__ == "__main__":
     unittest.main()
