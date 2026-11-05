@@ -46,10 +46,11 @@ These Node `test/integrations.test.ts` cases are not ported: Vercel AI SDK model
 wrapping, OpenAI `.withResponse()` / `.asResponse()` / `request_id`, and
 `AbortSignal`. Python covers the same capture outcomes through `CaptureSession`,
 the async OpenAI facade, and task cancellation. Node OpenAI and Vercel wrappers
-default to metadata-only; pass `capture` mode `full` to retain bodies. Python's
-`with_loopiter` still full-captures and does not take a capture policy until #10
-lands. Omitted capture stores `{"omitted": true}`. A truncated stream stores
-`{"omitted": true, "truncated": true}`. Metadata-only
+and Python's `with_loopiter` default to metadata-only; pass `capture` mode `full`
+(or `redacted`) to retain bodies. Omitted capture stores `{"omitted": true}`.
+A truncated stream stores `{"omitted": true, "truncated": true}`.
+`CaptureSession.begin` raises when called directly. The OpenAI and Vercel AI SDK
+wrappers fail open around that call. Metadata-only
 observation keeps lineage identifiers and omits other context fields.
 
 ## Node SDK details

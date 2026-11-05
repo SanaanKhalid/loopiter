@@ -46,7 +46,7 @@ Export failure returns a failed callback so the caller can retry the same spans.
 
 ## Capture policy
 
-Observers, exporters, and `CaptureSession` default to `metadata-only`. Pass `capture` mode `full` to retain bodies. OpenAI and Vercel AI SDK wrappers use that session:
+Observers, exporters, and `CaptureSession` default to `metadata-only`. Pass `capture: { mode: "full" }` or Python `capture={"mode": "full"}` to retain bodies. `CaptureSession.begin` raises when called directly. The OpenAI and Vercel AI SDK wrappers fail open around that call and still return the provider result. OpenAI and Vercel AI SDK wrappers use that session:
 
 ```ts
 const options = {
@@ -110,4 +110,4 @@ if __name__ == "__main__":
 
 Breaking out of `async for` does not close the iterator. Await `aclose()` or leave the `async with` block so a partially read stream is recorded as `cancelled` rather than left `pending`. A stream that is never iterated stays pending. Telemetry defaults to fail-open. `failure_mode="closed"` requires persistence. A caller-supplied `context["id"]` is claimed before the operation even when persistence is otherwise fail-open, and a repeat raises rather than running the operation again.
 
-`capture_payload` and `redact_capture` implement the same modes as Node: `metadata-only`, `redacted`, and `full`. `maximum_bytes` defaults to 65536 and must be an integer from 128 through 1048576. Redaction runs before the size check. Oversized values are omitted whole. `CaptureSession` is the shared provider-capture contract: pending record, bounded `append`, and `finish` with `completed`, `incomplete`, `cancelled`, or `failed`. The existing `with_loopiter` OpenAI facade keeps its own full-capture path.
+`capture_payload` and `redact_capture` implement the same modes as Node: `metadata-only`, `redacted`, and `full`. `maximum_bytes` defaults to 65536 and must be an integer from 128 through 1048576. Redaction runs before the size check. Oversized values are omitted whole. `CaptureSession` is the shared provider-capture contract: pending record, bounded `append`, and `finish` with `completed`, `incomplete`, `cancelled`, or `failed`. `begin` raises when capture or storage fails. The OpenAI and Vercel AI SDK wrappers fail open around that call and still return the provider result. Python `with_loopiter` defaults to metadata-only; pass `capture={"mode": "full"}` to retain bodies.
