@@ -509,7 +509,11 @@ class ExporterTests(unittest.IsolatedAsyncioTestCase):
     async def test_shutdown_from_a_running_loop_keeps_other_exporters(self) -> None:
         import importlib.util
 
-        if importlib.util.find_spec("opentelemetry.sdk") is None:
+        try:
+            spec = importlib.util.find_spec("opentelemetry.sdk")
+        except ModuleNotFoundError:
+            spec = None
+        if spec is None:
             self.skipTest("Install loopiter[otel] to run the OpenTelemetry SDK test")
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
