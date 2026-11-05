@@ -57,10 +57,20 @@ The migration job deletes that bootstrap blob after a successful atomic import.
 A matching import ledger allows recovery from a lost successful response; different
 input or a populated destination without that ledger is rejected.
 
-Run `az containerapp job start --subscription ... --resource-group rg-loopiter-dev
---name migrate-loopiter-dev`, inspect job completion/logs, and test the deployed URL.
-Repeat deployment with `prod` after dev passes. The schema script never runs in HTTP
-requests. Keep the original production encryption key when importing encrypted data.
+`deploy.sh apply` migrates before it switches traffic. It updates only the
+`migrate-loopiter-<env>` job to the new image, starts that job with
+`az containerapp job start`, and waits until the execution is `Succeeded`.
+A failure or a 30-minute timeout aborts the script. Web and worker revisions
+are applied only after that success, and the script then waits until those
+revisions are the ones serving. The schema script never runs in HTTP requests.
+
+`LOOPITER_DEPLOY_DRY_RUN=1` prints this order and does not call Terraform or
+Azure. `bash infrastructure/azure/deploy-order.test.sh` checks it.
+A rollout that does not use this script must start `migrate-loopiter-<env>`
+and wait for `Succeeded` before the new web and worker revisions serve traffic.
+
+Repeat deployment with `prod` after dev passes. Keep the original production
+encryption key when importing encrypted data.
 
 ## Recovery and retirement
 
