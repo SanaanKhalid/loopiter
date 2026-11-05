@@ -42,8 +42,8 @@
       "type": "string",
       "default": "",
       "validation": {
-        "condition": "${startswith(var.image, \"loopiterregistry7536.azurecr.io/loopiter:\")}",
-        "error_message": "Use a versioned image from the Loopiter registry."
+        "condition": "${startswith(var.image, \"loopiterregistry7536.azurecr.io/loopiter:\") || startswith(var.image, \"loopiterregistry7536.azurecr.io/loopiter@sha256:\")}",
+        "error_message": "Use a versioned image or digest from the Loopiter registry."
       }
     },
     "owner_email": {
