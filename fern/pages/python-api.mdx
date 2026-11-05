@@ -142,10 +142,13 @@ See the [full recovery contract](/get-started/python-quickstart#deployment-and-r
 ## Errors and cancellation
 
 Catch `LoopiterError` from `loopiter`. Its `code` is a string, not an HTTP status.
-Examples include `invalid_input`, `conflict`, `not_found`, `invalid_transition`,
-`integrity_error`, `query_limit`, `timeout`, `deployment_disabled` and
-`deployment_pending`. An uncertain deployment exposes `error.attempt_id`; inspect
-that attempt through `reconcile_deployment`, not an unconditional new apply.
+Examples include `invalid_input`, `payload_limit`, `conflict`, `not_found`,
+`invalid_transition`, `integrity_error`, `query_limit`, `timeout`,
+`deployment_disabled` and `deployment_pending`. Malformed JSON, unknown fields,
+non-finite numbers and missing safety fields use `invalid_input`. A payload over
+`maximum_payload_bytes` uses `payload_limit`, not `invalid_input`. An uncertain
+deployment exposes `error.attempt_id`; inspect that attempt through
+`reconcile_deployment`, not an unconditional new apply.
 
 Use `task.cancel()` to cancel an SDK operation. Callback cancellation is cooperative;
 it cannot kill application code or reverse external side effects. Late callback
@@ -161,7 +164,14 @@ results are discarded and uncertain external outcomes must be reconciled.
   randomly named namespaces. Use a test database, not a production connection.
 
 The 0.3 alpha adds native `ImprovementController`, `ImprovementWorkflow`,
-`CallbackContext`, evidence helpers and `assign_cohort`. See
+`CallbackContext`, evidence helpers and `assign_cohort`. `assign_cohort` is
+keyword-only (`experiment_id`, `entity_id`, `salt`, `exposure`) and returns a
+dictionary with `cohort` (`"candidate"` or `"control"`), `bucket`, `method`
+(`"sha256-framed-v1"`) and `entity_fingerprint`. It does not return a cohort
+string. `record_execution`, `complete_execution`, `record_signal` and
+`create_candidate` take keyword arguments described by `ExecutionInput`,
+`CompleteExecutionInput`, `SignalInput` and `CandidateInput`. `validate_policy`
+accepts an `AutonomyPolicy` dictionary. See
 [Python autonomy](/get-started/autonomous-improvement-in-python).
 Provider wrappers and fixed-classifier integrations stay in application examples;
 Python does not include JsonFileStore or the legacy-import CLI. The SDKs

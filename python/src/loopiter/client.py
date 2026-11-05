@@ -5,13 +5,114 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, Required, TypedDict, Unpack
 from uuid import uuid4
 
 from . import _validation as v
+from ._validation import JsonValue
 from .store import FeedbackStore, StoreTransaction, page_options
 
 Record = v.Record
+ExecutionKind = Literal[
+    "agent",
+    "turn",
+    "inference",
+    "prediction",
+    "tool",
+    "workflow",
+    "retrieval",
+    "custom",
+]
+SignalKind = Literal[
+    "rating", "correction", "outcome", "reward", "approval", "tool_result", "custom"
+]
+TargetKind = Literal[
+    "prompt",
+    "routing",
+    "rule",
+    "retrieval",
+    "model",
+    "dataset",
+    "threshold",
+    "tool_schema",
+    "workflow",
+    "agent_topology",
+    "code",
+    "capacity",
+    "custom",
+]
+Risk = Literal["low", "medium", "high", "critical"]
+
+
+class ExecutionInput(TypedDict, total=False):
+    """Keyword arguments for ``FeedbackLoop.record_execution``. ``kind`` is required."""
+
+    id: str
+    kind: Required[ExecutionKind]
+    episode_id: str
+    parent_execution_id: str
+    entity_id: str
+    input: JsonValue
+    output: JsonValue
+    artifacts: dict[str, JsonValue]
+    metadata: dict[str, JsonValue]
+    started_at: str
+    completed_at: str
+
+
+class CompleteExecutionInput(TypedDict, total=False):
+    """Optional keyword arguments for ``FeedbackLoop.complete_execution``."""
+
+    output: JsonValue
+    metadata: dict[str, JsonValue]
+    completed_at: str
+
+
+class SignalInput(TypedDict, total=False):
+    """Keyword arguments for ``FeedbackLoop.record_signal``.
+
+    ``kind``, ``name``, ``source`` and ``value`` are required. Supply
+    ``execution_id`` or ``episode_id`` (or both).
+    """
+
+    id: str
+    execution_id: str
+    episode_id: str
+    kind: Required[SignalKind]
+    name: Required[str]
+    value: Required[JsonValue]
+    correction: JsonValue
+    source: Required[str]
+    confidence: int | float
+    metadata: dict[str, JsonValue]
+    observed_at: str
+
+
+class TargetInput(TypedDict):
+    kind: TargetKind
+    key: str
+
+
+class BaselineInput(TypedDict):
+    artifact_version: str | None
+    configuration_hash: str
+
+
+class CandidateInput(TypedDict, total=False):
+    """Keyword arguments for ``FeedbackLoop.create_candidate``.
+
+    ``target``, ``proposed_change`` and ``evidence`` are required.
+    """
+
+    id: str
+    target: Required[TargetInput]
+    proposed_change: Required[JsonValue]
+    evidence: Required[JsonValue]
+    risk: Risk
+    metadata: dict[str, JsonValue]
+    baseline: BaselineInput
+
+
 _UNSET = object()
 _callbacks: set[asyncio.Task] = set()
 
@@ -57,6 +158,12 @@ async def _callback(operation: Callable[[asyncio.Event], Awaitable[Any]], timeou
 
 
 class FeedbackLoop:
+    """Review-first async client. Lifecycle methods return plain dictionaries.
+
+    Malformed JSON raises ``LoopiterError`` code ``invalid_input``. A payload
+    larger than ``maximum_payload_bytes`` (default 256 KiB) raises ``payload_limit``.
+    """
+
     def __init__(
         self,
         *,
@@ -206,7 +313,12 @@ class FeedbackLoop:
         await tx.insert(kind, row)
         return deepcopy(row)
 
-    async def record_execution(self, **input_) -> Record:
+    async def record_execution(self, **input_: Unpack[ExecutionInput]) -> Record:
+        """Insert an execution.
+
+        Malformed JSON raises ``invalid_input``. Payloads over
+        ``maximum_payload_bytes`` raise ``payload_limit``.
+        """
         v.execution_input(input_)
         data = await self._prepare(input_)
         v.execution_input(data)
@@ -228,7 +340,14 @@ class FeedbackLoop:
                     v.fail("invalid_input", "Parent and child must share the episode.")
             return await self._insert_input(tx, "executions", row)
 
-    async def complete_execution(self, key: str, *, expected_revision: int, **input_) -> Record:
+    async def complete_execution(
+        self, key: str, *, expected_revision: int, **input_: Unpack[CompleteExecutionInput]
+    ) -> Record:
+        """Revision-checked output, metadata and completion update.
+
+        Malformed JSON raises ``invalid_input``. Payloads over
+        ``maximum_payload_bytes`` raise ``payload_limit``.
+        """
         v.integer(expected_revision, "expected_revision")
         v.fields(input_, ["output", "metadata", "completed_at"])
         data = await self._prepare(input_)
@@ -244,7 +363,12 @@ class FeedbackLoop:
             await tx.replace("executions", updated, expected_revision)
             return updated
 
-    async def record_signal(self, **input_) -> Record:
+    async def record_signal(self, **input_: Unpack[SignalInput]) -> Record:
+        """Insert a signal scoped to an execution or episode.
+
+        Malformed JSON raises ``invalid_input``. Payloads over
+        ``maximum_payload_bytes`` raise ``payload_limit``.
+        """
         v.signal_input(input_)
         data = await self._prepare(input_)
         v.signal_input(data)
@@ -263,7 +387,12 @@ class FeedbackLoop:
                     v.fail("invalid_input", "Signal and execution episodes differ.")
             return await self._insert_input(tx, "signals", row)
 
-    async def create_candidate(self, **input_) -> Record:
+    async def create_candidate(self, **input_: Unpack[CandidateInput]) -> Record:
+        """Insert a candidate. Content and evidence hashes are immutable.
+
+        Malformed JSON raises ``invalid_input``. Payloads over
+        ``maximum_payload_bytes`` raise ``payload_limit``.
+        """
         v.candidate_input(input_)
         data = await self._prepare(input_)
         v.candidate_input(data)

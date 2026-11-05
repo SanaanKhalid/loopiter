@@ -187,8 +187,10 @@ observation**, not proven causal production improvement.
 ## Optional canary coordination
 
 Your application owns durable exposure, stable episode/entity assignment and traffic
-routing. `assignCohort` / `assign_cohort` is a deterministic bucket helper, not a router.
-Persist assignments and exposure with executions. Supply rollout promote/inspect in
+routing. `assignCohort` / `assign_cohort` is a deterministic bucket helper, not a router
+or a cohort string. It returns `cohort` (`candidate` or `control`), `bucket`, `method`
+(`sha256-framed-v1`) and `entityFingerprint` / `entity_fingerprint`. Persist assignments
+and exposure with executions. Supply rollout promote/inspect in
 addition to deployment apply/inspect/rollback. Apply stages the candidate; rollback
 withdraws it. Promotion retains artifact/model identity.
 

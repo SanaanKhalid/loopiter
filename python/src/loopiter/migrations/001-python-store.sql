@@ -1,4 +1,5 @@
--- Python contract v1 only. Review and apply explicitly; never run on construction.
+-- Python contracts v1 and v2. Review and apply explicitly; never run on construction.
+-- 001-python-store.sql is the v1 store; migration_sql() appends 002-autonomy.sql (contract v2).
 -- Separate from Node's feloop_records: not a cross-language storage protocol.
 BEGIN;
 SELECT pg_advisory_xact_lock(hashtextextended('loopiter/python/schema/v1', 0));

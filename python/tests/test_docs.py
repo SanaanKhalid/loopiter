@@ -70,6 +70,15 @@ class DocumentationTests(unittest.TestCase):
                                 (namespace,),
                             )
 
+    def test_migration_sql_header_covers_v1_and_v2(self):
+        from loopiter.postgres import migration_sql
+
+        sql = migration_sql()
+        self.assertIn("Python contracts v1 and v2", sql.splitlines()[0])
+        self.assertNotIn("v1 only", sql)
+        self.assertIn("002-autonomy.sql", sql)
+        self.assertIn("contract v2", sql)
+
     def test_python_readme_examples(self):
         content = (PACKAGE / "README.md").read_text()
         self.assertGreaterEqual(len(re.findall(r"```python\n", content)), 4)

@@ -4,10 +4,14 @@ Scores are a single explicitly directed objective, not an average of unrelated m
 The paired Hoeffding bound assumes independent bounded units and a frozen audit set.
 """
 
+from __future__ import annotations
+
 import math
 from copy import deepcopy
+from typing import Literal, Required, TypedDict
 
 from . import _validation as v
+from ._validation import JsonValue
 
 
 def validate_schema(schema):
@@ -90,7 +94,101 @@ def _gates(rules):
         v.finite(gate["value"], "gate")
 
 
-def validate_policy(p):
+class ChangeSchema(TypedDict, total=False):
+    """Bounded JSON-schema subset. Unknown keywords fail closed at runtime."""
+
+    type: Required[Literal["object", "string", "number", "boolean"]]
+    properties: dict[str, ChangeSchema]
+    required: list[str]
+    additionalProperties: Literal[False]
+    enum: list[JsonValue]
+    minimum: int | float
+    maximum: int | float
+    maxLength: int
+
+
+class MetricGate(TypedDict):
+    metric: str
+    comparator: Literal["gte", "lte"]
+    value: int | float
+
+
+class PolicyTarget(TypedDict):
+    kind: Literal["prompt", "routing"]
+    key: str
+
+
+class PolicyObjective(TypedDict):
+    metric: str
+    direction: Literal["maximize", "minimize"]
+    minimum_improvement: int | float
+    range: list[int | float]
+    alpha: int | float
+
+
+class DailyBudget(TypedDict):
+    model_requests: int
+    tokens: int
+    deployments: int
+
+
+class CallbackReservation(TypedDict):
+    model_requests: int
+    tokens: int
+
+
+class RolloutPolicy(TypedDict):
+    mode: Literal["immediate", "canary"]
+
+
+class ObservationPolicy(TypedDict):
+    minimum_duration_ms: int
+    timeout_ms: int
+    minimum_units: int
+    guardrails: list[MetricGate]
+    on_timeout: Literal["rollback"]
+    on_failure: Literal["rollback"]
+
+
+class AuditMethod(TypedDict):
+    name: str
+    version: str
+
+
+class AutonomyPolicy(TypedDict, total=False):
+    """Complete autonomy policy dictionary accepted by ``validate_policy``.
+
+    ``objective["range"]`` must be a two-element list at runtime. Optional keys are
+    ``maximum_candidates``, ``maximum_proposal_calls``, ``maximum_consecutive_failures``
+    and ``audit_method``.
+    """
+
+    version: Required[str]
+    target: Required[PolicyTarget]
+    change_schema: Required[ChangeSchema]
+    objective: Required[PolicyObjective]
+    guardrails: Required[list[MetricGate]]
+    trusted_sources: Required[list[str]]
+    minimum_new_units: Required[int]
+    minimum_validation_units: Required[int]
+    minimum_audit_units: Required[int]
+    outcome_maturity_ms: Required[int]
+    maximum_rows: Required[int]
+    daily: Required[DailyBudget]
+    callback_reservation: Required[CallbackReservation]
+    cooldown_ms: Required[int]
+    rollout: Required[RolloutPolicy]
+    observation: Required[ObservationPolicy]
+    on_insufficient_evidence: Required[Literal["wait"]]
+    on_uncertain_deployment: Required[Literal["reconcile"]]
+    maximum_candidates: int
+    maximum_proposal_calls: int
+    maximum_consecutive_failures: int
+    audit_method: AuditMethod
+
+
+def validate_policy(p: AutonomyPolicy) -> None:
+    """Raise ``LoopiterError`` code ``invalid_policy`` unless ``p`` is a complete policy."""
     v.json_value(p)
     names = (
         "version target change_schema objective guardrails trusted_sources minimum_new_units "

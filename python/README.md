@@ -114,7 +114,7 @@ All records are detached plain dictionaries using **snake_case**; access IDs wit
 `record["id"]`. Use `await` in an existing async application instead of nesting
 `asyncio.run`. Inputs must be plain JSON; timestamps are ISO UTC strings ending in
 `Z`. Unknown fields, NaN/infinity, non-string keys, cycles, NUL/lone-surrogate strings and missing safety fields
-fail closed. Use explicit IDs to retry identical sanitized input idempotently;
+fail closed with `LoopiterError(code="invalid_input")`. Use explicit IDs to retry identical sanitized input idempotently;
 conflicting input raises `LoopiterError(code="conflict")`. Defaults omitted on the
 first request must remain omitted on retries. Revisions protect explicit updates.
 
@@ -122,9 +122,10 @@ Namespaces are integrity scopes, **not authentication**. Verify correction sourc
 select authorized namespaces, and sanitize sensitive content in your application.
 An async `sanitize(value)` hook runs before persistence and must return valid JSON;
 failure never falls back to unsanitized input. Defaults: 256 KiB per input and
-120 seconds per async callback. Sanitizers must be deterministic for retries and
-must preserve deployment identity fields. Loopiter sends no data anywhere except
-your explicitly supplied store and callbacks.
+120 seconds per async callback. A payload larger than `maximum_payload_bytes`
+raises `LoopiterError(code="payload_limit")`, not `invalid_input`. Sanitizers must
+be deterministic for retries and must preserve deployment identity fields. Loopiter
+sends no data anywhere except your explicitly supplied store and callbacks.
 
 ## PostgreSQL (optional)
 
@@ -251,6 +252,27 @@ change. Async callbacks must cooperate and must not block the event loop. Databa
 deadlines remain application-owned. `deployments_enabled=lambda: False` blocks new
 applies, but rollback/reconciliation remain available. Pending attempts and lifecycle
 events are available through paginated `list`; no logger, daemon, or scheduler is installed.
+
+## Cohort assignment
+
+`assign_cohort` is keyword-only and returns a dictionary, not a cohort name string.
+
+```python
+from loopiter import assign_cohort
+
+assignment = assign_cohort(
+    experiment_id="intent-v1",
+    entity_id="customer-123",
+    salt="private-salt",
+    exposure=0.1,
+)
+```
+
+`assignment["cohort"]` is `"candidate"` when `bucket` is strictly below `exposure`,
+otherwise `"control"`. The dictionary also includes `bucket` (a float in `[0, 1)`),
+`method` (`"sha256-framed-v1"`) and `entity_fingerprint` (the hex SHA-256 of the
+framed experiment, entity and salt). The application stores exposure and routes
+traffic; this helper does not.
 
 ## Analysis semantics
 

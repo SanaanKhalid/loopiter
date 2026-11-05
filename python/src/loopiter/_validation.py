@@ -4,10 +4,13 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeAlias
 
 Record = dict[str, Any]
+# Plain JSON. Callers pass dicts and lists; checkers treat those literals as this alias.
+JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 EXECUTION_KINDS = "agent turn inference prediction tool workflow retrieval custom".split()
 SIGNAL_KINDS = "rating correction outcome reward approval tool_result custom".split()
 TARGET_KINDS = (
@@ -43,7 +46,7 @@ def nonempty(value: Any, name: str) -> None:
         fail("invalid_input", f"{name} must be nonempty text without NUL.")
 
 
-def enum(value: Any, allowed: list[str], name: str) -> None:
+def enum(value: Any, allowed: Sequence[str], name: str) -> None:
     if type(value) is not str or value not in allowed:
         fail("invalid_input", f"Invalid {name}.")
 
@@ -69,7 +72,7 @@ def obj(value: Any, name: str = "input") -> None:
         fail("invalid_input", f"{name} must be a plain dict.")
 
 
-def fields(value: Any, allowed: list[str], required: tuple[str, ...] = ()) -> None:
+def fields(value: Any, allowed: Sequence[str], required: tuple[str, ...] = ()) -> None:
     obj(value)
     if set(value) - set(allowed) or set(required) - set(value):
         fail("invalid_input", "Unknown or missing required fields.")
