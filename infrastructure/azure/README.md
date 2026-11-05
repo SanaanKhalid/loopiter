@@ -24,6 +24,8 @@ Each app uses managed identity for blobs, queues, search and Key Vault. PostgreS
 uses a restricted application role; only the one-off migration job gets the admin
 credential. Database endpoints have no public access. Production cloud environments,
 including dev, never enable the unauthenticated localhost bypass.
+`DEPLOYMENT_ENV` is `development` on the dev web and worker containers and
+`production` on prod. The migration job does not set it.
 
 Managed KBs use Azure AI Search document extraction and version-filtered retrieval,
 backed by private Azure blobs. Learned guidance and release pointers remain versioned.

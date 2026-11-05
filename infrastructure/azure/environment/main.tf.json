@@ -412,7 +412,7 @@
                 },
                 {
                   "name": "DEPLOYMENT_ENV",
-                  "value": "production"
+                  "value": "${local.deployment_env}"
                 },
                 {
                   "name": "LOCAL_API_ENABLED",
@@ -539,7 +539,7 @@
                 },
                 {
                   "name": "DEPLOYMENT_ENV",
-                  "value": "production"
+                  "value": "${local.deployment_env}"
                 },
                 {
                   "name": "LOCAL_API_ENABLED",
@@ -722,6 +722,7 @@
   },
   "locals": {
     "name": "loopiter-${var.environment}",
+    "deployment_env": "${lookup({\"dev\" = \"development\", \"prod\" = \"production\"}, var.environment)}",
     "tags": {
       "application": "loopiter",
       "environment": "${var.environment}",
