@@ -15,7 +15,7 @@ from typing import Any, Literal, TypeVar, cast
 from uuid import uuid4
 
 from .._validation import LoopiterError
-from .privacy import CapturePolicy, JsonValue, capture_payload, json_utf8_size
+from .privacy import CapturePolicy, JsonValue, capture_payload, json_utf8_size, redact_capture
 
 CaptureStatus = Literal["completed", "incomplete", "cancelled", "failed"]
 _MISSING = object()
@@ -58,6 +58,7 @@ def _provider_value(value: object, *, normalize: bool, ancestors: set[int]) -> o
         raw = None
     if raw is not None:
         if normalize:
+            raw = _scrub_binary_text(raw)
             return {"encoding": "base64", "data": base64.b64encode(raw).decode("ascii")}
         return raw
     if isinstance(value, list):
@@ -83,6 +84,17 @@ def _provider_value(value: object, *, normalize: bool, ancestors: set[int]) -> o
         return result
     finally:
         ancestors.discard(id(mapping))
+
+
+def _scrub_binary_text(raw: bytes) -> bytes:
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+    cleaned = redact_capture(text)
+    if not isinstance(cleaned, str) or cleaned == text:
+        return raw
+    return cleaned.encode("utf-8")
 
 
 def _walk_sequence(

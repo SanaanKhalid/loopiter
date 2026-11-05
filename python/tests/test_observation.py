@@ -21,6 +21,7 @@ wrapper cases are mapped in the module docstring of this file and in
   facade and for CaptureSession below.
 """
 
+import asyncio
 import hashlib
 import re
 import unittest
@@ -40,6 +41,7 @@ from loopiter.integrations.otel import (
     opentelemetry_span_exporter,
     span_execution_id,
 )
+from loopiter.integrations.privacy import copy_json
 
 
 def _loop(namespace: str = "observe-tests") -> FeedbackLoop:
@@ -135,6 +137,68 @@ class PrivacyTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "plain JSON"):
             capture_json(SimpleNamespace(secret="no"))
 
+    def test_redacts_credential_key_names_in_nested_objects(self) -> None:
+        raw = {
+            "headers": {"x-api-key": "opaque-value", "X-Api-Key": "other-value"},
+            "description": "safe",
+        }
+        redacted = capture_payload(raw, {"mode": "redacted"})
+        headers = redacted["value"]["headers"]
+        assert isinstance(headers, dict)
+        self.assertEqual(headers["x-api-key"], "[REDACTED]")
+        self.assertEqual(headers["X-Api-Key"], "[REDACTED]")
+        self.assertEqual(redacted["value"]["description"], "safe")
+
+    def test_redacts_url_userinfo_for_any_scheme(self) -> None:
+        raw = {"text": "postgres://app:s3cret@db.internal/app redis://:s3cret@cache:6379/0"}
+        redacted = capture_payload(raw, {"mode": "redacted"})
+        text = str(redacted["value"])
+        self.assertNotIn("s3cret", text)
+        self.assertIn("db.internal", text)
+        self.assertIn("cache", text)
+
+    def test_otel_extra_requires_a_patched_release(self) -> None:
+        import pathlib
+
+        text = pathlib.Path(__file__).resolve().parents[1].joinpath("pyproject.toml").read_text()
+        self.assertIn("opentelemetry-api>=1.45.2,<2", text)
+        self.assertIn("opentelemetry-sdk>=1.45.2,<2", text)
+
+    def test_redacts_additional_token_patterns(self) -> None:
+        raw = {
+            "text": " ".join(
+                [
+                    "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.signature",
+                    "AccountKey=opaqueaccountkeyvalue",
+                    "SharedAccessSignature=opaquesasvalue",
+                    "AKIAIOSFODNN7EXAMPLE",
+                ]
+            )
+        }
+        text = str(capture_payload(raw, {"mode": "redacted"})["value"])
+        self.assertNotIn("eyJhbGciOiJub25lIn0", text)
+        self.assertNotIn("opaqueaccountkeyvalue", text)
+        self.assertNotIn("opaquesasvalue", text)
+        self.assertNotIn("AKIAIOSFODNN7EXAMPLE", text)
+
+    def test_copy_json_rejects_cycles_and_deep_values(self) -> None:
+        cycle: dict[str, object] = {}
+        cycle["self"] = cycle
+        with self.assertRaises(TypeError):
+            copy_json(cycle)  # type: ignore[arg-type]
+        deep: dict[str, object] = {"v": "x"}
+        for _ in range(40):
+            deep = {"n": deep}
+        with self.assertRaises(TypeError):
+            copy_json(deep)  # type: ignore[arg-type]
+
+    def test_binary_text_is_redacted_before_encoding(self) -> None:
+        encoded = capture_json({"blob": b"Bearer opaque-token-value"})
+        assert isinstance(encoded, dict)
+        blob = encoded["blob"]
+        assert isinstance(blob, dict)
+        self.assertNotIn("opaque-token-value", str(blob["data"]))
+
     def test_finish_status_matches_provider_reasons(self) -> None:
         self.assertEqual(finish_status("stop"), "completed")
         self.assertEqual(finish_status({"unified": "tool-calls"}), "completed")
@@ -176,7 +240,8 @@ class ObserverTests(unittest.IsolatedAsyncioTestCase):
         assert saved is not None
         self.assertEqual(saved["input"], {"omitted": True})
         self.assertEqual(saved["output"], {"omitted": True})
-        self.assertEqual(saved["metadata"]["learning_context"], {"tenant_id": "acme"})
+        self.assertNotIn("learning_context", saved["metadata"])
+        self.assertEqual(saved["metadata"].get("trace_id"), "trace")
         self.assertEqual(saved["artifacts"]["prompt"], "release")
         self.assertEqual(_state(saved)["status"], "completed")
         self.assertFalse(_state(saved)["replay_eligible"])
@@ -264,6 +329,8 @@ class ObserverTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "storage down"):
             await strict.observe("answer", answer)
         self.assertEqual(calls, 2)
+        with self.assertRaises(TypeError):
+            create_observer(loop=loop, failure_mode="close")  # type: ignore[arg-type]
 
 
 class CaptureSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -438,6 +505,25 @@ class ExporterTests(unittest.IsolatedAsyncioTestCase):
             return
         self.assertTrue(callable(getattr(exporter, "export", None)))
         self.assertTrue(callable(getattr(exporter, "shutdown", None)))
+
+    async def test_shutdown_from_a_running_loop_keeps_other_exporters(self) -> None:
+        import importlib.util
+
+        if importlib.util.find_spec("opentelemetry.sdk") is None:
+            self.skipTest("Install loopiter[otel] to run the OpenTelemetry SDK test")
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        memory = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(BatchSpanProcessor(opentelemetry_span_exporter(loop=_loop())))
+        provider.add_span_processor(BatchSpanProcessor(memory))
+        with provider.get_tracer("app").start_as_current_span("work"):
+            pass
+        provider.shutdown()
+        await asyncio.sleep(0)
+        self.assertEqual(len(memory.get_finished_spans()), 1)
 
 
 class ProxyTests(unittest.TestCase):

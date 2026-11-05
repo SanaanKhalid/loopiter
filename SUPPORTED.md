@@ -46,7 +46,8 @@ These Node `test/integrations.test.ts` cases are not ported: Vercel AI SDK model
 wrapping, OpenAI `.withResponse()` / `.asResponse()` / `request_id`, and
 `AbortSignal`. Python covers the same capture outcomes through `CaptureSession`,
 the async OpenAI facade, and task cancellation. The existing `with_loopiter`
-facade still full-captures and does not take a capture policy.
+facade still full-captures and does not take a capture policy. Metadata-only
+observation keeps lineage identifiers and omits other context fields.
 
 ## Node SDK details
 

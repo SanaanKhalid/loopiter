@@ -57,7 +57,7 @@ const options = {
 ```
 
 - `metadata-only` omits input/output bodies. Provider wrappers also omit arbitrary application metadata in this mode. Explicit context IDs should be opaque identifiers.
-- `redacted` removes common structured credential fields, authorization headers, private keys, known token patterns, URL passwords and labeled secrets before size limits. Add a domain-specific `redact` callback for customer-specific PII. Pattern redaction is not a guarantee of anonymization.
+- `redacted` removes credential-like field names (matched as tokens, including separators and mixed case), private keys, known token patterns, labeled secrets, and URL userinfo before size limits. Node removes `http` and `https` userinfo. Python removes userinfo for any scheme. It does not remove every secret shape. Add a domain-specific `redact` callback for anything else. Pattern redaction is not a guarantee of anonymization.
 - `full` explicitly retains payloads within the configured bounds. Optional custom redaction still applies.
 
 Oversized payloads are omitted with `truncated: true`; partial strings are not silently treated as complete answers. Application values are not mutated. `loopiterCapture` includes capture mode and an explicit `replayEligible: false` for these observational paths. A full provider trace still does not prove that tool effects, retrieval state, application code and generation settings can be replayed faithfully. Use the native application integration and approved frozen inputs for autonomous releases.
@@ -104,9 +104,9 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-`create_loopiter_span_exporter` accepts a structural span: `span_context()` returns `trace_id` and `span_id`, `start_time` and `end_time` are `(seconds, nanoseconds)`, and `status["code"]` uses the JavaScript OpenTelemetry codes (UNSET `0`, OK `1`, ERROR `2`). Python OpenTelemetry spans are accepted by duck typing; status is mapped by enum name because the Python numeric codes differ. Export returns `{"code": 0}` or `{"code": 1, "error": ...}`. `0` and `1` match Node. Shutdown returns code `1` with `Exporter is shut down.`
+`create_loopiter_span_exporter` accepts a structural span: `span_context()` returns `trace_id` and `span_id`, `start_time` and `end_time` are `(seconds, nanoseconds)`, and `status["code"]` uses the JavaScript OpenTelemetry codes (UNSET `0`, OK `1`, ERROR `2`). Python OpenTelemetry spans are accepted by duck typing. `status.status_code` is a `StatusCode` enum with the same UNSET 0, OK 1, and ERROR 2 values, mapped by name. Export returns `{"code": 0}` or `{"code": 1, "error": ...}`. `0` and `1` match Node. Shutdown returns code `1` with `Exporter is shut down.`
 
-`opentelemetry_span_exporter` is the only function that imports the OpenTelemetry SDK. Install it with `pip install 'loopiter[otel]'`. Use it from a thread that is not running the application event loop, which is how `BatchSpanProcessor` exports. From an async task, await `LoopiterSpanExporter.export` instead.
+`opentelemetry_span_exporter` is the only function that imports the OpenTelemetry SDK. Install it with `pip install 'loopiter[otel]'`. `export` runs on the processor worker thread. `shutdown` and `force_flush` finish when no loop is running, and when a loop is running they schedule the work and return without raising. `PostgresStore` is not supported on that worker-thread adapter; await `create_loopiter_span_exporter` on the application loop instead.
 
 Breaking out of `async for` does not close the iterator. Await `aclose()` or leave the `async with` block so a partially read stream is recorded as `cancelled` rather than left `pending`. A stream that is never iterated stays pending. Telemetry defaults to fail-open. `failure_mode="closed"` requires persistence. A caller-supplied `context["id"]` is claimed before the operation even when persistence is otherwise fail-open, and a repeat raises rather than running the operation again.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 from uuid import uuid4
 
 from .capture import capture_json
@@ -80,6 +80,7 @@ class Observer:
                     "Observation already exists; inspect the original result instead of replaying."
                 )
             captured = capture_payload(None if input is None else input, self._policy)
+            stored_context = _stored_context(raw_context, self._policy["mode"])
             fields: dict[str, Any] = {
                 "id": (
                     raw_context["id"]
@@ -92,7 +93,7 @@ class Observer:
                     {"prompt": raw_context["release_id"]} if raw_context.get("release_id") else {}
                 ),
                 "metadata": {
-                    **raw_context,
+                    **stored_context,
                     "observation": name,
                     "observe_only": True,
                     "loopiter_capture": {
@@ -262,11 +263,29 @@ class _ObservedStream:
         return False
 
 
+_CONTEXT_KEYS = (
+    "id",
+    "episode_id",
+    "entity_id",
+    "parent_execution_id",
+    "release_id",
+    "trace_id",
+    "span_id",
+)
+
+
+def _stored_context(raw: dict[str, Any], mode: str) -> dict[str, Any]:
+    """metadata-only keeps lineage identifiers and drops other context fields."""
+    if mode != "metadata-only":
+        return raw
+    return {key: raw[key] for key in _CONTEXT_KEYS if key in raw}
+
+
 def create_observer(
     *,
     loop: Any,
     capture: CapturePolicy | None = None,
-    failure_mode: str = "open",
+    failure_mode: Literal["open", "closed"] = "open",
     on_error: Callable[[BaseException], Any] | None = None,
 ) -> Observer:
     """Telemetry failure never causes the operation to be retried. Defaults to open.
@@ -274,7 +293,10 @@ def create_observer(
     Supplying context id always claims that execution before the operation runs.
     Async iterables stay lazy. A stream that is never consumed stays pending.
     """
-    return Observer(loop, checked_policy(capture), failure_mode, on_error)
+    mode = str(failure_mode)
+    if mode not in ("open", "closed"):
+        raise TypeError("Invalid failure_mode.")
+    return Observer(loop, checked_policy(capture), mode, on_error)
 
 
 __all__ = [

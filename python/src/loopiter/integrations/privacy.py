@@ -1,7 +1,8 @@
 """Payload capture policy. Pattern redaction is conservative, not anonymization.
 
-Application values are never mutated. Oversized payloads are omitted whole so a
-partial secret or invalid JSON fragment is not stored.
+Credential-like key names match as tokens, including separators and camelCase.
+URL userinfo is removed for any scheme. Application values are never mutated.
+Oversized payloads are omitted whole so a partial secret is not stored.
 """
 
 from __future__ import annotations
@@ -16,9 +17,11 @@ CaptureMode = Literal["full", "redacted", "metadata-only"]
 JsonPrimitive = str | int | float | bool | None
 JsonValue = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
 
+# Token match, not the whole key: separators and camelCase still count.
 _CREDENTIAL_KEY = re.compile(
-    r"^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|"
-    r"client_secret|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials)$",
+    r"(?:^|[-_])(?:authorization|proxy[-_]authorization|cookie|set[-_]cookie|password|passwd|"
+    r"secret|client[-_]secret|api[-_]?key|access[-_]token|refresh[-_]token|credentials)"
+    r"(?:$|[-_])",
     re.IGNORECASE | re.ASCII,
 )
 _PRIVATE_KEY = re.compile(
@@ -30,14 +33,20 @@ _AUTH_SCHEME = re.compile(
     re.IGNORECASE | re.ASCII,
 )
 _TOKEN = re.compile(
-    r"\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b",
+    r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|"
+    r"AKIA[0-9A-Z]{16})\b",
+)
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
+_URL_USERINFO = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@]*:[^\s/@]+@",
     re.ASCII,
 )
-_URL_USERINFO = re.compile(r"(https?://)[^\s/@]+:[^\s/@]+@", re.IGNORECASE | re.ASCII)
 _LABELED_SECRET = re.compile(
-    r"((?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*)[^\s&,;]+",
+    r"((?:password|api[_-]?key|access[_-]?token|secret|accountkey|sharedaccesssignature)"
+    r"\s*[=:]\s*)[^\s&,;]+",
     re.IGNORECASE | re.ASCII,
 )
+_MAX_JSON_DEPTH = 32
 
 
 class CapturePolicy(TypedDict):
@@ -65,10 +74,20 @@ def json_utf8_size(value: JsonValue) -> int:
     return len(json_text(value).encode("utf-8"))
 
 
+def _key_tokens(key: str) -> str:
+    split = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", key)
+    return re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", split)
+
+
+def _credential_key(key: str) -> bool:
+    return _CREDENTIAL_KEY.search(_key_tokens(key)) is not None
+
+
 def _redact_text(value: str) -> str:
     value = _PRIVATE_KEY.sub("[REDACTED]", value)
     value = _AUTH_SCHEME.sub(r"\1 [REDACTED]", value)
     value = _TOKEN.sub("[REDACTED]", value)
+    value = _JWT.sub("[REDACTED]", value)
     value = _URL_USERINFO.sub(r"\1[REDACTED]@", value)
     return _LABELED_SECRET.sub(r"\1[REDACTED]", value)
 
@@ -110,9 +129,7 @@ def _redact(value: object, seen: set[int]) -> JsonValue:
                     raise TypeError(
                         "Captured provider payloads must be finite, acyclic JSON values."
                     )
-                redacted[key] = (
-                    "[REDACTED]" if _CREDENTIAL_KEY.fullmatch(key) else _redact(item, seen)
-                )
+                redacted[key] = "[REDACTED]" if _credential_key(key) else _redact(item, seen)
             return redacted
         finally:
             seen.discard(id(mapping))
@@ -147,11 +164,40 @@ def capture_payload(value: JsonValue, policy: CapturePolicy) -> CaptureResult:
 
 def copy_json(value: JsonValue) -> JsonValue:
     """Detach a JSON value before a caller-supplied redact callback."""
+    return _copy_json(value, set(), 0)
+
+
+def _copy_json(value: object, seen: set[int], depth: int) -> JsonValue:
+    if depth > _MAX_JSON_DEPTH:
+        raise TypeError("Captured provider payloads must be finite, acyclic JSON values.")
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     if isinstance(value, list):
-        return [copy_json(item) for item in value]
-    return {key: copy_json(item) for key, item in value.items()}
+        items = cast(list[object], value)
+        if id(items) in seen:
+            raise TypeError("Captured provider payloads must be finite, acyclic JSON values.")
+        seen.add(id(items))
+        try:
+            return [_copy_json(item, seen, depth + 1) for item in items]
+        finally:
+            seen.discard(id(items))
+    if isinstance(value, dict):
+        mapping = cast(dict[object, object], value)
+        if id(mapping) in seen:
+            raise TypeError("Captured provider payloads must be finite, acyclic JSON values.")
+        seen.add(id(mapping))
+        try:
+            copied: dict[str, JsonValue] = {}
+            for key, item in mapping.items():
+                if not isinstance(key, str):
+                    raise TypeError(
+                        "Captured provider payloads must be finite, acyclic JSON values."
+                    )
+                copied[key] = _copy_json(item, seen, depth + 1)
+            return copied
+        finally:
+            seen.discard(id(mapping))
+    raise TypeError("Captured provider payloads must be finite, acyclic JSON values.")
 
 
 def checked_policy(capture: object = None) -> CapturePolicy:

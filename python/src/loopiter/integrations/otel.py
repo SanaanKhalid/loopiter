@@ -3,8 +3,8 @@
 Structural spans use the Node ReadableSpan shape in snake_case: span_context(),
 start_time/end_time as (seconds, nanoseconds), and status {"code": n} with the
 JavaScript status codes (UNSET 0, OK 1, ERROR 2). Python OpenTelemetry spans are
-accepted by duck typing; their StatusCode names are mapped onto those codes
-because the Python enum numbers differ.
+accepted by duck typing. ``status.status_code`` is a StatusCode enum with the
+same UNSET 0, OK 1, and ERROR 2 values, and it is mapped by name.
 """
 
 from __future__ import annotations
@@ -340,10 +340,14 @@ def opentelemetry_span_exporter(
 ) -> Any:
     """Return an OpenTelemetry Python SpanExporter. The SDK is imported only here.
 
-    Install ``loopiter[otel]``. BatchSpanProcessor calls export on a worker thread,
-    where this adapter uses asyncio.run. A call from a thread that is already
-    running the application's event loop raises RuntimeError; await
-    LoopiterSpanExporter.export from that task instead.
+    Install ``loopiter[otel]``. ``export`` runs on the processor worker thread.
+    ``shutdown`` and ``force_flush`` finish when no event loop is running. When
+    a loop is running they schedule that work and return without raising, so
+    exporters registered later still shut down.
+
+    ``PostgresStore`` and any other store bound to the application event loop
+    are not supported on this worker-thread adapter. Await
+    ``create_loopiter_span_exporter`` on that same loop instead.
     """
     try:
         export_api = importlib.import_module("opentelemetry.sdk.trace.export")
@@ -367,16 +371,21 @@ def opentelemetry_span_exporter(
             return failure
 
         def shutdown(self) -> None:
-            _run(bridge.shutdown())
+            _finish_or_schedule(bridge.shutdown())
 
         def force_flush(self, timeout_millis: int = 30000) -> bool:
-            _run(bridge.force_flush())
+            del timeout_millis
+            _finish_or_schedule(bridge.force_flush())
             return True
 
     return _Adapter()
 
 
+_scheduled: set[asyncio.Task[Any]] = set()
+
+
 def _run(coro: Awaitable[Any]) -> Any:
+    """Run export on a worker thread, which has no application event loop."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -385,10 +394,21 @@ def _run(coro: Awaitable[Any]) -> Any:
     if callable(close):
         close()
     raise RuntimeError(
-        "OpenTelemetry called the exporter on a running event loop. "
-        "Use BatchSpanProcessor, which exports on a worker thread, or await "
-        "LoopiterSpanExporter.export from the application task."
+        "OpenTelemetry called export on a running event loop. "
+        "Await LoopiterSpanExporter.export from the application task."
     )
+
+
+def _finish_or_schedule(coro: Awaitable[Any]) -> None:
+    """Finish immediately, or schedule on the running loop without raising."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(coro)  # type: ignore[arg-type]
+        return
+    task = cast(asyncio.Task[Any], loop.create_task(coro))  # type: ignore[arg-type]
+    _scheduled.add(task)
+    task.add_done_callback(_scheduled.discard)
 
 
 __all__ = [
