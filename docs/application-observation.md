@@ -46,7 +46,7 @@ Export failure returns a failed callback so the caller can retry the same spans.
 
 ## Capture policy
 
-New observers, exporters, and the OpenAI facades default to `metadata-only`. Pass `capture` mode `full` to retain bodies. The Vercel AI SDK wrapper still needs an explicit `capture` policy for the same default once it is updated:
+New observers and exporters default to `metadata-only`. The Python OpenAI facade does too. Pass `capture` mode `full` to retain bodies:
 
 ```ts
 const options = {
