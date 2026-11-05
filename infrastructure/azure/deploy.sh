@@ -478,16 +478,74 @@ apply_migration_then_rollout() {
   note "both revisions serve ${IMAGE}"
 }
 
-# Scan the archived tree when gitleaks is installed. A finding stops the build.
-# If gitleaks is absent, warn and continue.
-scan_archived_tree() {
-  local log
-  if ! command -v gitleaks >/dev/null 2>&1; then
-    echo "WARNING: gitleaks is not installed, so the archive was not scanned." >&2
+# Same release CI installs. The checksum is the linux x86_64 archive.
+GITLEAKS_VERSION=8.30.1
+GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+ensure_gitleaks() {
+  if command -v gitleaks >/dev/null 2>&1; then
+    command -v gitleaks
     return 0
   fi
+  local arch
+  arch=$(uname -m)
+  if [[ "$arch" != "x86_64" ]]; then
+    echo "gitleaks ${GITLEAKS_VERSION} is not installed. Automatic install supports linux x86_64 only (this machine is ${arch}). Install gitleaks ${GITLEAKS_VERSION} and retry, or set LOOPITER_SKIP_SECRET_SCAN=1 to bypass the scan." >&2
+    return 1
+  fi
+  if ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1; then
+    echo "gitleaks ${GITLEAKS_VERSION} is not installed, and curl or sha256sum is missing so it cannot be downloaded. Install gitleaks ${GITLEAKS_VERSION} and retry, or set LOOPITER_SKIP_SECRET_SCAN=1 to bypass the scan." >&2
+    return 1
+  fi
+  local cache="${XDG_CACHE_HOME:-$HOME/.cache}/loopiter/gitleaks-${GITLEAKS_VERSION}"
+  local bin="$cache/gitleaks"
+  if [[ -x "$bin" && -f "$cache/SHA256" && "$(cat "$cache/SHA256")" == "$GITLEAKS_SHA256" ]]; then
+    printf '%s\n' "$bin"
+    return 0
+  fi
+  local tmp archive url
+  tmp=$(mktemp -d)
+  archive="$tmp/gitleaks.tar.gz"
+  url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+  if ! curl -fsSL -o "$archive" "$url"; then
+    echo "Failed to download gitleaks ${GITLEAKS_VERSION}. Install it manually and retry, or set LOOPITER_SKIP_SECRET_SCAN=1 to bypass the scan. Image was not built." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  if ! echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum -c --status -; then
+    echo "Checksum mismatch for the gitleaks ${GITLEAKS_VERSION} download. Refusing to install it. Image was not built." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  mkdir -p "$cache"
+  if ! tar -xzf "$archive" -C "$cache" gitleaks; then
+    echo "Failed to unpack gitleaks ${GITLEAKS_VERSION}. Image was not built." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf "$tmp"
+  chmod 755 "$bin"
+  printf '%s\n' "$GITLEAKS_SHA256" > "$cache/SHA256"
+  printf '%s\n' "$bin"
+}
+
+# Scan the archived tree. A finding stops the build. Dry-run skips the scan.
+# LOOPITER_SKIP_SECRET_SCAN=1 is the only bypass.
+scan_archived_tree() {
+  local bin log
+  if [[ "${LOOPITER_SKIP_SECRET_SCAN:-}" == "1" ]]; then
+    echo "WARNING: LOOPITER_SKIP_SECRET_SCAN=1 is set. The secret scan was skipped. The image was not scanned." >&2
+    return 0
+  fi
+  if [[ "$DRY" == "1" ]]; then
+    note "secret scan skipped in dry-run"
+    return 0
+  fi
+  if ! bin=$(ensure_gitleaks); then
+    exit 1
+  fi
   log=$(mktemp)
-  if ! gitleaks dir "$BUILD_CONTEXT" --no-banner --redact --exit-code 1 >"$log" 2>&1; then
+  if ! "$bin" dir "$BUILD_CONTEXT" --no-banner --redact --exit-code 1 >"$log" 2>&1; then
     echo "Archive scan failed. Image was not built." >&2
     cat "$log" >&2
     rm -f "$log"
@@ -512,8 +570,8 @@ refuse_packaged_env_files() {
     case "$base" in
       *.example|*.sample) continue ;;
       .env|.env.*|.dev.vars|.npmrc|.pypirc|kubeconfig) blocked=$path; break ;;
-      *.pem|*.key|*.p12|*.pfx|id_rsa*|*.tfvars|*.tfstate*) blocked=$path; break ;;
-      credentials*.json|service-account*.json) blocked=$path; break ;;
+      *.pem|*.key|*.p12|*.pfx|id_rsa*|id_ed25519*|id_ecdsa*|id_dsa*|*.tfvars|*.tfstate*) blocked=$path; break ;;
+      credentials|credentials.*|credentials*.json|service-account*.json) blocked=$path; break ;;
     esac
   done < "$list_file"
   rm -f "$list_file"

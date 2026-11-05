@@ -45,9 +45,11 @@ also refuses a tag that already exists. Do not reuse a tag for different code.
 # Build once from the sibling loopiter-platform checkout (or set
 # LOOPITER_PLATFORM_DIR). The checkout must be clean. deploy.sh reads that
 # checkout's `git rev-parse HEAD` and `date -u +%Y-%m-%dT%H:%M:%SZ`, archives
-# HEAD, and refuses an existing tag. If `gitleaks` is installed, the archive
-# is scanned and a finding stops the build. If it is not installed, the script
-# warns and continues. The commit must match ^[0-9a-f]{40}$ and
+# HEAD, and refuses an existing tag. Before the build, the archive is scanned
+# with gitleaks 8.30.1 (`--redact`). If that binary is missing, deploy.sh
+# downloads it, checks its SHA-256, and stops if the download or checksum
+# fails. `LOOPITER_SKIP_SECRET_SCAN=1` is the only bypass and prints a warning.
+# A dry-run skips the scan. The commit must match ^[0-9a-f]{40}$ and
 # the timestamp must be YYYY-MM-DDTHH:MM:SSZ. The environment must be dev, prod,
 # development, or production. Anything else aborts before `az acr build`.
 # Only LOOPITER_COMMIT and LOOPITER_BUILT_AT are passed as build args.
