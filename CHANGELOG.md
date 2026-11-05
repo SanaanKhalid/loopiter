@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Required before the next PyPI release: the Python OpenAI facade applies the capture policy and defaults to metadata-only.
 - Package a self-hosted agent guide and application-side references with both SDKs.
 - Add initialization, configuration inspection, isolated offline verification and explicit foreground worker commands in native Python and Node.
 - Document application-owned feedback verification, storage, evaluator selection (including optional Jev), provider budgets, autonomous activation and recovery.

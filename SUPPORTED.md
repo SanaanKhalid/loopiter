@@ -45,9 +45,11 @@ iterator on `break`, so the execution stays pending until `aclose()` or the
 These Node `test/integrations.test.ts` cases are not ported: Vercel AI SDK model
 wrapping, OpenAI `.withResponse()` / `.asResponse()` / `request_id`, and
 `AbortSignal`. Python covers the same capture outcomes through `CaptureSession`,
-the async OpenAI facade, and task cancellation. The existing `with_loopiter`
-facade still full-captures and does not take a capture policy. Metadata-only
-observation keeps lineage identifiers and omits other context fields.
+the async OpenAI facade, and task cancellation. `with_loopiter` uses that capture policy and defaults to metadata-only.
+Pass `capture={"mode": "full"}` or `"redacted"` to retain bodies. Metadata-only
+input and output are `{"omitted": true}` in both SDKs. A truncated body is
+`{"omitted": true, "truncated": true}`. Metadata-only observation keeps lineage
+identifiers and omits other context fields.
 
 ## Node SDK details
 

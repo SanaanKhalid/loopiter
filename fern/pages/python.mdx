@@ -286,7 +286,8 @@ before the operation runs and is never replayed. Async iterables stay lazy.
 Python's `async for` does not close an iterator on `break`, so call `aclose()`
 or use `async with` before process shutdown. `pip install 'loopiter[otel]'`
 is required only for `opentelemetry_span_exporter`; importing the bridge does
-not import OpenTelemetry.
+not import OpenTelemetry. `with_loopiter` uses the same capture policy and
+defaults to metadata-only.
 
 ```python
 import asyncio

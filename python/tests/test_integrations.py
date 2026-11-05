@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from loopiter import FeedbackLoop, InMemoryStore, LoopiterError
+from loopiter import FeedbackLoop, InMemoryStore
 from loopiter.integrations.context import replace_guidance, strip_guidance
 from loopiter.integrations.openai import with_loopiter
 
@@ -41,7 +41,11 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
             responses=SimpleNamespace(create=AsyncMock(return_value={"status": "incomplete"})),
         )
         wrapped = with_loopiter(
-            base, loop=loop, context=lambda _request: {"artifacts": {"prompt": "v1"}}, **kwargs
+            base,
+            loop=loop,
+            context=lambda _request: {"artifacts": {"prompt": "v1"}},
+            capture=kwargs.pop("capture", {"mode": "full"}),
+            **kwargs,
         )
         return loop, create, base, wrapped
 
@@ -84,17 +88,17 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(await self.rows(a)), 1)
         self.assertEqual(len(await self.rows(b)), 1)
 
-    async def test_duplicate_ids_and_closed_store_prevent_dispatch(self):
+    async def test_duplicate_ids_and_closed_store_do_not_fail_the_call(self):
         loop, create, base, _wrapped = self.setup_capture()
         wrapped = with_loopiter(base, loop=loop, context=lambda _: {"id": "same", "artifacts": {}})
-        await wrapped.chat.completions.create(**PARAMS)
-        with self.assertRaisesRegex(Exception, "different input"):
+        with self.assertLogs("loopiter.integrations.openai", level="WARNING"):
             await wrapped.chat.completions.create(**PARAMS)
-        self.assertEqual(create.await_count, 1)
+            await wrapped.chat.completions.create(**PARAMS)
+        self.assertEqual(create.await_count, 2)
         await loop.close()
-        with self.assertRaises(LoopiterError):
+        with self.assertLogs("loopiter.integrations.openai", level="WARNING"):
             await wrapped.chat.completions.create(**PARAMS)
-        self.assertEqual(create.await_count, 1)
+        self.assertEqual(create.await_count, 3)
 
     async def test_stream_draining_and_early_context_exit(self):
         for cancel in (False, True):
@@ -132,9 +136,12 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
             )
             stream = await wrapped.chat.completions.create(**PARAMS, stream=True)
             if overflow:
-                with self.assertRaisesRegex(ValueError, "maximum_output_bytes"):
-                    async for _event in stream:
-                        pass
+                async for _event in stream:
+                    pass
+                self.assertEqual(
+                    (await self.rows(loop))[0]["output"],
+                    {"omitted": True, "truncated": True},
+                )
             else:
                 async for _event in stream:
                     pass
@@ -174,8 +181,8 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_post_dispatch_persistence_failure_remains_pending(self):
         loop, create, _base, wrapped = self.setup_capture()
         loop.complete_execution = AsyncMock(side_effect=ValueError("finalization unavailable"))
-        with self.assertRaisesRegex(ValueError, "finalization unavailable"):
-            await wrapped.chat.completions.create(**PARAMS)
+        with self.assertLogs("loopiter.integrations.openai", level="WARNING"):
+            self.assertIs(await wrapped.chat.completions.create(**PARAMS), RESULT)
         self.assertEqual(create.await_count, 1)
         self.assertEqual(
             (await self.rows(loop))[0]["metadata"]["loopiter_capture"]["status"], "pending"
@@ -218,6 +225,177 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         proceed.set()
         await task
         self.assertEqual(create.call_args.kwargs["messages"][0]["content"], "original")
+
+    async def test_default_capture_omits_bodies(self):
+        loop = FeedbackLoop(store=InMemoryStore(), namespace="default-capture")
+        create = AsyncMock(return_value=RESULT)
+        base = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+            responses=SimpleNamespace(create=AsyncMock()),
+        )
+        wrapped = with_loopiter(
+            base, loop=loop, context=lambda _request: {"artifacts": {"prompt": "v1"}}
+        )
+        await wrapped.chat.completions.create(**PARAMS)
+        row = (await self.rows(loop))[0]
+        self.assertEqual(row["input"], {"omitted": True})
+        self.assertEqual(row["output"], {"omitted": True})
+        self.assertEqual(row["metadata"]["loopiter_capture"]["mode"], "metadata-only")
+
+    async def test_redacted_capture_removes_credential_fields(self):
+        loop = FeedbackLoop(store=InMemoryStore(), namespace="redacted-capture")
+        create = AsyncMock(return_value=RESULT)
+        base = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+            responses=SimpleNamespace(create=AsyncMock()),
+        )
+        wrapped = with_loopiter(
+            base,
+            loop=loop,
+            context=lambda _request: {"artifacts": {"prompt": "v1"}},
+            capture={"mode": "redacted"},
+        )
+        await wrapped.chat.completions.create(
+            model="fixture",
+            messages=[{"role": "user", "content": "hello"}],
+            extra_body={"api_key": "opaque-value"},
+        )
+        text = str((await self.rows(loop))[0])
+        self.assertNotIn("opaque-value", text)
+        self.assertIn("hello", text)
+
+    async def test_default_stream_omits_prompt_and_completion(self):
+        loop = FeedbackLoop(store=InMemoryStore(), namespace="default-stream")
+        source = Stream(
+            [
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": "secret-completion"},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+            ]
+        )
+        create = AsyncMock(return_value=source)
+        base = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+            responses=SimpleNamespace(create=AsyncMock()),
+        )
+        wrapped = with_loopiter(
+            base, loop=loop, context=lambda _request: {"artifacts": {"prompt": "v1"}}
+        )
+        async for _event in await wrapped.chat.completions.create(
+            model="fixture",
+            messages=[{"role": "user", "content": "secret-prompt"}],
+            stream=True,
+        ):
+            pass
+        text = str((await self.rows(loop))[0])
+        self.assertNotIn("secret-prompt", text)
+        self.assertNotIn("secret-completion", text)
+        self.assertEqual((await self.rows(loop))[0]["input"], {"omitted": True})
+        self.assertEqual((await self.rows(loop))[0]["output"], {"omitted": True})
+
+    async def test_capture_failures_are_logged_and_do_not_reach_the_app(self):
+        cases = ("context", "record_execution", "on_execution", "complete_execution")
+        for step in cases:
+            loop = FeedbackLoop(store=InMemoryStore(), namespace=step)
+            create = AsyncMock(return_value=RESULT)
+            base = SimpleNamespace(
+                chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+                responses=SimpleNamespace(create=AsyncMock()),
+            )
+
+            def context(_request, failing=step):
+                if failing == "context":
+                    raise RuntimeError("context unavailable")
+                return {"artifacts": {"prompt": "v1"}}
+
+            def on_execution(_execution, failing=step):
+                if failing == "on_execution":
+                    raise RuntimeError("hook unavailable")
+
+            if step == "record_execution":
+                loop.record_execution = AsyncMock(side_effect=ConnectionError("store down"))
+            if step == "complete_execution":
+                loop.complete_execution = AsyncMock(side_effect=ConnectionError("store down"))
+            wrapped = with_loopiter(base, loop=loop, context=context, on_execution=on_execution)
+            with self.assertLogs("loopiter.integrations.openai", level="WARNING") as logs:
+                self.assertIs(await wrapped.chat.completions.create(**PARAMS), RESULT)
+            self.assertEqual(create.await_count, 1)
+            self.assertTrue(any(step in message for message in logs.output))
+
+    async def test_sanitizer_errors_do_not_replace_the_provider_result(self):
+        def redact(value):
+            if "secret-completion" in str(value):
+                raise RuntimeError("sanitizer unavailable")
+            return value
+
+        policy = {"mode": "redacted", "redact": redact}
+        completion = {
+            **RESULT,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"content": "secret-completion"},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        loop = FeedbackLoop(store=InMemoryStore(), namespace="sanitize-call")
+        create = AsyncMock(return_value=completion)
+        base = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+            responses=SimpleNamespace(create=AsyncMock()),
+        )
+        wrapped = with_loopiter(
+            base,
+            loop=loop,
+            context=lambda _request: {"artifacts": {"prompt": "v1"}},
+            capture=policy,
+        )
+        with self.assertLogs("loopiter.integrations.openai", level="WARNING") as logs:
+            self.assertIs(await wrapped.chat.completions.create(**PARAMS), completion)
+        self.assertEqual(create.await_count, 1)
+        self.assertTrue(any("sanitize" in message for message in logs.output))
+        self.assertNotIn("secret-completion", str((await self.rows(loop))[0].get("output")))
+
+        stream_loop = FeedbackLoop(store=InMemoryStore(), namespace="sanitize-stream")
+        source = Stream(
+            [
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": "secret-completion"},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+            ]
+        )
+        stream_create = AsyncMock(return_value=source)
+        stream_base = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=stream_create)),
+            responses=SimpleNamespace(create=AsyncMock()),
+        )
+        streamed = with_loopiter(
+            stream_base,
+            loop=stream_loop,
+            context=lambda _request: {"artifacts": {"prompt": "v1"}},
+            capture=policy,
+        )
+        seen = []
+        with self.assertLogs("loopiter.integrations.openai", level="WARNING") as stream_logs:
+            async for event in await streamed.chat.completions.create(**PARAMS, stream=True):
+                seen.append(event)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(stream_create.await_count, 1)
+        self.assertTrue(any("sanitize" in message for message in stream_logs.output))
+        self.assertNotIn("secret-completion", str((await self.rows(stream_loop))[0].get("output")))
 
 
 if __name__ == "__main__":

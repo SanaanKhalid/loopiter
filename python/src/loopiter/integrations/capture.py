@@ -1,8 +1,7 @@
 """Shared execution capture for provider calls and custom integrations.
 
 Provider values are normalized before the SDK sanitizer and byte limits.
-Existing OpenAI wrappers keep their own full-capture path; this session is the
-portable contract those Node wrappers share.
+The OpenAI facade applies the same capture policy and defaults to metadata-only.
 """
 
 from __future__ import annotations
