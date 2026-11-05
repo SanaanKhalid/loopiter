@@ -55,8 +55,14 @@ database path. `runStoreConformance(store)` creates/deletes only random test nam
 `importLegacyV1(loop, document)` imports scoped executions/signals and archives old
 candidate history without activation. See the repository migration guide.
 
-`LoopiterError.code` includes invalid_input, invalid_store, conflict, not_found,
-invalid_transition, integrity_error, namespace_mismatch, query_limit and timeout.
-Deployment uncertainty exposes code deployment_pending and attemptId, with the
-original cause retained. Do not classify all errors as retryable. A timeout may have
-dispatched an external action; only inspection establishes the outcome.
+`assignCohort({experimentId, entityId, salt, exposure})` returns a dictionary,
+not a cohort string: `cohort` (`"candidate"` or `"control"`), `bucket`, `method`
+(`"sha256-framed-v1"`) and `entityFingerprint`. The application persists exposure
+and routes traffic.
+
+`LoopiterError.code` includes invalid_input, payload_limit, invalid_store, conflict,
+not_found, invalid_transition, integrity_error, namespace_mismatch, query_limit and
+timeout. A payload over the configured byte limit uses `payload_limit`, not
+`invalid_input`. Deployment uncertainty exposes code deployment_pending and
+attemptId, with the original cause retained. Do not classify all errors as retryable.
+A timeout may have dispatched an external action; only inspection establishes the outcome.

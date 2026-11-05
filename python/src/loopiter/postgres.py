@@ -13,7 +13,11 @@ if TYPE_CHECKING:
 
 
 def migration_sql() -> str:
-    """Return versioned SQL for the application's migration process; execute explicitly."""
+    """Return SQL for Python contracts v1 and v2; the application executes it explicitly.
+
+    Concatenates ``001-python-store.sql`` (v1 store) and ``002-autonomy.sql``
+    (v2 autonomy collections). Constructors never run this script.
+    """
     return "\n".join(
         files("loopiter").joinpath("migrations/" + name).read_text(encoding="utf-8")
         for name in ("001-python-store.sql", "002-autonomy.sql")

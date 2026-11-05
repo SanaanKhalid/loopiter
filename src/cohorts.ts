@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { finite, nonempty, fail } from "./utils.js";
-/** Deterministic entity bucket, not a traffic router. Persist assignments in your application. */
+/** Deterministic entity bucket, not a traffic router or a cohort name string.
+ * Returns `{ cohort, bucket, method: "sha256-framed-v1", entityFingerprint }`.
+ * Persist assignments in your application.
+ */
 export function assignCohort(input: {
   experimentId: string;
   entityId: string;
