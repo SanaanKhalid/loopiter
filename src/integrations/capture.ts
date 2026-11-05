@@ -27,14 +27,14 @@ export interface CaptureRequest {
 }
 
 export interface CaptureOptions {
-  /** Optional privacy policy. Existing integrations retain their full-capture default. */
+  /** Optional privacy policy. Omitted capture is metadata-only. */
   capture?: CapturePolicy;
   loop: FeedbackLoop;
   /** Resolve per request, rather than mutating a shared client with tenant state. */
   context(
     request: CaptureRequest,
   ): ExecutionContext | Promise<ExecutionContext>;
-  /** Bound stream buffering. Overflow fails capture and cancels consumption. */
+  /** Bound stream buffering. Overflow records a truncated sentinel and does not cancel consumption. */
   maximumOutputBytes?: number;
   /** Awaited after persistence, including the initial pending record. */
   onExecution?(execution: AiExecution): void | Promise<void>;
@@ -150,7 +150,9 @@ export class CaptureSession {
     if (!Number.isSafeInteger(maximum) || maximum < 1)
       throw new TypeError("maximumOutputBytes must be a positive integer.");
     const attemptId = randomUUID();
-    const captured = options.capture ? capturePayload(request.input, options.capture) : undefined;
+    const capture = options.capture ?? { mode: "metadata-only" as const };
+    const sessionOptions = { ...options, capture };
+    const captured = capturePayload(request.input, capture);
     const execution = await options.loop.recordExecution({
       ...(context.id === undefined ? {} : { id: context.id }),
       ...(context.episodeId === undefined
@@ -161,15 +163,19 @@ export class CaptureSession {
         ? {}
         : { parentExecutionId: context.parentExecutionId }),
       kind: "inference",
-      input: captured?.value ?? request.input,
+      input: captured.value,
       artifacts: { ...context.artifacts, model: request.model },
       metadata: {
-        ...(options.capture?.mode === "metadata-only" ? {} : options.capture ? capturePayload(context.metadata ?? {}, options.capture).value as JsonObject : context.metadata),
+        ...(capture.mode === "metadata-only"
+          ? {}
+          : (capturePayload(context.metadata ?? {}, capture).value as JsonObject)),
         loopiterCapture: {
           attemptId,
           integration: request.integration,
           status: "pending",
-          ...(options.capture ? { mode: options.capture.mode, truncated: captured!.truncated, replayEligible: false } : {}),
+          mode: capture.mode,
+          truncated: captured.truncated,
+          replayEligible: false,
         },
       },
     });
@@ -180,7 +186,7 @@ export class CaptureSession {
       throw new Error(
         "The sanitizer must preserve loopiterCapture identity and status.",
       );
-    const session = new CaptureSession(options, execution, maximum);
+    const session = new CaptureSession(sessionOptions, execution, maximum);
     try {
       await options.onExecution?.(structuredClone(execution));
     } catch (error) {
@@ -194,13 +200,11 @@ export class CaptureSession {
     if (this.options.capture?.mode === "metadata-only" || this.truncated) return;
     const value = captureJson(event);
     this.bytes += Buffer.byteLength(JSON.stringify(value), "utf8");
-    if (this.bytes > this.maximum && this.options.capture) {
+    if (this.bytes > this.maximum) {
       this.truncated = true;
       this.events.length = 0;
       return;
     }
-    if (this.bytes > this.maximum)
-      throw new RangeError("Captured stream exceeded maximumOutputBytes.");
     this.events.push(value);
   }
 
@@ -214,9 +218,8 @@ export class CaptureSession {
       value = this.truncated ? { omitted: true, truncated: true } : captured.value;
     }
     if (Buffer.byteLength(JSON.stringify(value), "utf8") > this.maximum) {
-      if (status === "completed" || status === "incomplete")
-        throw new RangeError("Captured response exceeded maximumOutputBytes.");
-      value = null;
+      this.truncated = true;
+      value = { omitted: true, truncated: true };
     }
     this.finalization = this.finalize(status, value);
     return this.finalization;

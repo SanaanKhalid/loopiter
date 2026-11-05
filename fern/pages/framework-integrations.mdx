@@ -149,19 +149,24 @@ meter `ImprovementController` budgets; use
 `CallbackContext.meter` for controller-driven provider calls.
 
 Context callbacks run once per provider call. Explicit execution IDs must be fresh
-per call, including retries and tool steps. Reusing one fails before another
-provider dispatch. Existing provider retry settings still apply inside a call;
+per call, including retries and tool steps. Reusing one is logged and does not
+block the provider call. Existing provider retry settings still apply inside a call;
 the wrappers do not add retries. A process crash, abandoned stream or failed store
 write can leave a pending record. Inspect the upstream operation before retrying;
 capture does not establish exactly-once inference or reconcile unknown charges.
 
-Capture failures propagate; pending executions remain available for investigation.
+`CaptureSession.begin` raises when capture or storage fails. The OpenAI and
+Vercel AI SDK wrappers fail open around that call: capture, context, and store
+failures are logged and do not replace the provider result. Provider errors and
+abort signals still propagate. Pending executions remain available for investigation.
 `onExecution` / `on_execution` is awaited after the pending record and after final
 persistence. The normal SDK sanitizer and payload limit apply. Sanitizers must
 preserve reserved `loopiterCapture` / `loopiter_capture` identity and status fields.
 Output/stream buffering defaults to 65,536 bytes, configured through
-`maximumOutputBytes` / `maximum_output_bytes`; overflow stops capture and propagates
-an error. JSON-compatible payloads are required. TypeScript normalizes URL and
+`maximumOutputBytes` / `maximum_output_bytes`. An oversized stream records
+`{"omitted": true, "truncated": true}` and does not raise into the caller.
+Omitted `capture` is metadata-only and stores `{"omitted": true}`. Pass
+`capture: { mode: "full" }` (Python `capture={"mode": "full"}`) to retain bodies. JSON-compatible payloads are required. TypeScript normalizes URL and
 binary parts; Python normalizes provider model responses and bytes. Unsupported
 objects fail rather than silently dropping content.
 

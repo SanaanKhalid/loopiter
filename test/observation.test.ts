@@ -18,6 +18,9 @@ test("capture redacts before bounding, preserves application values, and explici
   assert.equal(long.truncated,false,"Redaction precedes bounding");
   assert.deepEqual(capturePayload({text:"x".repeat(1000)},{mode:"redacted",maximumBytes:128}).value,{omitted:true,truncated:true,bytes:1011});
   assert.deepEqual(capturePayload(raw,{mode:"metadata-only"}).value,{omitted:true});
+  const otherScheme = capturePayload({ text: "postgres://app:s3cret@db.internal/app" }, { mode: "redacted" });
+  assert.doesNotMatch(JSON.stringify(otherScheme.value), /s3cret/);
+  assert.match(JSON.stringify(otherScheme.value), /db\.internal/);
   assert.equal(capturePayload(raw,{mode:"full"}).complete,true);
   assert.throws(()=>capturePayload(raw,{mode:"redacted",maximumBytes:NaN}));
   const nested = capturePayload({ headers: { "x-api-key": "opaque-value" }, description: "safe" }, { mode: "redacted" });
@@ -61,6 +64,22 @@ test("telemetry outage does not retry or replace application errors; strict capt
   assert.equal(calls,2);assert.equal(errors,2);
   await assert.rejects(createObserver({loop,failureMode:"closed"}).observe("answer",()=>{calls++;return 42;}),/storage down/);
   assert.equal(calls,2);
+});
+
+test("omitted capture stores metadata only", async () => {
+  const loop = setup();
+  const session = await CaptureSession.begin(
+    { loop, context: () => ({ artifacts: {}, metadata: { note: "secret-note" } }) },
+    { artifacts: {} },
+    { integration: "custom", model: "model-version", input: { prompt: "secret-prompt" } },
+  );
+  session.append({ text: "secret-chunk" });
+  await session.finish("completed", { text: "secret-completion" });
+  const row = (await loop.list("executions")).items[0]!;
+  assert.deepEqual(row.input, { omitted: true });
+  assert.deepEqual(row.output, { omitted: true });
+  assert.equal(row.metadata.note, undefined);
+  assert.doesNotMatch(JSON.stringify(row), /secret-prompt|secret-chunk|secret-completion|secret-note/);
 });
 
 test("provider privacy mode removes payloads and arbitrary metadata while preserving actual calls", async () => {

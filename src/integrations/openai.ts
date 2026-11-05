@@ -21,6 +21,10 @@ export type {
 } from "./capture.js";
 
 const baseSymbol = Symbol.for("loopiter/openai/base-client");
+function logCapture(step: string, error: unknown) {
+  const name = error instanceof Error ? error.name : "Error";
+  console.warn(`loopiter capture ${step} failed: ${name}`);
+}
 type Payload = Record<string, unknown>;
 function statusOf(payload: Payload, api: string): CaptureStatus {
   if (api === "responses")
@@ -50,34 +54,60 @@ export function withLoopiter<T extends OpenAI>(
       let session: CaptureSession | undefined;
       const signal = requestOptions?.signal;
       const ready = (async () => {
-        raw = captureSnapshot(raw) as Payload;
+        try {
+          raw = captureSnapshot(raw) as Payload;
+        } catch (error) {
+          logCapture("snapshot", error);
+        }
+        let input: ReturnType<typeof captureJson> | null = null;
+        try {
+          input = captureJson(raw);
+        } catch (error) {
+          logCapture("snapshot", error);
+        }
         const request = {
           integration: `openai.${api}`,
           model: String(raw.model ?? ""),
-          input: captureJson(raw),
+          input,
         };
-        const context = await resolveContext(options, request);
+        let context: Awaited<ReturnType<typeof resolveContext>> = {
+          artifacts: {},
+        };
+        try {
+          context = await resolveContext(options, request);
+        } catch (error) {
+          logCapture("context", error);
+        }
         let params = raw;
         if (context.guidance !== undefined) {
-          params =
-            api === "responses"
-              ? {
-                  ...raw,
-                  instructions: replaceGuidance(
-                    String(raw.instructions ?? ""),
-                    context.guidance,
-                  ),
-                }
-              : {
-                  ...raw,
-                  messages: guidanceMessages(
-                    raw.messages as { role: string; content: unknown }[],
-                    context.guidance,
-                  ),
-                };
+          try {
+            params =
+              api === "responses"
+                ? {
+                    ...raw,
+                    instructions: replaceGuidance(
+                      String(raw.instructions ?? ""),
+                      context.guidance,
+                    ),
+                  }
+                : {
+                    ...raw,
+                    messages: guidanceMessages(
+                      raw.messages as { role: string; content: unknown }[],
+                      context.guidance,
+                    ),
+                  };
+            request.input = captureJson(params);
+          } catch (error) {
+            logCapture("context", error);
+            params = raw;
+          }
         }
-        request.input = captureJson(params);
-        session = await CaptureSession.begin(options, context, request);
+        try {
+          session = await CaptureSession.begin(options, context, request);
+        } catch (error) {
+          logCapture("record", error);
+        }
         if (signal?.aborted)
           throw signal.reason ?? new Error("Request aborted.");
         const requestPromise = method.call(
@@ -88,15 +118,23 @@ export function withLoopiter<T extends OpenAI>(
         return { requestPromise, params, session };
       })();
       const fail = async (error: unknown): Promise<never> => {
-        await session?.finish(signal?.aborted ? "cancelled" : "failed");
+        try {
+          await session?.finish(signal?.aborted ? "cancelled" : "failed");
+        } catch (finishError) {
+          logCapture("complete", finishError);
+        }
         throw error;
       };
       const response = ready
         .then(async ({ requestPromise, params, session: capture }) => {
           const http = await requestPromise.asResponse();
-          if (!params.stream) {
-            const value = (await http.clone().json()) as Payload;
-            await capture.finish(statusOf(value, api), value);
+          if (!params.stream && capture) {
+            try {
+              const value = (await http.clone().json()) as Payload;
+              await capture.finish(statusOf(value, api), value);
+            } catch (error) {
+              logCapture("complete", error);
+            }
           }
           return {
             response: http,
@@ -127,7 +165,11 @@ export function withLoopiter<T extends OpenAI>(
               let incompleteChoice = false;
               try {
                 for await (const part of source) {
-                  capture.append(part);
+                  try {
+                    capture?.append(part);
+                  } catch (error) {
+                    logCapture("append", error);
+                  }
                   if (api === "responses") {
                     if (
                       [
@@ -163,15 +205,19 @@ export function withLoopiter<T extends OpenAI>(
                 status = signal?.aborted ? "cancelled" : "failed";
                 throw error;
               } finally {
-                await capture.finish(
-                  status === "failed"
-                    ? "failed"
-                    : !ended ||
-                        source.controller.signal.aborted ||
-                        signal?.aborted
-                      ? "cancelled"
-                      : status,
-                );
+                try {
+                  await capture?.finish(
+                    status === "failed"
+                      ? "failed"
+                      : !ended ||
+                          source.controller.signal.aborted ||
+                          signal?.aborted
+                        ? "cancelled"
+                        : status,
+                  );
+                } catch (error) {
+                  logCapture("complete", error);
+                }
               }
             },
             source.controller,
