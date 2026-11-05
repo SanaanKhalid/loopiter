@@ -1,0 +1,30 @@
+name: Azure Terraform validate
+on:
+  pull_request:
+    paths:
+      - infrastructure/azure/**
+      - .github/workflows/azure-terraform.yml
+  push:
+    branches: [main]
+    paths:
+      - infrastructure/azure/**
+      - .github/workflows/azure-terraform.yml
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+      - name: Validate the environment module with no backend or credentials
+        working-directory: infrastructure/azure/environment
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
