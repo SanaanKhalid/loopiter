@@ -20,6 +20,8 @@ the project, and subsequent releases use the same scoped publisher.
 
 1. Review the Python version, changelog, README, Fern page, capabilities and tests.
    Update the version consistently; never reuse a version for changed artifacts.
+   Do not publish the next release until the OpenAI facade capture policy is on
+   `main`. That change is required before the next PyPI upload.
 2. Commit and push the reviewed source to `main`. Record its full commit SHA.
 3. Manually dispatch **Publish Python alpha** (`python-publish.yml`) on `main`,
    providing the exact version and `expected_sha`. A moved branch or version

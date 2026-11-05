@@ -41,7 +41,11 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
             responses=SimpleNamespace(create=AsyncMock(return_value={"status": "incomplete"})),
         )
         wrapped = with_loopiter(
-            base, loop=loop, context=lambda _request: {"artifacts": {"prompt": "v1"}}, **kwargs
+            base,
+            loop=loop,
+            context=lambda _request: {"artifacts": {"prompt": "v1"}},
+            capture=kwargs.pop("capture", {"mode": "full"}),
+            **kwargs,
         )
         return loop, create, base, wrapped
 
@@ -218,6 +222,44 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         proceed.set()
         await task
         self.assertEqual(create.call_args.kwargs["messages"][0]["content"], "original")
+
+    async def test_default_capture_omits_bodies(self):
+        loop = FeedbackLoop(store=InMemoryStore(), namespace="default-capture")
+        create = AsyncMock(return_value=RESULT)
+        base = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+            responses=SimpleNamespace(create=AsyncMock()),
+        )
+        wrapped = with_loopiter(
+            base, loop=loop, context=lambda _request: {"artifacts": {"prompt": "v1"}}
+        )
+        await wrapped.chat.completions.create(**PARAMS)
+        row = (await self.rows(loop))[0]
+        self.assertEqual(row["input"], {"omitted": True})
+        self.assertEqual(row["output"], {"omitted": True})
+        self.assertEqual(row["metadata"]["loopiter_capture"]["mode"], "metadata-only")
+
+    async def test_redacted_capture_removes_credential_fields(self):
+        loop = FeedbackLoop(store=InMemoryStore(), namespace="redacted-capture")
+        create = AsyncMock(return_value=RESULT)
+        base = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+            responses=SimpleNamespace(create=AsyncMock()),
+        )
+        wrapped = with_loopiter(
+            base,
+            loop=loop,
+            context=lambda _request: {"artifacts": {"prompt": "v1"}},
+            capture={"mode": "redacted"},
+        )
+        await wrapped.chat.completions.create(
+            model="fixture",
+            messages=[{"role": "user", "content": "hello"}],
+            extra_body={"api_key": "opaque-value"},
+        )
+        text = str((await self.rows(loop))[0])
+        self.assertNotIn("opaque-value", text)
+        self.assertIn("hello", text)
 
 
 if __name__ == "__main__":

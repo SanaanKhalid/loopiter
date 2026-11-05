@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from .._validation import LoopiterError
 from .context import guidance_messages, replace_guidance
+from .privacy import capture_payload, checked_policy, redact_capture
 
 
 def _json(value):
@@ -53,7 +54,11 @@ class _Capture:
         self.lock = asyncio.Lock()
 
     def append(self, event):
+        if self.owner.policy["mode"] == "metadata-only":
+            return
         data = _json(event)
+        if self.owner.policy["mode"] == "redacted":
+            data = redact_capture(data)
         self.size += len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
         if self.size > self.owner.maximum_output_bytes:
             raise ValueError("Captured stream exceeded maximum_output_bytes.")
@@ -63,22 +68,38 @@ class _Capture:
         async with self.lock:
             if self.finished:
                 return
-            value = {"events": self.events} if output is None else _json(output)
+            if self.owner.policy["mode"] == "metadata-only":
+                value = {"omitted": True}
+                truncated = False
+            else:
+                value = {"events": self.events} if output is None else _json(output)
+                if self.owner.policy["mode"] == "redacted":
+                    value = redact_capture(value)
+                packed = capture_payload(value, self.owner.policy)
+                truncated = packed["truncated"]
+                value = {"omitted": True, "truncated": True} if truncated else packed["value"]
             if (
-                len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+                value is not None
+                and len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
                 > self.owner.maximum_output_bytes
             ):
                 if status in ("completed", "incomplete"):
                     raise ValueError("Captured response exceeded maximum_output_bytes.")
                 value = None
             identity = self.execution["metadata"]["loopiter_capture"]
+            updated = {
+                **identity,
+                "status": status,
+                "truncated": bool(identity.get("truncated") or truncated),
+                "replay_eligible": False,
+            }
             saved = await self.owner.loop.complete_execution(
                 self.execution["id"],
                 expected_revision=self.execution["revision"],
                 output=value,
-                metadata={"loopiter_capture": {**identity, "status": status}},
+                metadata={"loopiter_capture": updated},
             )
-            if saved["metadata"].get("loopiter_capture") != {**identity, "status": status}:
+            if saved["metadata"].get("loopiter_capture") != updated:
                 raise LoopiterError(
                     "capture_identity", "Sanitizer changed capture identity or status."
                 )
@@ -161,10 +182,11 @@ class _Facade:
 
 
 class _Client(_Facade):
-    def __init__(self, client, *, loop, context, on_execution, maximum_output_bytes):
+    def __init__(self, client, *, loop, context, on_execution, maximum_output_bytes, policy):
         self.base = client.base if isinstance(client, _Client) else client
         self.loop, self.context, self.on_execution = loop, context, on_execution
         self.maximum_output_bytes = maximum_output_bytes
+        self.policy = policy
         super().__init__(
             self.base,
             chat=_Facade(
@@ -218,11 +240,22 @@ class _Client(_Facade):
                     {key: params[key] for key in ("instructions", "messages") if key in params}
                 )
             attempt_id = str(uuid4())
+            stored_input = capture_payload(_json(input_), self.policy)
             identity = {
                 "attempt_id": attempt_id,
                 "integration": request["integration"],
                 "status": "pending",
+                "mode": self.policy["mode"],
+                "truncated": stored_input["truncated"],
+                "replay_eligible": False,
             }
+            extra = {}
+            if self.policy["mode"] != "metadata-only":
+                extra = context.get("metadata") or {}
+                if self.policy["mode"] == "redacted":
+                    extra = redact_capture(extra)
+                if not isinstance(extra, dict):
+                    extra = {}
             execution = await self.loop.record_execution(
                 **{
                     key: context[key]
@@ -230,9 +263,9 @@ class _Client(_Facade):
                     if key in context
                 },
                 kind="inference",
-                input=_json(input_),
+                input=stored_input["value"],
                 artifacts={**context["artifacts"], "model": request["model"]},
-                metadata={**context.get("metadata", {}), "loopiter_capture": identity},
+                metadata={**extra, "loopiter_capture": identity},
             )
             if execution["metadata"].get("loopiter_capture") != identity:
                 raise LoopiterError(
@@ -256,12 +289,15 @@ class _Client(_Facade):
         return captured
 
 
-def with_loopiter(client, *, loop, context, on_execution=None, maximum_output_bytes=65536):
+def with_loopiter(
+    client, *, loop, context, on_execution=None, maximum_output_bytes=65536, capture=None
+):
     """Return an isolated async client facade. Feedback remains an explicit record_signal call.
 
     Context returns artifact versions and optional id/episode_id/entity_id/guidance.
     Use a fresh execution id per provider call. Streams must be drained or closed;
     use ``async with stream`` when breaking out early. Capture failures propagate.
+    ``capture`` defaults to metadata-only. Pass ``full`` or ``redacted`` to retain bodies.
     """
     if type(maximum_output_bytes) is not int or maximum_output_bytes < 1:
         raise ValueError("maximum_output_bytes must be a positive integer.")
@@ -271,4 +307,5 @@ def with_loopiter(client, *, loop, context, on_execution=None, maximum_output_by
         context=context,
         on_execution=on_execution,
         maximum_output_bytes=maximum_output_bytes,
+        policy=checked_policy(capture),
     )
