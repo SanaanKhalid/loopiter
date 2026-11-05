@@ -40,13 +40,20 @@ Build a NEW immutable image tag for each release, then deploy the same tested im
 to both environments. Do not reuse a tag for different code.
 
 ```sh
-cd /absolute/path/to/loopiter-platform
-az acr build --subscription d865e614-32e3-4149-860e-36ccec037536 \
-  --registry loopiterregistry7536 --image loopiter:RELEASE_TAG --file Dockerfile.azure .
+# Build once from the sibling loopiter-platform checkout (or set
+# LOOPITER_PLATFORM_DIR). deploy.sh reads that checkout's `git rev-parse HEAD`
+# and `date -u +%Y-%m-%dT%H:%M:%SZ`. The commit must match ^[0-9a-f]{40}$ and
+# the timestamp must be YYYY-MM-DDTHH:MM:SSZ. The environment must be dev, prod,
+# development, or production. Anything else aborts before `az acr build`.
+# Only LOOPITER_COMMIT and LOOPITER_BUILT_AT are passed as build args.
+# development and production select the dev and prod stacks.
+infrastructure/azure/deploy.sh dev \
+  loopiterregistry7536.azurecr.io/loopiter:RELEASE_TAG build
 
-# Supply values securely in environment variables; never commit or paste them into logs.
-# TF_VAR_owner_email, TF_VAR_encryption_key, TF_VAR_auth_secret
-/absolute/path/to/ai-feedback-loop/infrastructure/azure/deploy.sh dev \
+# Supply TF_VAR_owner_email, TF_VAR_encryption_key, and TF_VAR_auth_secret
+# securely. Never commit them or paste them into logs. Apply the same image
+# to dev, then to prod after dev passes. Apply does not build another image.
+infrastructure/azure/deploy.sh dev \
   loopiterregistry7536.azurecr.io/loopiter:RELEASE_TAG apply
 ```
 
@@ -60,9 +67,12 @@ input or a populated destination without that ledger is rejected.
 `deploy.sh apply` migrates before it switches traffic. It updates only the
 `migrate-loopiter-<env>` job to the new image, starts that job with
 `az containerapp job start`, and waits until the execution is `Succeeded`.
-A failure or a 30-minute timeout aborts the script. Web and worker revisions
-are applied only after that success, and the script then waits until those
-revisions are the ones serving. The schema script never runs in HTTP requests.
+A failure or a 30-minute timeout aborts the script before web and worker
+revisions change. A timeout does not cancel the execution; a later apply
+refuses to start another one while that execution is `Running` or `Processing`.
+Web and worker revisions are applied only after success, and the script then
+waits until those revisions are the ones serving. The schema script never runs
+in HTTP requests.
 
 `LOOPITER_DEPLOY_DRY_RUN=1` prints this order and does not call Terraform or
 Azure. `bash infrastructure/azure/deploy-order.test.sh` checks it.

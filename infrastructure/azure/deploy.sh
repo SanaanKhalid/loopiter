@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
 # Roll out a versioned image. Apply updates the migration job first, runs
 # migrate-loopiter-<env> to success, and only then switches web and worker.
-# LOOPITER_DEPLOY_DRY_RUN=1 prints that order and does not call Terraform or Azure.
+# `build` pushes one image from the loopiter-platform checkout. It passes only
+# LOOPITER_COMMIT (git rev-parse HEAD) and LOOPITER_BUILT_AT (UTC timestamp).
+# LOOPITER_DEPLOY_DRY_RUN=1 prints the order or the build args and does not
+# call Terraform or Azure.
 set -euo pipefail
 umask 077
 SUBSCRIPTION=d865e614-32e3-4149-860e-36ccec037536
 ROOT=$(cd "$(dirname "$0")" && pwd)
-ENVIRONMENT=${1:?Usage: deploy.sh dev|prod versioned-image [plan|apply]}
+REPO_ROOT=$(cd "$ROOT/../.." && pwd)
+ENVIRONMENT=${1:?Usage: deploy.sh dev|prod|development|production versioned-image [plan|apply|build]}
 IMAGE=${2:?Supply the versioned ACR image}
 ACTION=${3:-plan}
-case "$ENVIRONMENT" in dev|prod) ;; *) echo 'Choose dev or prod' >&2; exit 2;; esac
-case "$ACTION" in plan|apply) ;; *) echo 'Choose plan or apply' >&2; exit 2;; esac
-: "${TF_VAR_owner_email:?Set TF_VAR_owner_email}"
-: "${TF_VAR_encryption_key:?Set the existing environment encryption key, or a new key for a NEW environment only}"
-: "${TF_VAR_auth_secret:?Set the environment authentication secret}"
-export TF_DATA_DIR="$ROOT/.terraform/$ENVIRONMENT"
-export TF_VAR_image="$IMAGE"
+# Normalize before any build or rollout. Resource names stay dev or prod.
+case "$ENVIRONMENT" in
+  dev|development) ENVIRONMENT=dev ;;
+  prod|production) ENVIRONMENT=prod ;;
+  *) echo 'Choose dev, prod, development, or production' >&2; exit 2 ;;
+esac
+case "$ACTION" in
+  plan|apply|build) ;;
+  *) echo 'Choose plan, apply, or build' >&2; exit 2 ;;
+esac
 DRY=${LOOPITER_DEPLOY_DRY_RUN:-}
 RG="rg-loopiter-$ENVIRONMENT"
 JOB="migrate-loopiter-$ENVIRONMENT"
@@ -44,9 +51,13 @@ wait_for_job_image() {
   local deadline=$((SECONDS + 600))
   local current=""
   while (( SECONDS < deadline )); do
-    current=$(az containerapp job show --subscription "$SUBSCRIPTION" \
-      --resource-group "$RG" --name "$JOB" \
-      --query "properties.template.containers[0].image" --output tsv)
+    if ! current=$(az containerapp job show --subscription "$SUBSCRIPTION" \
+        --resource-group "$RG" --name "$JOB" --only-show-errors \
+        --query "properties.template.containers[0].image" --output tsv); then
+      echo "Could not read migration job ${JOB}. Web and worker were not updated." >&2
+      exit 1
+    fi
+    current=${current//$'\r'/}
     if [[ "$current" == "$IMAGE" ]]; then return 0; fi
     sleep 5
   done
@@ -61,8 +72,25 @@ start_migration_and_wait() {
     return 0
   fi
   local execution=""
-  execution=$(az containerapp job start --subscription "$SUBSCRIPTION" \
-    --resource-group "$RG" --name "$JOB" --query name --output tsv)
+  local active=""
+  if ! active=$(az containerapp job execution list --subscription "$SUBSCRIPTION" \
+      --resource-group "$RG" --name "$JOB" --only-show-errors \
+      --query "[?properties.status=='Running' || properties.status=='Processing'].name" \
+      --output tsv); then
+    echo "Could not list executions for ${JOB}. Web and worker were not updated." >&2
+    exit 1
+  fi
+  if [[ -n "$active" ]]; then
+    echo "Migration job ${JOB} already has an active execution (${active//$'\n'/ }). Web and worker were not updated." >&2
+    exit 1
+  fi
+  if ! execution=$(az containerapp job start --subscription "$SUBSCRIPTION" \
+      --resource-group "$RG" --name "$JOB" --only-show-errors \
+      --query name --output tsv); then
+    echo "Migration job ${JOB} did not start. Web and worker were not updated." >&2
+    exit 1
+  fi
+  execution=${execution//$'\r'/}
   if [[ -z "$execution" ]]; then
     echo "Migration job ${JOB} did not return an execution name. Web and worker were not updated." >&2
     exit 1
@@ -70,9 +98,13 @@ start_migration_and_wait() {
   local deadline=$((SECONDS + 1800))
   local status=""
   while (( SECONDS < deadline )); do
-    status=$(az containerapp job execution show --subscription "$SUBSCRIPTION" \
-      --resource-group "$RG" --name "$JOB" --job-execution-name "$execution" \
-      --query properties.status --output tsv)
+    if ! status=$(az containerapp job execution show --subscription "$SUBSCRIPTION" \
+        --resource-group "$RG" --name "$JOB" --job-execution-name "$execution" \
+        --only-show-errors --query properties.status --output tsv); then
+      echo "Could not read migration execution ${execution}. Web and worker were not updated." >&2
+      exit 1
+    fi
+    status=${status//$'\r'/}
     case "$status" in
       Succeeded) return 0 ;;
       Failed|Degraded|Stopped|Canceled|Cancelled)
@@ -133,6 +165,90 @@ apply_migration_then_rollout() {
   # ARM provisioning can succeed while Azure still serves an older healthy revision.
   wait_for_app_revisions
 }
+
+# Build args are only the two values computed here. Exported LOOPITER_COMMIT,
+# LOOPITER_BUILT_AT, DEPLOYMENT_ENV, and every other environment variable are
+# not forwarded. Validation runs before az acr build.
+build_platform_image() {
+  local platform commit built_at tag
+  local utc_re='^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$'
+  if [[ -n "${LOOPITER_PLATFORM_DIR:-}" ]]; then
+    platform=$LOOPITER_PLATFORM_DIR
+  else
+    platform=$REPO_ROOT/../loopiter-platform
+  fi
+  if [[ ! -d "$platform" ]]; then
+    echo "loopiter-platform checkout not found at ${platform}. Image was not built." >&2
+    exit 1
+  fi
+  platform=$(cd "$platform" && pwd)
+  case "$platform" in
+    "$REPO_ROOT"|"$REPO_ROOT"/*)
+      echo "LOOPITER_COMMIT must come from the loopiter-platform checkout, not ${REPO_ROOT}. Image was not built." >&2
+      exit 1 ;;
+  esac
+  unset LOOPITER_COMMIT LOOPITER_BUILT_AT
+  if ! commit=$(git -C "$platform" rev-parse HEAD); then
+    echo "git rev-parse HEAD failed in ${platform}. Image was not built." >&2
+    exit 1
+  fi
+  commit=${commit//$'\r'/}
+  if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "LOOPITER_COMMIT must match ^[0-9a-f]{40}\$ from git rev-parse HEAD in the loopiter-platform checkout. Image was not built." >&2
+    exit 1
+  fi
+  if ! built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ); then
+    echo "Could not format a UTC timestamp. Image was not built." >&2
+    exit 1
+  fi
+  built_at=${built_at//$'\r'/}
+  if [[ ! "$built_at" =~ $utc_re ]]; then
+    echo "LOOPITER_BUILT_AT must be a UTC timestamp YYYY-MM-DDTHH:MM:SSZ. Image was not built." >&2
+    exit 1
+  fi
+  if [[ "$IMAGE" != loopiterregistry7536.azurecr.io/loopiter:* ]]; then
+    echo "Supply loopiterregistry7536.azurecr.io/loopiter:TAG. Image was not built." >&2
+    exit 1
+  fi
+  tag=${IMAGE#loopiterregistry7536.azurecr.io/loopiter:}
+  if [[ ! "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+    echo "Image tag must be one registry tag. Image was not built." >&2
+    exit 1
+  fi
+  if [[ ! -f "$platform/Dockerfile.azure" ]]; then
+    echo "Dockerfile.azure is missing in ${platform}. Image was not built." >&2
+    exit 1
+  fi
+  if [[ "$DRY" == "1" ]]; then
+    echo "DRY-RUN ${ENVIRONMENT} ${IMAGE} build"
+    echo "BUILD-ARGS commit=${commit} built_at=${built_at} checkout=${platform}"
+  fi
+  (
+    cd "$platform" || exit 1
+    run_cmd az acr build \
+      --subscription "$SUBSCRIPTION" \
+      --registry loopiterregistry7536 \
+      --image "loopiter:${tag}" \
+      --file Dockerfile.azure \
+      --build-arg "LOOPITER_COMMIT=${commit}" \
+      --build-arg "LOOPITER_BUILT_AT=${built_at}" \
+      .
+  )
+  if [[ "$DRY" == "1" ]]; then
+    note "build passes only LOOPITER_COMMIT and LOOPITER_BUILT_AT and does not roll web or worker"
+  fi
+}
+
+if [[ "$ACTION" == build ]]; then
+  build_platform_image
+  exit 0
+fi
+
+: "${TF_VAR_owner_email:?Set TF_VAR_owner_email}"
+: "${TF_VAR_encryption_key:?Set the existing environment encryption key, or a new key for a NEW environment only}"
+: "${TF_VAR_auth_secret:?Set the environment authentication secret}"
+export TF_DATA_DIR="$ROOT/.terraform/$ENVIRONMENT"
+export TF_VAR_image="$IMAGE"
 
 if [[ "$DRY" == "1" ]]; then
   echo "DRY-RUN ${ENVIRONMENT} ${IMAGE} ${ACTION}"
