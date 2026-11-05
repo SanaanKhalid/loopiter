@@ -46,7 +46,7 @@ Export failure returns a failed callback so the caller can retry the same spans.
 
 ## Capture policy
 
-New observers and exporters default to `metadata-only`. Existing OpenAI and Vercel AI SDK wrappers preserve their full-capture default and now accept `capture`:
+Observers, exporters, and `CaptureSession` default to `metadata-only`. Pass `capture` mode `full` to retain bodies. OpenAI and Vercel AI SDK wrappers use that session:
 
 ```ts
 const options = {
@@ -57,7 +57,7 @@ const options = {
 ```
 
 - `metadata-only` omits input/output bodies. Provider wrappers also omit arbitrary application metadata in this mode. Explicit context IDs should be opaque identifiers.
-- `redacted` removes credential-like field names (matched as tokens, including separators and mixed case), private keys, known token patterns, labeled secrets, and URL userinfo before size limits. Node removes `http` and `https` userinfo. Python removes userinfo for any scheme. It does not remove every secret shape. Add a domain-specific `redact` callback for anything else. Pattern redaction is not a guarantee of anonymization.
+- `redacted` removes credential-like field names (matched as tokens, including separators and mixed case), private keys, known token patterns, labeled secrets, and URL userinfo for any scheme before size limits. It does not remove every secret shape. Add a domain-specific `redact` callback for anything else. Pattern redaction is not a guarantee of anonymization.
 - `full` explicitly retains payloads within the configured bounds. Optional custom redaction still applies.
 
 Oversized payloads are omitted with `truncated: true`; partial strings are not silently treated as complete answers. Application values are not mutated. `loopiterCapture` includes capture mode and an explicit `replayEligible: false` for these observational paths. A full provider trace still does not prove that tool effects, retrieval state, application code and generation settings can be replayed faithfully. Use the native application integration and approved frozen inputs for autonomous releases.

@@ -12,6 +12,7 @@ function setup(namespace = "capture") {
   const options: CaptureOptions = {
     loop,
     context: () => ({ artifacts: { prompt: "v1" } }),
+    capture: { mode: "full" },
   };
   return { loop, options };
 }
@@ -112,8 +113,8 @@ test("shared and rewrapped clients isolate guidance, do not mutate caller messag
     assert.equal((await item.loop.list("executions")).items.length, 1);
 });
 
-test("duplicate execution IDs and failed persistence prevent provider dispatch", async () => {
-  const { loop, options } = setup();
+test("duplicate execution IDs and failed persistence do not block the provider call", async () => {
+  const { options } = setup();
   let requests = 0;
   const base = client(async () => {
     requests++;
@@ -124,11 +125,8 @@ test("duplicate execution IDs and failed persistence prevent provider dispatch",
     context: () => ({ id: "same", artifacts: {} }),
   });
   await wrapped.chat.completions.create(call);
-  await assert.rejects(
-    wrapped.chat.completions.create(call),
-    /different input/,
-  );
-  assert.equal(requests, 1);
+  await wrapped.chat.completions.create(call);
+  assert.equal(requests, 2);
   const broken = new FeedbackLoop({
     namespace: "unavailable",
     store: {
@@ -140,13 +138,10 @@ test("duplicate execution IDs and failed persistence prevent provider dispatch",
       close: async () => {},
     },
   });
-  await assert.rejects(
-    wrapOpenAI(base, { ...options, loop: broken }).chat.completions.create(
-      call,
-    ),
-    /Store unavailable/,
+  await wrapOpenAI(base, { ...options, loop: broken }).chat.completions.create(
+    call,
   );
-  assert.equal(requests, 1);
+  assert.equal(requests, 3);
 });
 
 test("raw JSON response is captured without consuming the caller's response", async () => {
@@ -161,7 +156,7 @@ test("raw JSON response is captured without consuming the caller's response", as
   assert.equal(status((await loop.list("executions")).items[0]!), "completed");
 });
 
-test("post-dispatch persistence failure propagates and leaves a pending execution", async () => {
+test("post-dispatch persistence failure stays in the log and leaves a pending execution", async () => {
   const { loop, options } = setup();
   let requests = 0;
   const wrapped = wrapOpenAI(
@@ -174,10 +169,8 @@ test("post-dispatch persistence failure propagates and leaves a pending executio
   loop.completeExecution = async () => {
     throw new Error("Finalization unavailable.");
   };
-  await assert.rejects(
-    wrapped.chat.completions.create(call),
-    /Finalization unavailable/,
-  );
+  const response = await wrapped.chat.completions.create(call);
+  assert.equal(response.choices[0]?.message.content, "hello");
   assert.equal(requests, 1);
   assert.equal(status((await loop.list("executions")).items[0]!), "pending");
 });
@@ -298,7 +291,7 @@ test("OpenAI stream records terminal events and usage only after consumption", a
   assert.equal((row.output as { events: unknown[] }).events.length, 3);
 });
 
-test("OpenAI stream cancellation and capture overflow cannot report completion", async () => {
+test("OpenAI stream cancellation stays incomplete and overflow records the truncated sentinel", async () => {
   for (const overflow of [false, true]) {
     const { loop, options } = setup();
     const wrapped = wrapOpenAI(streamingClient(), {
@@ -309,17 +302,23 @@ test("OpenAI stream cancellation and capture overflow cannot report completion",
       ...call,
       stream: true,
     });
-    if (overflow)
-      await assert.rejects(async () => {
-        for await (const _part of stream) {
-          /* drain */
-        }
-      }, /maximumOutputBytes/);
-    else for await (const _part of stream) break;
-    assert.notEqual(
-      status((await loop.list("executions")).items[0]!),
-      "completed",
-    );
+    const parts = [];
+    for await (const part of stream) {
+      parts.push(part);
+      if (!overflow) break;
+    }
+    if (overflow) {
+      assert.equal(parts.length, 3);
+      assert.deepEqual(
+        (await loop.list("executions")).items[0]!.output,
+        { omitted: true, truncated: true },
+      );
+    } else {
+      assert.notEqual(
+        status((await loop.list("executions")).items[0]!),
+        "completed",
+      );
+    }
   }
 });
 
@@ -431,4 +430,57 @@ test("AI SDK truncation, cancellation and error events preserve failure status",
           : "failed",
     );
   }
+});
+
+test("omitted capture records only metadata for a stream", async () => {
+  const loop = new FeedbackLoop({
+    store: new InMemoryStore(),
+    namespace: "metadata-default",
+  });
+  const wrapped = wrapOpenAI(streamingClient(), {
+    loop,
+    context: () => ({
+      artifacts: { prompt: "v1" },
+      metadata: { note: "secret-note" },
+    }),
+  });
+  const stream = await wrapped.chat.completions.create({
+    ...call,
+    messages: [{ role: "user", content: "secret-prompt" }],
+    stream: true,
+  });
+  const parts = [];
+  for await (const part of stream) parts.push(part);
+  assert.equal(parts.length, 3);
+  const row = (await loop.list("executions")).items[0]!;
+  assert.deepEqual(row.input, { omitted: true });
+  assert.deepEqual(row.output, { omitted: true });
+  assert.equal(row.metadata.note, undefined);
+  assert.doesNotMatch(JSON.stringify(row), /secret-prompt|secret-note/);
+});
+
+test("context and execution hook failures do not replace the provider result", async () => {
+  const { options } = setup();
+  let requests = 0;
+  const base = client(async () => {
+    requests++;
+    return jsonResponse(result);
+  });
+  const brokenContext = wrapOpenAI(base, {
+    ...options,
+    context: () => {
+      throw new Error("Context unavailable.");
+    },
+  });
+  const response = await brokenContext.chat.completions.create(call);
+  assert.equal(response.choices[0]?.message.content, "hello");
+  const brokenHook = wrapOpenAI(base, {
+    ...options,
+    onExecution: () => {
+      throw new Error("Hook unavailable.");
+    },
+  });
+  const again = await brokenHook.chat.completions.create(call);
+  assert.equal(again.choices[0]?.message.content, "hello");
+  assert.equal(requests, 2);
 });

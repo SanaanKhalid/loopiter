@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **BREAKING:** OpenAI and Vercel capture now defaults to metadata-only. Pass `capture: { mode: "full" }` to retain request and response bodies. Oversized captured streams record `{ omitted: true, truncated: true }` instead of failing the call.
 - Package a self-hosted agent guide and application-side references with both SDKs.
 - Add initialization, configuration inspection, isolated offline verification and explicit foreground worker commands in native Python and Node.
 - Document application-owned feedback verification, storage, evaluator selection (including optional Jev), provider budgets, autonomous activation and recovery.
