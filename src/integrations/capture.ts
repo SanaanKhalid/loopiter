@@ -141,6 +141,11 @@ export class CaptureSession {
     private readonly maximum: number,
   ) {}
 
+  /**
+   * Start a captured execution. Persistence and capture failures raise here.
+   * The OpenAI and Vercel AI SDK wrappers fail open around this call: they log
+   * those failures and still return the provider result.
+   */
   static async begin(
     options: CaptureOptions,
     context: ExecutionContext,

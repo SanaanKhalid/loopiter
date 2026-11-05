@@ -69,7 +69,21 @@ export function createLoopiterSpanExporter(options: {
         pending.delete(work); callback({ code: 1, error: new Error("Loopiter trace persistence failed; retry the same spans.") });
       }).catch(() => undefined);
     },
-    async forceFlush() { await Promise.all([...pending]); },
+    async forceFlush(timeoutMillis = 30000) {
+      if (!Number.isSafeInteger(timeoutMillis) || timeoutMillis < 0)
+        throw new TypeError("timeoutMillis must be a non-negative integer.");
+      if (pending.size === 0) return;
+      const work = Promise.all([...pending]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("Timed out.")), timeoutMillis);
+          void work.then(() => resolve(), reject);
+        });
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    },
     async shutdown() { closed = true; await Promise.all([...pending]); },
   };
 }

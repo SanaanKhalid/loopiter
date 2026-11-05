@@ -199,6 +199,12 @@ class CaptureSession:
         context: Mapping[str, Any],
         request: Mapping[str, Any],
     ) -> CaptureSession:
+        """Start a captured execution. Persistence and capture failures raise.
+
+        The OpenAI wrapper, and the Node Vercel AI SDK wrapper, fail open
+        around this call: they log those failures and still return the provider
+        result. Provider errors still propagate.
+        """
         maximum = options.get("maximum_output_bytes", 65536)
         if (
             isinstance(maximum, bool)

@@ -231,10 +231,19 @@ class LoopiterSpanExporter:
             return {"code": 1, "error": error}
         return {"code": 0}
 
-    async def force_flush(self) -> None:
+    async def force_flush(self, timeout_millis: int | None = None) -> bool:
+        """Wait for pending exports. ``timeout_millis`` bounds the wait and does not cancel it."""
         pending = tuple(self._pending)
-        if pending:
-            await asyncio.gather(*pending)
+        if not pending:
+            return True
+        if timeout_millis is not None and (type(timeout_millis) is not int or timeout_millis < 0):
+            raise ValueError("timeout_millis must be a non-negative integer.")
+        timeout = None if timeout_millis is None else timeout_millis / 1000
+        done, unfinished = await asyncio.wait(pending, timeout=timeout)
+        if unfinished:
+            return False
+        await asyncio.gather(*done)
+        return True
 
     async def shutdown(self) -> None:
         self._closed = True
@@ -341,9 +350,11 @@ def opentelemetry_span_exporter(
     """Return an OpenTelemetry Python SpanExporter. The SDK is imported only here.
 
     Install ``loopiter[otel]``. ``export`` runs on the processor worker thread.
-    ``shutdown`` and ``force_flush`` finish when no event loop is running. When
-    a loop is running they schedule that work and return without raising, so
-    exporters registered later still shut down.
+    ``shutdown`` and ``force_flush`` finish when no event loop is running.
+    ``force_flush(timeout_millis)`` passes that bound through and returns
+    whether pending exports finished in time. When a loop is running they
+    schedule that work and return without raising, so exporters registered
+    later still shut down.
 
     ``PostgresStore`` and any other store bound to the application event loop
     are not supported on this worker-thread adapter. Await
@@ -374,8 +385,11 @@ def opentelemetry_span_exporter(
             _finish_or_schedule(bridge.shutdown())
 
         def force_flush(self, timeout_millis: int = 30000) -> bool:
-            del timeout_millis
-            _finish_or_schedule(bridge.force_flush())
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return bool(asyncio.run(bridge.force_flush(timeout_millis)))
+            _finish_or_schedule(bridge.force_flush(timeout_millis))
             return True
 
     return _Adapter()

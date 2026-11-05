@@ -23,8 +23,11 @@ wrapper cases are mapped in the module docstring of this file and in
 
 import asyncio
 import hashlib
+import json
 import re
+import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from loopiter import FeedbackLoop, InMemoryStore, LoopiterError
@@ -41,7 +44,7 @@ from loopiter.integrations.otel import (
     opentelemetry_span_exporter,
     span_execution_id,
 )
-from loopiter.integrations.privacy import copy_json
+from loopiter.integrations.privacy import copy_json, redact_capture
 
 
 def _loop(namespace: str = "observe-tests") -> FeedbackLoop:
@@ -163,6 +166,16 @@ class PrivacyTests(unittest.TestCase):
         text = pathlib.Path(__file__).resolve().parents[1].joinpath("pyproject.toml").read_text()
         self.assertIn("opentelemetry-api>=1.45.2,<2", text)
         self.assertIn("opentelemetry-sdk>=1.45.2,<2", text)
+
+    def test_redaction_matches_the_shared_fixture(self) -> None:
+        fixture = json.loads(
+            Path(__file__)
+            .resolve()
+            .parents[2]
+            .joinpath("test/fixtures/redaction-parity.json")
+            .read_text()
+        )
+        self.assertEqual(redact_capture(fixture["input"]), fixture["output"])
 
     def test_redacts_additional_token_patterns(self) -> None:
         raw = {
@@ -454,6 +467,26 @@ class ExporterTests(unittest.IsolatedAsyncioTestCase):
         await exporter.shutdown()
         self.assertEqual((await send([span]))["code"], 1)
         self.assertEqual(str((await send([span]))["error"]), "Exporter is shut down.")
+
+    async def test_force_flush_returns_within_the_timeout(self) -> None:
+        loop = _loop("flush-timeout")
+        original = loop.record_execution
+        release = asyncio.Event()
+
+        async def slow(*args, **kwargs):
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        loop.record_execution = slow  # type: ignore[method-assign]
+        exporter = create_loopiter_span_exporter(loop=loop)
+        exported = asyncio.create_task(exporter.export([Span()]))
+        await asyncio.sleep(0.01)
+        started = time.monotonic()
+        self.assertIs(await exporter.force_flush(50), False)
+        self.assertLess(time.monotonic() - started, 0.4)
+        release.set()
+        self.assertIs(await exporter.force_flush(2000), True)
+        self.assertEqual((await exported)["code"], 0)
 
     async def test_invalid_span_identity_fails_the_batch(self) -> None:
         loop = _loop()

@@ -155,7 +155,7 @@ the wrappers do not add retries. A process crash, abandoned stream or failed sto
 write can leave a pending record. Inspect the upstream operation before retrying;
 capture does not establish exactly-once inference or reconcile unknown charges.
 
-Capture failures propagate; pending executions remain available for investigation.
+`CaptureSession.begin` raises when capture or storage fails. The OpenAI and Vercel AI SDK wrappers fail open around that call: those failures are logged and do not replace the provider result. Provider errors still propagate. Pending executions remain available for investigation.
 `onExecution` / `on_execution` is awaited after the pending record and after final
 persistence. The normal SDK sanitizer and payload limit apply. Sanitizers must
 preserve reserved `loopiterCapture` / `loopiter_capture` identity and status fields.

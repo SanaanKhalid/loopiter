@@ -1,0 +1,10 @@
+{
+  "input": {
+    "note": "prefix eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.ZmFrZXNpZw suffix AKIAFAKEFAKEFAKE1234 accountkey=fakeaccountvalue sharedaccesssignature=fakesasvalue postgres://fixture:fakepass@db.example/app Bearer fakeTokenValue password=fakepassword sk-fakekeyvalue123",
+    "safe": "ordinary fixture text"
+  },
+  "output": {
+    "note": "prefix [REDACTED] suffix [REDACTED] accountkey=[REDACTED] sharedaccesssignature=[REDACTED] postgres://[REDACTED]@db.example/app Bearer [REDACTED] password=[REDACTED] [REDACTED]",
+    "safe": "ordinary fixture text"
+  }
+}
