@@ -1,0 +1,13 @@
+title = "loopiter"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Recorded test reports and the planted archive-scan fixture"
+paths = [
+  '''reports/mock-support-node22-pg17\.json''',
+  '''reports/mock-support-node24-pg17\.json''',
+  '''reports/autonomy-live-azure-2026-09-19-opaque\.json''',
+  '''infrastructure/azure/testdata/planted-key\.txt''',
+]

@@ -478,6 +478,24 @@ apply_migration_then_rollout() {
   note "both revisions serve ${IMAGE}"
 }
 
+# Scan the archived tree when gitleaks is installed. A finding stops the build.
+# If gitleaks is absent, warn and continue.
+scan_archived_tree() {
+  local log
+  if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "WARNING: gitleaks is not installed, so the archive was not scanned." >&2
+    return 0
+  fi
+  log=$(mktemp)
+  if ! gitleaks dir "$BUILD_CONTEXT" --no-banner --redact --exit-code 1 >"$log" 2>&1; then
+    echo "Archive scan failed. Image was not built." >&2
+    cat "$log" >&2
+    rm -f "$log"
+    exit 1
+  fi
+  rm -f "$log"
+}
+
 # Refuse to package environment or key files from the platform checkout.
 refuse_packaged_env_files() {
   local platform=$1 list_file path base blocked=""
@@ -594,6 +612,7 @@ build_platform_image() {
     echo "Dockerfile.azure is missing from HEAD in ${platform}. Image was not built." >&2
     exit 1
   fi
+  scan_archived_tree
   if [[ "$DRY" == "1" ]]; then
     echo "DRY-RUN ${ENVIRONMENT} ${IMAGE} build"
     echo "BUILD-ARGS commit=${commit} built_at=${built_at} checkout=${platform}"
