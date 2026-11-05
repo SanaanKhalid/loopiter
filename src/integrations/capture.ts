@@ -200,13 +200,11 @@ export class CaptureSession {
     if (this.options.capture?.mode === "metadata-only" || this.truncated) return;
     const value = captureJson(event);
     this.bytes += Buffer.byteLength(JSON.stringify(value), "utf8");
-    if (this.bytes > this.maximum && this.options.capture) {
+    if (this.bytes > this.maximum) {
       this.truncated = true;
       this.events.length = 0;
       return;
     }
-    if (this.bytes > this.maximum)
-      throw new RangeError("Captured stream exceeded maximumOutputBytes.");
     this.events.push(value);
   }
 

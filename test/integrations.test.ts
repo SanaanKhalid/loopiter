@@ -484,3 +484,232 @@ test("context and execution hook failures do not replace the provider result", a
   assert.equal(again.choices[0]?.message.content, "hello");
   assert.equal(requests, 2);
 });
+
+test("omitted capture records only metadata for a non-streaming call", async () => {
+  const completion = {
+    ...result,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: "secret-completion" },
+        finish_reason: "stop",
+      },
+    ],
+  };
+  const loop = new FeedbackLoop({
+    store: new InMemoryStore(),
+    namespace: "omit-sync",
+  });
+  const wrapped = wrapOpenAI(client(async () => jsonResponse(completion)), {
+    loop,
+    context: () => ({
+      artifacts: { prompt: "v1" },
+      metadata: { note: "secret-note" },
+    }),
+  });
+  const response = await wrapped.chat.completions.create({
+    ...call,
+    messages: [{ role: "user", content: "secret-prompt" }],
+  });
+  assert.equal(response.choices[0]?.message.content, "secret-completion");
+  const row = (await loop.list("executions")).items[0]!;
+  assert.deepEqual(row.input, { omitted: true });
+  assert.deepEqual(row.output, { omitted: true });
+  assert.equal(row.metadata.note, undefined);
+  assert.doesNotMatch(
+    JSON.stringify(row),
+    /secret-prompt|secret-completion|secret-note/,
+  );
+
+  const responsesLoop = new FeedbackLoop({
+    store: new InMemoryStore(),
+    namespace: "omit-responses",
+  });
+  const responses = wrapOpenAI(
+    client(async () =>
+      jsonResponse({
+        id: "resp-1",
+        status: "completed",
+        output: [{ content: "secret-completion" }],
+      }),
+    ),
+    {
+      loop: responsesLoop,
+      context: () => ({
+        artifacts: { prompt: "v1" },
+        metadata: { note: "secret-note" },
+      }),
+    },
+  );
+  await responses.responses.create({
+    model: "test-model",
+    input: "secret-prompt",
+  });
+  const responseRow = (await responsesLoop.list("executions")).items[0]!;
+  assert.deepEqual(responseRow.input, { omitted: true });
+  assert.deepEqual(responseRow.output, { omitted: true });
+  assert.doesNotMatch(
+    JSON.stringify(responseRow),
+    /secret-prompt|secret-completion|secret-note/,
+  );
+});
+
+test("omitted capture keeps bodies out when the provider fails", async () => {
+  const loop = new FeedbackLoop({
+    store: new InMemoryStore(),
+    namespace: "omit-error",
+  });
+  const wrapped = wrapOpenAI(
+    client(
+      async () =>
+        new Response("secret-completion", {
+          status: 500,
+          headers: { "content-type": "text/plain" },
+        }),
+    ),
+    {
+      loop,
+      context: () => ({
+        artifacts: { prompt: "v1" },
+        metadata: { note: "secret-note" },
+      }),
+    },
+  );
+  await assert.rejects(
+    wrapped.chat.completions.create({
+      ...call,
+      messages: [{ role: "user", content: "secret-prompt" }],
+    }),
+  );
+  const row = (await loop.list("executions")).items[0]!;
+  assert.deepEqual(row.input, { omitted: true });
+  assert.deepEqual(row.output, { omitted: true });
+  assert.equal(status(row), "failed");
+  assert.doesNotMatch(
+    JSON.stringify(row),
+    /secret-prompt|secret-completion|secret-note/,
+  );
+});
+
+test("omitted capture records only metadata for the AI SDK wrapper", async () => {
+  const loop = new FeedbackLoop({
+    store: new InMemoryStore(),
+    namespace: "ai-omit",
+  });
+  const wrapped = wrapModel(new FakeModel(), {
+    loop,
+    context: () => ({
+      artifacts: { prompt: "v1" },
+      metadata: { note: "secret-note" },
+    }),
+  });
+  const generated = (await wrapped.doGenerate({
+    prompt: [{ role: "user", content: "secret-prompt" }],
+  })) as { content: { text: string }[] };
+  assert.equal(generated.content[0]?.text, "hello");
+  const { stream } = await wrapped.doStream({
+    prompt: [{ role: "user", content: "secret-prompt" }],
+  });
+  const parts = [];
+  for await (const part of stream) parts.push(part);
+  assert.equal(parts.length, 2);
+  const rows = (await loop.list("executions")).items;
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.deepEqual(row.input, { omitted: true });
+    assert.deepEqual(row.output, { omitted: true });
+    assert.equal(row.metadata.note, undefined);
+    assert.doesNotMatch(JSON.stringify(row), /secret-prompt|secret-note|hello/);
+  }
+});
+
+test("AI SDK capture failures do not replace generate or stream results", async () => {
+  const prompt = { prompt: [{ role: "user", content: "hello" }] };
+  for (const kind of ["generate", "stream"] as const) {
+    for (const failing of ["prepare", "context", "begin", "finish"] as const) {
+      const loop = new FeedbackLoop({
+        store: new InMemoryStore(),
+        namespace: `ai-${kind}-${failing}`,
+      });
+      const base = new FakeModel();
+      if (failing === "begin")
+        loop.recordExecution = (async () => {
+          throw new Error("store down");
+        }) as typeof loop.recordExecution;
+      if (failing === "finish")
+        loop.completeExecution = (async () => {
+          throw new Error("finalization down");
+        }) as typeof loop.completeExecution;
+      const wrapped = wrapModel(base, {
+        loop,
+        context: () => {
+          if (failing === "context") throw new Error("context down");
+          return { artifacts: { prompt: "v1" } };
+        },
+      });
+      const raw =
+        failing === "prepare" ? { ...prompt, extra: new Date() } : prompt;
+      if (kind === "generate") {
+        const generated = (await wrapped.doGenerate(raw)) as {
+          content: { text: string }[];
+        };
+        assert.equal(generated.content[0]?.text, "hello");
+      } else {
+        const { stream } = await wrapped.doStream(raw);
+        const parts = [];
+        for await (const part of stream) parts.push(part);
+        assert.equal(parts.length, 2);
+      }
+    }
+  }
+});
+
+test("AI SDK provider errors stay the provider errors when capture fails", async () => {
+  const loop = new FeedbackLoop({
+    store: new InMemoryStore(),
+    namespace: "ai-provider-error",
+  });
+  loop.completeExecution = (async () => {
+    throw new Error("finalization down");
+  }) as typeof loop.completeExecution;
+  const base = new FakeModel();
+  base.doGenerate = async () => {
+    throw new Error("provider down");
+  };
+  const wrapped = wrapModel(base, {
+    loop,
+    context: () => ({ artifacts: { prompt: "v1" } }),
+  });
+  await assert.rejects(
+    wrapped.doGenerate({ prompt: [{ role: "user", content: "hello" }] }),
+    (error: unknown) =>
+      error instanceof Error && error.message === "provider down",
+  );
+  base.doStream = async () => ({
+    stream: new ReadableStream({
+      start(controller) {
+        controller.error(new Error("provider down"));
+      },
+    }),
+  });
+  const streamed = await wrapped.doStream({
+    prompt: [{ role: "user", content: "hello" }],
+  });
+  await assert.rejects(
+    (async () => {
+      for await (const _part of streamed.stream) {
+        /* drain */
+      }
+    })(),
+    (error: unknown) =>
+      error instanceof Error && error.message === "provider down",
+  );
+  base.doStream = async () => {
+    throw new Error("provider down");
+  };
+  await assert.rejects(
+    wrapped.doStream({ prompt: [{ role: "user", content: "hello" }] }),
+    (error: unknown) =>
+      error instanceof Error && error.message === "provider down",
+  );
+});
