@@ -9,8 +9,9 @@ fi
 export TF_VAR_owner_email=owner@example.test
 export TF_VAR_encryption_key=test-key
 export TF_VAR_auth_secret=test-secret
-apply_out=$(LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" dev example.azurecr.io/loopiter:tag apply)
-plan_out=$(LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" prod example.azurecr.io/loopiter:tag plan)
+IMAGE=loopiterregistry7536.azurecr.io/loopiter:tag
+apply_out=$(LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" dev "$IMAGE" apply)
+plan_out=$(LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" prod "$IMAGE" plan)
 python3 - "$apply_out" "$plan_out" <<'PY'
 import sys
 apply_out, plan_out = sys.argv[1:]
@@ -25,20 +26,42 @@ def positions(text, needles):
         cursor = index + len(needle)
     return found
 positions(apply_out, [
+    "az acr repository show",
+    "blob lease acquire",
     "-target=azurerm_container_app_job.migration",
+    "CHECK targeted plan changes only azurerm_container_app_job.migration",
     "apply",
-    "WAIT migrate-loopiter-dev image example.azurecr.io/loopiter:tag before web and worker",
+    "WAIT migrate-loopiter-dev image loopiterregistry7536.azurecr.io/loopiter:tag before web and worker",
     "az containerapp job start",
-    "migrate-loopiter-dev",
+    "CHECK migrate-loopiter-dev execution image loopiterregistry7536.azurecr.io/loopiter:tag",
     "WAIT migrate-loopiter-dev Succeeded before web and worker",
-    "WAIT web-loopiter-dev ready",
-    "WAIT worker-loopiter-dev ready",
+    "CAPTURE previous images",
+    "-target=azurerm_container_app.worker",
+    "CHECK targeted plan changes only azurerm_container_app.worker",
+    "WAIT worker-loopiter-dev ready image ",
+    "-target=azurerm_container_app.web",
+    "CHECK targeted plan changes only azurerm_container_app.web",
+    "WAIT web-loopiter-dev ready image ",
+    "both revisions serve ",
 ])
-full_apply = [line for line in apply_out.splitlines() if line.startswith("RUN ") and " apply " in line and "migration.tfplan" not in line]
+web_at = apply_out.find("-target=azurerm_container_app.web")
+worker_ready = apply_out.find("WAIT worker-loopiter-dev ready")
+if worker_ready < 0 or web_at < worker_ready:
+    raise SystemExit("web must be planned only after the worker is ready\n" + apply_out)
+full_apply = [
+    line for line in apply_out.splitlines()
+    if line.startswith("RUN ") and " apply " in line
+    and "migration.tfplan" not in line and "worker.tfplan" not in line and "web.tfplan" not in line
+]
 if len(full_apply) != 1 or "-target=" in full_apply[0]:
-    raise SystemExit(f"full apply must not target the job:\n{full_apply}")
-if "containerapp job start" in plan_out:
-    raise SystemExit("plan must not start the migration job")
+    raise SystemExit(f"full apply must not target one app:\n{full_apply}")
+full_at = apply_out.find(full_apply[0])
+if full_at < apply_out.find("WAIT web-loopiter-dev ready"):
+    raise SystemExit("full apply must follow both app waits")
+if "containerapp job start" in plan_out or "blob lease acquire" in plan_out:
+    raise SystemExit("plan must not lock or start the migration job")
+if "az acr repository show" not in plan_out:
+    raise SystemExit("plan must resolve a tag to a digest\n" + plan_out)
 if "web-loopiter-prod" not in plan_out or "worker-loopiter-prod" not in plan_out:
     raise SystemExit(plan_out)
 if "acr build" in apply_out or "--build-arg" in apply_out:
@@ -48,7 +71,7 @@ if "acr build" in plan_out or "--build-arg" in plan_out:
 print("deploy order ok")
 PY
 
-dev_long=$(LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" development example.azurecr.io/loopiter:tag apply)
+dev_long=$(LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" development "$IMAGE" apply)
 case "$dev_long" in
   *migrate-loopiter-dev*) ;;
   *) echo "development must select the dev stack" >&2; printf '%s\n' "$dev_long" >&2; exit 1 ;;
@@ -59,7 +82,7 @@ esac
 case "$dev_long" in
   *"acr build"*) echo "apply must not build" >&2; exit 1 ;;
 esac
-prod_long=$(LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" production example.azurecr.io/loopiter:tag plan)
+prod_long=$(LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" production "$IMAGE" plan)
 case "$prod_long" in
   *web-loopiter-prod*) ;;
   *) echo "production must select the prod stack" >&2; printf '%s\n' "$prod_long" >&2; exit 1 ;;
@@ -131,8 +154,7 @@ if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
   printf '%s\n' "$STUB_SHA"
   exit 0
 fi
-echo "unexpected git: $*" >&2
-exit 1
+exec /usr/bin/git "$@"
 EOF
 cat > "$work/datebin/date" <<'EOF'
 #!/bin/sh
@@ -168,9 +190,9 @@ prod_build=$(
   LOOPITER_PLATFORM_DIR="$platform" \
   "$ROOT/deploy.sh" production loopiterregistry7536.azurecr.io/loopiter:release build
 )
-python3 - "$build_out" "$prod_build" "$sha" <<'PY'
+python3 - "$build_out" "$prod_build" "$sha" "$platform" <<'PY'
 import re, sys
-build_out, prod_build, sha = sys.argv[1:]
+build_out, prod_build, sha, platform = sys.argv[1:]
 utc = re.compile(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$")
 if "DRY-RUN dev " not in build_out or "DRY-RUN development " in build_out:
     raise SystemExit("development must normalize to dev\n" + build_out)
@@ -194,5 +216,118 @@ for banned in ("hunter2", "DEPLOYMENT_ENV", "EXTRA_BUILD_ARG", "staging", "--sec
 names = re.findall(r"--build-arg (?:=)?([A-Za-z0-9_]+)=", line)
 if names != ["LOOPITER_COMMIT", "LOOPITER_BUILT_AT"]:
     raise SystemExit(f"build arg names: {names}\n{line}")
+show_at = build_out.find("repository show")
+archive_at = build_out.find("ARCHIVE HEAD")
+build_at = build_out.find("acr build")
+if not (0 <= show_at < build_at) or archive_at < 0 or archive_at > build_at:
+    raise SystemExit("build must archive HEAD and refuse an existing tag first\n" + build_out)
+context = line.split()[-1]
+if context in {".", platform} or context.startswith(platform + "/"):
+    raise SystemExit("build context must be an archive, not the working tree\n" + line)
+if "already exists" not in build_out:
+    raise SystemExit(build_out)
 print("build args ok")
 PY
+
+printf 'tracked\n' > "$platform/extra.txt"
+refuse "dirty tracked file" \
+  LOOPITER_DEPLOY_DRY_RUN=1 LOOPITER_PLATFORM_DIR="$platform" \
+  "$ROOT/deploy.sh" dev loopiterregistry7536.azurecr.io/loopiter:release build
+rm -f "$platform/extra.txt"
+mkdir -p "$platform/nested"
+printf 'untracked\n' > "$platform/nested/new.txt"
+refuse "dirty untracked file" \
+  LOOPITER_DEPLOY_DRY_RUN=1 LOOPITER_PLATFORM_DIR="$platform" \
+  "$ROOT/deploy.sh" dev loopiterregistry7536.azurecr.io/loopiter:release build
+rm -rf "$platform/nested"
+
+bad_apply=$(mktemp)
+if LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" dev 'not-an-image' apply >"$bad_apply" 2>"$work/bad-apply.err"; then
+  echo "invalid apply image must fail" >&2
+  exit 1
+fi
+if grep -q 'blob lease acquire' "$bad_apply" || grep -q 'acr build' "$bad_apply"; then
+  echo "invalid apply image reached the lock or a build" >&2
+  cat "$bad_apply" >&2
+  exit 1
+fi
+rm -f "$bad_apply"
+
+digest=loopiterregistry7536.azurecr.io/loopiter@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+digest_out=$(LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" dev "$digest" apply)
+if [[ "$digest_out" == *"acr repository show"* ]]; then
+  echo "a digest apply must not resolve a tag" >&2
+  printf '%s\n' "$digest_out" >&2
+  exit 1
+fi
+case "$digest_out" in
+  *"blob lease acquire"*) ;;
+  *) echo "digest apply must still lock" >&2; exit 1 ;;
+esac
+case "$digest_out" in
+  *"CHECK migrate-loopiter-dev execution image ${digest}"*) ;;
+  *) echo "digest apply must check the execution image" >&2; exit 1 ;;
+esac
+
+worker_fail=$(mktemp)
+worker_err=$(mktemp)
+if LOOPITER_DEPLOY_DRY_RUN=1 LOOPITER_DEPLOY_DRY_RUN_FAIL_APP=worker \
+  "$ROOT/deploy.sh" dev "$IMAGE" apply >"$worker_fail" 2>"$worker_err"; then
+  echo "worker wait failure must abort" >&2
+  exit 1
+fi
+if grep -q -- '-target=azurerm_container_app.web' "$worker_fail"; then
+  echo "web must not be planned when the worker wait fails" >&2
+  cat "$worker_fail" >&2
+  exit 1
+fi
+if ! grep -q 'ROLLBACK worker-loopiter-dev' "$worker_fail"; then
+  echo "worker wait failure must roll the worker back" >&2
+  cat "$worker_fail" >&2
+  exit 1
+fi
+rm -f "$worker_fail" "$worker_err"
+
+web_fail=$(mktemp)
+if LOOPITER_DEPLOY_DRY_RUN=1 LOOPITER_DEPLOY_DRY_RUN_FAIL_APP=web \
+  "$ROOT/deploy.sh" dev "$IMAGE" apply >"$web_fail" 2>"$work/web-fail.err"; then
+  echo "web wait failure must abort" >&2
+  exit 1
+fi
+python3 - "$web_fail" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+worker = text.find("WAIT worker-loopiter-dev ready")
+web_plan = text.find("-target=azurerm_container_app.web")
+web_fail = text.find("WAIT web-loopiter-dev failed")
+rollback = text.find("ROLLBACK web-loopiter-dev and worker-loopiter-dev")
+if min(worker, web_plan, web_fail, rollback) < 0 or not (worker < web_plan < web_fail < rollback):
+    raise SystemExit("web failure must follow a ready worker and roll both back\n" + text)
+if "tfplan" in text.split("ROLLBACK", 1)[1] and " apply " in text.split("ROLLBACK", 1)[1]:
+    raise SystemExit("full apply must not run after a web wait failure\n" + text)
+PY
+rm -f "$web_fail"
+
+guard=$ROOT/migration-plan-guard.py
+printf '%s' '{"resource_changes":[
+  {"address":"azurerm_container_app_job.migration","change":{"actions":["update"]}},
+  {"address":"azurerm_key_vault_secret.runtime","change":{"actions":["no-op"]}}
+]}' | python3 "$guard" azurerm_container_app_job.migration
+if printf '%s' '{"resource_changes":[
+  {"address":"azurerm_container_app_job.migration","change":{"actions":["update"]}},
+  {"address":"azurerm_postgresql_flexible_server.db","change":{"actions":["update"]}}
+]}' | python3 "$guard" azurerm_container_app_job.migration >/dev/null 2>&1; then
+  echo "a targeted plan that changes the database must fail" >&2
+  exit 1
+fi
+if printf '%s' '{"resource_changes":[
+  {"address":"azurerm_container_app.worker","change":{"actions":["update"]}},
+  {"address":"azurerm_role_assignment.acr_runtime","change":{"actions":["create"]}}
+]}' | python3 "$guard" azurerm_container_app.worker >/dev/null 2>&1; then
+  echo "a worker plan that changes a role assignment must fail" >&2
+  exit 1
+fi
+printf '%s' '{"resource_changes":[
+  {"address":"azurerm_container_app.web","change":{"actions":["no-op"]}}
+]}' | python3 "$guard" azurerm_container_app.web
+echo "plan guard ok"

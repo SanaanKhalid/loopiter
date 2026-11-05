@@ -36,13 +36,16 @@ customer credentials. The marketing site remains on Cloudflare.
 ## Deploy
 
 The platform source and Dockerfile are in the sibling `loopiter-platform` repository.
-Build a NEW immutable image tag for each release, then deploy the same tested image
-to both environments. Do not reuse a tag for different code.
+Build a NEW immutable image tag for each release from a clean checkout of that
+repo, then deploy the same tested image to both environments. `deploy.sh build`
+refuses uncommitted or untracked files and uploads an archive of `HEAD`. It
+also refuses a tag that already exists. Do not reuse a tag for different code.
 
 ```sh
 # Build once from the sibling loopiter-platform checkout (or set
-# LOOPITER_PLATFORM_DIR). deploy.sh reads that checkout's `git rev-parse HEAD`
-# and `date -u +%Y-%m-%dT%H:%M:%SZ`. The commit must match ^[0-9a-f]{40}$ and
+# LOOPITER_PLATFORM_DIR). The checkout must be clean. deploy.sh reads that
+# checkout's `git rev-parse HEAD` and `date -u +%Y-%m-%dT%H:%M:%SZ`, archives
+# HEAD, and refuses an existing tag. The commit must match ^[0-9a-f]{40}$ and
 # the timestamp must be YYYY-MM-DDTHH:MM:SSZ. The environment must be dev, prod,
 # development, or production. Anything else aborts before `az acr build`.
 # Only LOOPITER_COMMIT and LOOPITER_BUILT_AT are passed as build args.
@@ -64,15 +67,29 @@ The migration job deletes that bootstrap blob after a successful atomic import.
 A matching import ledger allows recovery from a lost successful response; different
 input or a populated destination without that ledger is rejected.
 
-`deploy.sh apply` migrates before it switches traffic. It updates only the
-`migrate-loopiter-<env>` job to the new image, starts that job with
-`az containerapp job start`, and waits until the execution is `Succeeded`.
-A failure or a 30-minute timeout aborts the script before web and worker
-revisions change. A timeout does not cancel the execution; a later apply
-refuses to start another one while that execution is `Running` or `Processing`.
-Web and worker revisions are applied only after success, and the script then
-waits until those revisions are the ones serving. The schema script never runs
-in HTTP requests.
+`deploy.sh apply` takes one lease on `locks/deploy-<env>.lock` in the Terraform
+state container for the whole apply and releases it on exit. It resolves a tag
+to a digest before Terraform runs. It migrates before it switches traffic: the
+targeted plan may change only `azurerm_container_app_job.migration`, then the
+script starts `migrate-loopiter-<env>` and waits until that execution is
+`Succeeded` and its container image is the digest. The job replica timeout is
+30 minutes; the script waits 35 minutes so a job that uses the full replica
+timeout is reported with Azure's own status. A failure, a wrong image, or a
+timeout aborts before worker and web change. A timeout does not cancel the
+execution; a later apply refuses to start another one while it is `Running`
+or `Processing`, and also refuses while the deploy lease is still held. Break
+a leftover lease only after confirming no apply is running.
+
+Migrations must stay backward-compatible with the revision that is still
+serving during this window. Ship expands first. Drops, renames, and other
+contractions belong in a later release, after every running revision has
+moved on.
+
+The worker is updated and checked next. Web is not changed if that wait fails,
+and the worker is returned to its previous image. Web is updated only after
+the worker serves the digest. If the web wait fails, both apps are returned
+to the previous image. A remaining full apply runs only after both serve it.
+The schema script never runs in HTTP requests.
 
 `LOOPITER_DEPLOY_DRY_RUN=1` prints this order and does not call Terraform or
 Azure. `bash infrastructure/azure/deploy-order.test.sh` checks it.
