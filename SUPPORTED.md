@@ -24,12 +24,29 @@ The following matrix describes 0.3. Existing 0.2 installations require explicit 
 | Durable reviewed/experiment/autonomous controller | Explicit flag + exact target policy; legacy apply removed | Equivalent async controller, native snake_case API |
 | Three autonomous workflows | Prompt, model routing, fixed-model decision routing; simulated paths | Same paths, plus optional fixed scikit-learn bridge |
 | Optional OpenAI/Azure providers | Native fetch, metered, explicitly enabled live mode | Standard-library application integration, metered, explicitly enabled live mode |
-| Observe, capture privacy, OTel span export | Yes: `observe`, `otel`, `privacy`, `capture` | Yes: same modules under `loopiter.integrations`, snake_case record fields; OTel SDK optional |
+| Observe, capture privacy, OTel span export | Yes: `observe`, `otel`, `privacy`, `capture`. Metadata-only default, export codes 0 and 1 | Yes: `loopiter.integrations.observe`, `otel`, `privacy`, `capture`. Same defaults, sentinel keys, and export codes. Snake_case records. OpenTelemetry SDK is an optional extra |
 | Distribution | Prepared `0.3.0-alpha.1`; not published by this work | Prepared `0.3.0a1`; not published by this work |
 
 Python and Node are separate lifecycle owners, not a shared-record/wire protocol.
 Do not independently deploy both SDKs to the same external target. See
 [Python setup and boundaries](python/README.md).
+
+`observe`, `otel`, `privacy`, and `capture` are at parity. Both default new observers
+and exporters to metadata-only, omit oversized payloads whole, and use export codes
+0 (ok) and 1 (retry the same spans). Python record fields are snake_case
+(`loopiter_capture`, `attempt_id`, `replay_eligible`). Payload sentinels stay
+`omitted`, `truncated`, `bytes`, `events`, and `chunks`.
+
+One behavior differs because the languages differ: JavaScript `for await` records
+cancellation when the caller `break`s. Python `async for` does not close the
+iterator on `break`, so the execution stays pending until `aclose()` or the
+`async with` block exits. A stream that is never iterated stays pending in both.
+
+These Node `test/integrations.test.ts` cases are not ported: Vercel AI SDK model
+wrapping, OpenAI `.withResponse()` / `.asResponse()` / `request_id`, and
+`AbortSignal`. Python covers the same capture outcomes through `CaptureSession`,
+the async OpenAI facade, and task cancellation. The existing `with_loopiter`
+facade still full-captures and does not take a capture policy.
 
 ## Node SDK details
 
@@ -48,7 +65,7 @@ Do not independently deploy both SDKs to the same external target. See
 | Starter | OpenAI/Azure OpenAI Responses via fetch, PostgreSQL prompt registry, exact-match evaluation, CLI | User credentials/model or Azure deployment; synthetic example dataset must be replaced for customer claims |
 | Self-hosted onboarding | Packaged Markdown agent guide; init, doctor, offline verification, reference sources and opt-in foreground worker in both languages | Application-specific callbacks, reviewed evidence, durable storage, provider credentials and process supervision remain application-owned; new onboarding build required |
 | Optional framework capture | OpenAI Node 6/7 and async Python 2.x; Vercel AI SDK 5/6/7; isolated client/model wrappers, released-guidance replacement, bounded stream capture | Only documented create/model calls; feedback and release selection remain application-owned. Capture statuses do not grade correctness. See [integration limits](fern/pages/framework-integrations.mdx). |
-| Application observation | `createObserver`, `createLoopiterSpanExporter`, `capturePayload` / `redactCapture`, `CaptureSession`; metadata-only default; OTel export codes 0 and 1 | Python `create_observer`, `create_loopiter_span_exporter`, `capture_payload` / `redact_capture`, `CaptureSession`. Same defaults, sentinel payload keys, and export codes. OpenTelemetry Python SDK is an optional extra imported only by `opentelemetry_span_exporter`. Vercel AI SDK remains Node-only. |
+| Application observation | `createObserver`, `createLoopiterSpanExporter`, `capturePayload` / `redactCapture`, `CaptureSession`; metadata-only default; OTel export codes 0 and 1. `for await` `break` records cancellation | Python `create_observer`, `create_loopiter_span_exporter`, `capture_payload` / `redact_capture`, `CaptureSession`. Same defaults, sentinels, and export codes. `async for` `break` stays pending until `aclose()` or `async with`. OpenTelemetry SDK is optional and imported only by `opentelemetry_span_exporter`. Vercel AI SDK, OpenAI `.withResponse()` / `.asResponse()`, and `AbortSignal` remain Node-only |
 | Other target kinds | Represent, recommend, evaluate and manually deploy through adapters | No built-in fine-tuning/training, code deployment, agent spawning or capacity scaling |
 | Telemetry / operations | Durable lifecycle events and structured controller reasons; no Loopiter telemetry | Existing logger, alerting, jobs, retention and incident response |
 | Hosted product | None | No dashboard, accounts, billing, SLA or managed service |

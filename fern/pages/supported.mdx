@@ -25,7 +25,7 @@ selection and controller metering remain application-owned.
 | Durable reviewed/experiment/autonomous controller | Explicit flag + exact target policy; legacy apply removed | Equivalent async controller, native snake_case API |
 | Three autonomous workflows | Prompt, model routing, fixed-model decision routing; simulated paths | Same paths, plus optional fixed scikit-learn bridge |
 | Optional OpenAI/Azure providers | Native fetch, metered, explicitly enabled live mode | Standard-library application integration, metered, explicitly enabled live mode |
-| Observe, capture privacy, OTel span export | Yes: `observe`, `otel`, `privacy`, `capture` | Yes: `loopiter.integrations`, snake_case records; OpenTelemetry SDK is an optional extra |
+| Observe, capture privacy, OTel span export | Yes: `observe`, `otel`, `privacy`, `capture`. Metadata-only default, export codes 0 and 1. `for await` break records cancellation | Yes: same four modules. Snake_case records. `async for` break stays pending until `aclose()` or `async with`. Vercel AI SDK, OpenAI `.withResponse()` / `.asResponse()`, and `AbortSignal` are Node-only |
 | Distribution | `0.3.0-alpha.1` (npm alpha tag) | `0.3.0a1` (PyPI prerelease) |
 
 Python and Node are separate lifecycle owners, not a shared-record/wire protocol.
