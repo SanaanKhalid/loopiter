@@ -395,6 +395,14 @@ expect_packaged keys/app.p12 refuse
 expect_packaged keys/app.pfx refuse
 expect_packaged id_rsa refuse
 expect_packaged id_rsa.pub refuse
+expect_packaged id_ed25519 refuse
+expect_packaged id_ed25519.pub refuse
+expect_packaged id_ecdsa refuse
+expect_packaged id_dsa refuse
+expect_packaged credentials refuse
+expect_packaged credentials.ini refuse
+expect_packaged Config/Credentials.INI refuse
+expect_packaged credentials.example allow
 expect_packaged prod.tfvars refuse
 expect_packaged terraform.tfstate refuse
 expect_packaged terraform.tfstate.backup refuse

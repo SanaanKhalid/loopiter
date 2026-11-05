@@ -1,0 +1,19 @@
+title = "loopiter"
+
+[extend]
+useDefault = true
+
+# Narrow allowlist for known non-secret identifiers.
+[[allowlists]]
+description = "narrow allowlist for known non-secret identifiers"
+regexTarget = "line"
+regexes = [
+  '''"decisionKey":\s*"[0-9a-f]{64}"''',
+  '''prefix [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+ suffix AKIAFAKE''',
+]
+
+[[allowlists]]
+description = "planted archive-scan fixture"
+paths = [
+  '''infrastructure/azure/testdata/planted-key\.txt''',
+]
