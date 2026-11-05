@@ -8,7 +8,11 @@ export interface CapturePolicy {
   redact?: (value: JsonValue) => JsonValue;
 }
 
-const credentialKey = /^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|client_secret|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials)$/i;
+const credentialKey = /(?:^|[-_])(?:authorization|proxy[-_]authorization|cookie|set[-_]cookie|password|passwd|secret|client[-_]secret|api[-_]?key|access[-_]token|refresh[-_]token|credentials)(?:$|[-_])/i;
+function credentialName(key: string): boolean {
+  const split = key.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2");
+  return credentialKey.test(split);
+}
 function redactText(value: string): string {
   return value
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, "[REDACTED]")
@@ -24,7 +28,7 @@ export function redactCapture(value: JsonValue): JsonValue {
   if (Array.isArray(value)) return value.map(redactCapture);
   if (value && typeof value === "object")
     return Object.fromEntries(Object.entries(value).map(([key, item]) =>
-      [key, credentialKey.test(key) ? "[REDACTED]" : redactCapture(item)]));
+      [key, credentialName(key) ? "[REDACTED]" : redactCapture(item)]));
   return value;
 }
 
