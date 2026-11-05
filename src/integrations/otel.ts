@@ -69,17 +69,30 @@ export function createLoopiterSpanExporter(options: {
         pending.delete(work); callback({ code: 1, error: new Error("Loopiter trace persistence failed; retry the same spans.") });
       }).catch(() => undefined);
     },
-    async forceFlush(timeoutMillis = 30000) {
-      if (!Number.isSafeInteger(timeoutMillis) || timeoutMillis < 0)
-        throw new TypeError("timeoutMillis must be a non-negative integer.");
-      if (pending.size === 0) return;
-      const work = Promise.all([...pending]);
+    /** True when pending exports finish. Timeout or an exporter error returns false and logs a warning. */
+    async forceFlush(timeoutMillis = 30000): Promise<boolean> {
+      if (!Number.isSafeInteger(timeoutMillis) || timeoutMillis < 0) {
+        console.warn("loopiter capture flush failed: TypeError");
+        return false;
+      }
+      if (pending.size === 0) return true;
+      const work = Promise.all([...pending]).then(
+        () => true,
+        (error: unknown) => {
+          const name = error instanceof Error ? error.name : "Error";
+          console.warn(`loopiter capture flush failed: ${name}`);
+          return false;
+        },
+      );
       let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => {
+          console.warn("loopiter capture flush timed out");
+          resolve(false);
+        }, timeoutMillis);
+      });
       try {
-        await new Promise<void>((resolve, reject) => {
-          timer = setTimeout(() => reject(new Error("Timed out.")), timeoutMillis);
-          void work.then(() => resolve(), reject);
-        });
+        return await Promise.race([work, timeout]);
       } finally {
         if (timer !== undefined) clearTimeout(timer);
       }

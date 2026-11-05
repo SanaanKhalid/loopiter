@@ -289,8 +289,9 @@ is required only for `opentelemetry_span_exporter`; importing the bridge does
 not import OpenTelemetry. `CaptureSession.begin` raises when capture or storage
 fails. The OpenAI wrapper, and the Node Vercel AI SDK wrapper, fail open around
 that call: they log the failure and still return the provider result. Provider
-errors still propagate. `force_flush(timeout_millis)` returns whether pending
-exports finished within that bound.
+errors still propagate. `force_flush(timeout_millis)` returns true when
+pending exports finish, and false with a logged warning on timeout or an
+exporter error. It does not raise.
 
 ```python
 import asyncio

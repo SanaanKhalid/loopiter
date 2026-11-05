@@ -14,7 +14,8 @@ const state = (r: {metadata:JsonObject}) => r.metadata.loopiterCapture as JsonOb
 
 test("redaction matches the shared fixture", () => {
   const fixture = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../test/fixtures/redaction-parity.json"), "utf8"));
-  assert.deepEqual(redactCapture(fixture.input), fixture.output);
+  const cases = fixture.cases ?? [fixture];
+  for (const item of cases) assert.deepEqual(redactCapture(item.input), item.output);
 });
 
 test("capture redacts before bounding, preserves application values, and explicitly marks incomplete data", () => {
@@ -120,10 +121,49 @@ test("forceFlush returns within its timeout", async () => {
   const exporter = createLoopiterSpanExporter({ loop });
   const sent = new Promise<{ code: number }>((resolve) => exporter.export([span], resolve));
   await new Promise((resolve) => setTimeout(resolve, 10));
-  const started = Date.now();
-  await assert.rejects(exporter.forceFlush(40), /Timed out/);
-  assert.ok(Date.now() - started < 400);
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    const started = Date.now();
+    assert.equal(await exporter.forceFlush(40), false);
+    assert.ok(Date.now() - started < 400);
+    assert.ok(warnings.some((line) => line.includes("flush")));
+  } finally {
+    console.warn = originalWarn;
+  }
   release();
-  await exporter.forceFlush(2000);
+  assert.equal(await exporter.forceFlush(2000), true);
   assert.equal((await sent).code, 0);
+});
+
+test("forceFlush returns false when the exporter fails", async () => {
+  const loop = setup();
+  loop.recordExecution = (async () => {
+    throw new Error("store down");
+  }) as typeof loop.recordExecution;
+  const span: ReadableSpan = {
+    name: "fixture",
+    spanContext: () => ({ traceId: "f".repeat(32), spanId: "a".repeat(16) }),
+    startTime: [1780000000, 0],
+    endTime: [1780000001, 0],
+    status: { code: 0 },
+    attributes: {},
+  };
+  const exporter = createLoopiterSpanExporter({ loop });
+  const sent = new Promise<{ code: number }>((resolve) => exporter.export([span], resolve));
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    assert.equal(await exporter.forceFlush(1000), false);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.ok(warnings.some((line) => line.includes("flush")));
+  assert.equal((await sent).code, 1);
 });

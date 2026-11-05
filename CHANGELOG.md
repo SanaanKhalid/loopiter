@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Align Node and Python redaction and make `forceFlush` / `force_flush` return false with a warning on timeout or exporter error instead of raising.
 - Package a self-hosted agent guide and application-side references with both SDKs.
 - Add initialization, configuration inspection, isolated offline verification and explicit foreground worker commands in native Python and Node.
 - Document application-owned feedback verification, storage, evaluator selection (including optional Jev), provider budgets, autonomous activation and recovery.

@@ -20,7 +20,8 @@ function redactText(value: string): string {
     .replace(/\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|AKIA[0-9A-Z]{16})\b/g, "[REDACTED]")
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
     .replace(/\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/@]*:[^\s/@]+@/g, "$1[REDACTED]@")
-    .replace(/((?:password|api[_-]?key|access[_-]?token|secret|accountkey|sharedaccesssignature)\s*[=:]\s*)[^\s&,;]+/gi, "$1[REDACTED]");
+    .replace(/((?:password|api[_-]?key|access[_-]?token|secret|accountkey|sharedaccesssignature)\s*[=:]\s*)[^\s&,;]+/gi, "$1[REDACTED]")
+    .replace(/(sig(?:\s*=\s*|%3d))(.*?)(?=%26|&|#|\s|$)/gi, "$1[REDACTED]");
 }
 
 /** Pattern redaction is deliberately conservative, not a guarantee of anonymization. */

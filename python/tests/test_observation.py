@@ -40,6 +40,7 @@ from loopiter.integrations.capture import (
 )
 from loopiter.integrations.observe import capture_payload, create_observer
 from loopiter.integrations.otel import (
+    _force_flush_blocking,
     create_loopiter_span_exporter,
     opentelemetry_span_exporter,
     span_execution_id,
@@ -175,7 +176,9 @@ class PrivacyTests(unittest.TestCase):
             .joinpath("test/fixtures/redaction-parity.json")
             .read_text()
         )
-        self.assertEqual(redact_capture(fixture["input"]), fixture["output"])
+        cases = fixture["cases"] if "cases" in fixture else [fixture]
+        for case in cases:
+            self.assertEqual(redact_capture(case["input"]), case["output"])
 
     def test_redacts_additional_token_patterns(self) -> None:
         raw = {
@@ -482,11 +485,58 @@ class ExporterTests(unittest.IsolatedAsyncioTestCase):
         exported = asyncio.create_task(exporter.export([Span()]))
         await asyncio.sleep(0.01)
         started = time.monotonic()
-        self.assertIs(await exporter.force_flush(50), False)
+        with self.assertLogs("loopiter.integrations.otel", level="WARNING") as logs:
+            self.assertIs(await exporter.force_flush(50), False)
         self.assertLess(time.monotonic() - started, 0.4)
+        self.assertTrue(any("flush" in message for message in logs.output))
         release.set()
         self.assertIs(await exporter.force_flush(2000), True)
         self.assertEqual((await exported)["code"], 0)
+
+    async def test_force_flush_returns_false_when_the_exporter_fails(self) -> None:
+        loop = _loop("flush-error")
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def broken(*_args, **_kwargs):
+            started.set()
+            await release.wait()
+            raise RuntimeError("store down")
+
+        loop.record_execution = broken  # type: ignore[method-assign]
+        exporter = create_loopiter_span_exporter(loop=loop)
+        exported = asyncio.create_task(exporter.export([Span()]))
+        await started.wait()
+        flush = asyncio.create_task(exporter.force_flush(1000))
+        await asyncio.sleep(0)
+        release.set()
+        with self.assertLogs("loopiter.integrations.otel", level="WARNING") as logs:
+            self.assertIs(await flush, False)
+        self.assertTrue(any("flush" in message for message in logs.output))
+        self.assertEqual((await exported)["code"], 1)
+
+    async def test_blocking_flush_waits_on_a_running_loop(self) -> None:
+        loop = _loop("flush-running")
+        exporter = create_loopiter_span_exporter(loop=loop)
+        await exporter.export([Span()])
+        self.assertFalse(_force_flush_blocking(exporter, 1000))
+        self.assertIs(await asyncio.to_thread(_force_flush_blocking, exporter, 1000), True)
+        original = loop.record_execution
+        release = asyncio.Event()
+
+        async def slow(*args, **kwargs):
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        loop.record_execution = slow  # type: ignore[method-assign]
+        span = Span()
+        span.span_context = lambda: {"trace_id": "d" * 32, "span_id": "e" * 16}  # type: ignore[method-assign]
+        pending = asyncio.create_task(exporter.export([span]))
+        await asyncio.sleep(0.01)
+        started = time.monotonic()
+        self.assertIs(await asyncio.to_thread(_force_flush_blocking, exporter, 50), False)
+        self.assertLess(time.monotonic() - started, 0.5)
+        release.set()
+        self.assertEqual((await pending)["code"], 0)
 
     async def test_invalid_span_identity_fails_the_batch(self) -> None:
         loop = _loop()

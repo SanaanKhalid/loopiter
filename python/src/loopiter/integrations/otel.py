@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib
+import logging
 import math
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -21,6 +22,8 @@ from typing import Any, NotRequired, TypedDict, cast
 from .capture import capture_json
 from .observe import ObservationContext
 from .privacy import CapturePolicy, JsonValue, capture_payload, checked_policy
+
+_LOG = logging.getLogger("loopiter.integrations.otel")
 
 _TRACE = re.compile(r"^[a-f0-9]{32}$", re.IGNORECASE | re.ASCII)
 _SPAN = re.compile(r"^[a-f0-9]{16}$", re.IGNORECASE | re.ASCII)
@@ -214,8 +217,13 @@ class LoopiterSpanExporter:
         self._select = select
         self._pending: set[asyncio.Task[None]] = set()
         self._closed = False
+        self._owner: asyncio.AbstractEventLoop | None = None
+
+    def running_loop(self) -> asyncio.AbstractEventLoop | None:
+        return self._owner
 
     async def export(self, spans: Sequence[object]) -> ExportResult:
+        self._owner = asyncio.get_running_loop()
         if self._closed:
             return {"code": 1, "error": RuntimeError("Exporter is shut down.")}
         task = asyncio.create_task(self._write(tuple(spans)))
@@ -232,18 +240,42 @@ class LoopiterSpanExporter:
         return {"code": 0}
 
     async def force_flush(self, timeout_millis: int | None = None) -> bool:
-        """Wait for pending exports. ``timeout_millis`` bounds the wait and does not cancel it."""
-        pending = tuple(self._pending)
-        if not pending:
-            return True
-        if timeout_millis is not None and (type(timeout_millis) is not int or timeout_millis < 0):
-            raise ValueError("timeout_millis must be a non-negative integer.")
-        timeout = None if timeout_millis is None else timeout_millis / 1000
-        done, unfinished = await asyncio.wait(pending, timeout=timeout)
-        if unfinished:
+        """Return True when pending exports finish.
+
+        ``timeout_millis`` bounds the wait. Timeout or an exporter error returns
+        False and logs a warning. Those outcomes do not raise and do not cancel
+        the pending exports.
+        """
+        try:
+            pending = tuple(self._pending)
+            if not pending:
+                return True
+            if timeout_millis is not None and (
+                type(timeout_millis) is not int or timeout_millis < 0
+            ):
+                _LOG.warning("capture flush failed: %s", "ValueError")
+                return False
+            timeout = None if timeout_millis is None else timeout_millis / 1000
+            done, unfinished = await asyncio.wait(pending, timeout=timeout)
+            if unfinished:
+                _LOG.warning("capture flush timed out")
+                return False
+            failed = False
+            for task in done:
+                if task.cancelled():
+                    _LOG.warning("capture flush failed: %s", "CancelledError")
+                    failed = True
+                    continue
+                error = task.exception()
+                if error is not None:
+                    _LOG.warning("capture flush failed: %s", type(error).__name__)
+                    failed = True
+            return not failed
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            _LOG.warning("capture flush failed: %s", type(error).__name__)
             return False
-        await asyncio.gather(*done)
-        return True
 
     async def shutdown(self) -> None:
         self._closed = True
@@ -350,11 +382,13 @@ def opentelemetry_span_exporter(
     """Return an OpenTelemetry Python SpanExporter. The SDK is imported only here.
 
     Install ``loopiter[otel]``. ``export`` runs on the processor worker thread.
-    ``shutdown`` and ``force_flush`` finish when no event loop is running.
-    ``force_flush(timeout_millis)`` passes that bound through and returns
-    whether pending exports finished in time. When a loop is running they
-    schedule that work and return without raising, so exporters registered
-    later still shut down.
+    ``shutdown`` finishes when no event loop is running. When a loop is running
+    it schedules that work and returns without raising, so exporters registered
+    later still shut down. ``force_flush(timeout_millis)`` returns True only
+    after pending exports finish. Timeout or an exporter error returns False
+    and logs a warning; it does not raise. On the thread that is already
+    running the loop, waiting would deadlock, so the call returns False. From
+    another thread it waits on that loop up to the timeout.
 
     ``PostgresStore`` and any other store bound to the application event loop
     are not supported on this worker-thread adapter. Await
@@ -385,12 +419,7 @@ def opentelemetry_span_exporter(
             _finish_or_schedule(bridge.shutdown())
 
         def force_flush(self, timeout_millis: int = 30000) -> bool:
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                return bool(asyncio.run(bridge.force_flush(timeout_millis)))
-            _finish_or_schedule(bridge.force_flush(timeout_millis))
-            return True
+            return _force_flush_blocking(bridge, timeout_millis)
 
     return _Adapter()
 
@@ -411,6 +440,28 @@ def _run(coro: Awaitable[Any]) -> Any:
         "OpenTelemetry called export on a running event loop. "
         "Await LoopiterSpanExporter.export from the application task."
     )
+
+
+def _force_flush_blocking(bridge: LoopiterSpanExporter, timeout_millis: int) -> bool:
+    """Wait for ``bridge.force_flush`` without blocking the loop that owns it."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        owner = bridge.running_loop()
+        if owner is not None and owner.is_running():
+            future = asyncio.run_coroutine_threadsafe(bridge.force_flush(timeout_millis), owner)
+            try:
+                return bool(future.result(timeout=(timeout_millis / 1000) + 0.25))
+            except Exception as error:
+                _LOG.warning("capture flush failed: %s", type(error).__name__)
+                return False
+        try:
+            return bool(asyncio.run(bridge.force_flush(timeout_millis)))
+        except Exception as error:
+            _LOG.warning("capture flush failed: %s", type(error).__name__)
+            return False
+    _LOG.warning("capture flush failed: %s", "RuntimeError")
+    return False
 
 
 def _finish_or_schedule(coro: Awaitable[Any]) -> None:

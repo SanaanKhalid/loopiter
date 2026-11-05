@@ -46,6 +46,10 @@ _LABELED_SECRET = re.compile(
     r"\s*[=:]\s*)[^\s&,;]+",
     re.IGNORECASE | re.ASCII,
 )
+_QUERY_VALUE = re.compile(
+    r"(sig(?:\s*=\s*|%3d))(.*?)(?=%26|&|#|\s|$)",
+    re.IGNORECASE | re.ASCII,
+)
 _MAX_JSON_DEPTH = 32
 
 
@@ -89,7 +93,8 @@ def _redact_text(value: str) -> str:
     value = _TOKEN.sub("[REDACTED]", value)
     value = _JWT.sub("[REDACTED]", value)
     value = _URL_USERINFO.sub(r"\1[REDACTED]@", value)
-    return _LABELED_SECRET.sub(r"\1[REDACTED]", value)
+    value = _LABELED_SECRET.sub(r"\1[REDACTED]", value)
+    return _QUERY_VALUE.sub(r"\1[REDACTED]", value)
 
 
 def redact_capture(value: JsonValue) -> JsonValue:
