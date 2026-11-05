@@ -3,6 +3,8 @@
 # only then switches worker and web. Build stamps one image from a clean
 # archive of the platform checkout.
 # LOOPITER_DEPLOY_DRY_RUN=1 prints the order and does not call Terraform or Azure.
+# Exit 2: bad usage. Exit 3: a restore failed. Exit 1: any other failure.
+# python3 is required. It checks targeted Terraform plans before apply.
 set -euo pipefail
 umask 077
 SUBSCRIPTION=d865e614-32e3-4149-860e-36ccec037536
@@ -26,9 +28,17 @@ case "$ACTION" in
   *) echo 'Choose plan, apply, or build' >&2; exit 2 ;;
 esac
 DRY=${LOOPITER_DEPLOY_DRY_RUN:-}
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required to check Terraform plans." >&2
+  exit 1
+fi
 DRY_FAIL_APP=""
+DRY_FAIL_RESTORE=""
+DRY_FAIL_LOCK_RELEASE=""
 if [[ "$DRY" == "1" ]]; then
   DRY_FAIL_APP=${LOOPITER_DEPLOY_DRY_RUN_FAIL_APP:-}
+  DRY_FAIL_RESTORE=${LOOPITER_DEPLOY_DRY_RUN_FAIL_RESTORE:-}
+  DRY_FAIL_LOCK_RELEASE=${LOOPITER_DEPLOY_DRY_RUN_FAIL_LOCK_RELEASE:-}
 fi
 RG="rg-loopiter-$ENVIRONMENT"
 JOB="migrate-loopiter-$ENVIRONMENT"
@@ -61,22 +71,39 @@ note() {
 
 release_deploy_lock() {
   local id=${LOCK_LEASE:-}
-  LOCK_LEASE=""
   if [[ -z "$id" ]]; then
     return 0
   fi
-  az storage blob lease release --subscription "$SUBSCRIPTION" \
-    --account-name "$STATE_ACCOUNT" --container-name "$STATE_CONTAINER" \
-    --blob-name "$LOCK_BLOB" --lease-id "$id" --auth-mode login \
-    || echo "Could not release deploy lock ${LOCK_BLOB}. Break that lease before another apply." >&2
+  if [[ "$DRY" == "1" && "$DRY_FAIL_LOCK_RELEASE" == "1" ]]; then
+    echo "ERROR: failed to release deploy lock ${LOCK_BLOB}. The lease is still held." >&2
+    return 1
+  fi
+  if [[ "$DRY" == "1" ]]; then
+    LOCK_LEASE=""
+    return 0
+  fi
+  if az storage blob lease release --subscription "$SUBSCRIPTION" \
+      --account-name "$STATE_ACCOUNT" --container-name "$STATE_CONTAINER" \
+      --blob-name "$LOCK_BLOB" --lease-id "$id" --auth-mode login; then
+    LOCK_LEASE=""
+    return 0
+  fi
+  echo "ERROR: failed to release deploy lock ${LOCK_BLOB}. The lease is still held." >&2
+  return 1
 }
 
 cleanup() {
-  release_deploy_lock
+  local status=$?
+  if ! release_deploy_lock; then
+    if [[ "$status" -eq 0 ]]; then
+      status=1
+    fi
+  fi
   if [[ -n "${BUILD_CONTEXT:-}" ]]; then
-    rm -rf "$BUILD_CONTEXT"
+    rm -rf "$BUILD_CONTEXT" || true
     BUILD_CONTEXT=""
   fi
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -86,6 +113,9 @@ acquire_deploy_lock() {
     run_cmd az storage blob lease acquire --subscription "$SUBSCRIPTION" \
       --account-name "$STATE_ACCOUNT" --container-name "$STATE_CONTAINER" \
       --blob-name "$LOCK_BLOB" --lease-duration=-1 --auth-mode login
+    if [[ "$DRY_FAIL_LOCK_RELEASE" == "1" ]]; then
+      LOCK_LEASE="00000000-0000-0000-0000-000000000000"
+    fi
     note "the lease is released on exit"
     return 0
   fi
@@ -302,8 +332,8 @@ capture_previous_images() {
     run_cmd az containerapp show --subscription "$SUBSCRIPTION" --resource-group "$RG" \
       --name "worker-loopiter-${ENVIRONMENT}" \
       --query "properties.template.containers[0].image" --output tsv
-    PREV_WEB_IMAGE="<previous-web-image>"
-    PREV_WORKER_IMAGE="<previous-worker-image>"
+    PREV_WEB_IMAGE="${IMAGE_PREFIX}@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    PREV_WORKER_IMAGE="${IMAGE_PREFIX}@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     return 0
   fi
   PREV_WEB_IMAGE=$(app_image "web-loopiter-${ENVIRONMENT}")
@@ -312,12 +342,44 @@ capture_previous_images() {
 
 roll_back_app() {
   local role=$1 previous=$2
+  local address="azurerm_container_app.${role}"
+  local plan="$ROOT/${ENVIRONMENT}.${role}.rollback.tfplan"
+  local saved=$IMAGE
   if [[ -z "$previous" ]]; then
-    echo "No previous image for ${role}-loopiter-${ENVIRONMENT}, so it was not restored." >&2
     return 1
   fi
-  run_cmd az containerapp update --subscription "$SUBSCRIPTION" --resource-group "$RG" \
-    --name "${role}-loopiter-${ENVIRONMENT}" --container-name "$role" --image "$previous"
+  IMAGE=$previous
+  export TF_VAR_image=$previous
+  plan_target "$address" "$plan" "$previous" || { IMAGE=$saved; export TF_VAR_image=$saved; return 1; }
+  require_plan_only "$plan" "$address" || { IMAGE=$saved; export TF_VAR_image=$saved; return 1; }
+  if [[ "$DRY" == "1" ]]; then
+    case ",${DRY_FAIL_RESTORE}," in
+      *",${role},"*) IMAGE=$saved; export TF_VAR_image=$saved; return 1 ;;
+    esac
+  fi
+  if ! run_cmd terraform -chdir="$ROOT/environment" apply -input=false "$plan"; then
+    IMAGE=$saved
+    export TF_VAR_image=$saved
+    return 1
+  fi
+  IMAGE=$saved
+  export TF_VAR_image=$saved
+}
+
+finish_restore() {
+  local failed="" role previous
+  while [[ $# -ge 2 ]]; do
+    role=$1
+    previous=$2
+    shift 2
+    if ! roll_back_app "$role" "$previous"; then
+      failed="${failed:+$failed }${role}-loopiter-${ENVIRONMENT}"
+    fi
+  done
+  if [[ -n "$failed" ]]; then
+    echo "ERROR: failed to restore ${failed}. Previous images were not confirmed." >&2
+    exit 3
+  fi
 }
 
 wait_one_app() {
@@ -360,7 +422,13 @@ plan_full() {
 }
 
 plan_target() {
-  local address=$1 plan=$2
+  local address=$1 plan=$2 image=${3:-}
+  if [[ -n "$image" ]]; then
+    run_cmd terraform -chdir="$ROOT/environment" plan -input=false \
+      -var-file="$ROOT/environments/${ENVIRONMENT}.tfvars" \
+      -var "image=${image}" -target="$address" -out="$plan"
+    return $?
+  fi
   run_cmd terraform -chdir="$ROOT/environment" plan -input=false \
     -var-file="$ROOT/environments/${ENVIRONMENT}.tfvars" \
     -target="$address" -out="$plan"
@@ -392,7 +460,7 @@ apply_migration_then_rollout() {
   run_cmd terraform -chdir="$ROOT/environment" apply -input=false "$WORKER_PLAN"
   if ! wait_one_app worker; then
     echo "ROLLBACK worker-loopiter-${ENVIRONMENT} to the previous image"
-    roll_back_app worker "$PREV_WORKER_IMAGE" || true
+    finish_restore worker "$PREV_WORKER_IMAGE"
     echo "Worker did not serve ${IMAGE}. Web was not updated." >&2
     exit 1
   fi
@@ -401,14 +469,40 @@ apply_migration_then_rollout() {
   run_cmd terraform -chdir="$ROOT/environment" apply -input=false "$WEB_PLAN"
   if ! wait_one_app web; then
     echo "ROLLBACK web-loopiter-${ENVIRONMENT} and worker-loopiter-${ENVIRONMENT} to the previous image"
-    roll_back_app web "$PREV_WEB_IMAGE" || true
-    roll_back_app worker "$PREV_WORKER_IMAGE" || true
+    finish_restore web "$PREV_WEB_IMAGE" worker "$PREV_WORKER_IMAGE"
     echo "Web did not serve ${IMAGE}. Both apps were returned to the previous image." >&2
     exit 1
   fi
   plan_full
   run_cmd terraform -chdir="$ROOT/environment" apply -input=false "$FULL_PLAN"
   note "both revisions serve ${IMAGE}"
+}
+
+# Refuse to package environment or key files from the platform checkout.
+refuse_packaged_env_files() {
+  local platform=$1 list_file path base blocked=""
+  list_file=$(mktemp)
+  if ! git -C "$platform" ls-files -z >"$list_file"; then
+    rm -f "$list_file"
+    echo "Could not list tracked files in ${platform}. Image was not built." >&2
+    return 1
+  fi
+  while IFS= read -r -d '' path || [[ -n "$path" ]]; do
+    [[ -z "$path" ]] && continue
+    base=${path##*/}
+    base=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
+    case "$base" in
+      *.example|*.sample) continue ;;
+      .env|.env.*|.dev.vars|.npmrc|.pypirc|kubeconfig) blocked=$path; break ;;
+      *.pem|*.key|*.p12|*.pfx|id_rsa*|*.tfvars|*.tfstate*) blocked=$path; break ;;
+      credentials*.json|service-account*.json) blocked=$path; break ;;
+    esac
+  done < "$list_file"
+  rm -f "$list_file"
+  if [[ -n "$blocked" ]]; then
+    echo "Refusing to package environment or key files (${blocked}). Image was not built." >&2
+    return 1
+  fi
 }
 
 refuse_existing_tag() {
@@ -486,6 +580,9 @@ build_platform_image() {
   classify_image
   if [[ "$IMAGE_KIND" != tag ]]; then
     echo "Build a new tag. Apply that tag, or its digest, later. Image was not built." >&2
+    exit 1
+  fi
+  if ! refuse_packaged_env_files "$platform"; then
     exit 1
   fi
   BUILD_CONTEXT=$(mktemp -d)

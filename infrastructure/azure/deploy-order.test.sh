@@ -303,8 +303,10 @@ web_fail = text.find("WAIT web-loopiter-dev failed")
 rollback = text.find("ROLLBACK web-loopiter-dev and worker-loopiter-dev")
 if min(worker, web_plan, web_fail, rollback) < 0 or not (worker < web_plan < web_fail < rollback):
     raise SystemExit("web failure must follow a ready worker and roll both back\n" + text)
-if "tfplan" in text.split("ROLLBACK", 1)[1] and " apply " in text.split("ROLLBACK", 1)[1]:
-    raise SystemExit("full apply must not run after a web wait failure\n" + text)
+after = text.split("ROLLBACK", 1)[1]
+for line in after.splitlines():
+    if " apply " in line and line.rstrip().endswith("dev.tfplan"):
+        raise SystemExit("full apply must not run after a web wait failure\n" + text)
 PY
 rm -f "$web_fail"
 
@@ -331,3 +333,143 @@ printf '%s' '{"resource_changes":[
   {"address":"azurerm_container_app.web","change":{"actions":["no-op"]}}
 ]}' | python3 "$guard" azurerm_container_app.web
 echo "plan guard ok"
+
+restore_out=$(mktemp)
+restore_err=$(mktemp)
+restore_code=0
+LOOPITER_DEPLOY_DRY_RUN=1 \
+  LOOPITER_DEPLOY_DRY_RUN_FAIL_APP=web \
+  LOOPITER_DEPLOY_DRY_RUN_FAIL_RESTORE=web \
+  "$ROOT/deploy.sh" dev "$IMAGE" apply >"$restore_out" 2>"$restore_err" || restore_code=$?
+if [[ "$restore_code" -ne 3 ]]; then
+  echo "a failed restore must exit 3, got ${restore_code}" >&2
+  cat "$restore_err" >&2
+  exit 1
+fi
+if grep -q 'returned to the previous image' "$restore_out" "$restore_err"; then
+  echo "a failed restore must not claim the apps were returned" >&2
+  exit 1
+fi
+if ! grep -q 'ERROR: failed to restore web-loopiter-dev' "$restore_err"; then
+  echo "restore error must name web-loopiter-dev" >&2
+  cat "$restore_err" >&2
+  exit 1
+fi
+rm -f "$restore_out" "$restore_err"
+
+expect_packaged() {
+  local rel=$1 mode=$2
+  local out err code=0
+  mkdir -p "$platform/$(dirname "$rel")"
+  printf 'x\n' > "$platform/$rel"
+  git -C "$platform" add -- "$rel"
+  git -C "$platform" commit -q -m "add $rel"
+  err=$(mktemp)
+  out=$(LOOPITER_DEPLOY_DRY_RUN=1 LOOPITER_PLATFORM_DIR="$platform" \
+    "$ROOT/deploy.sh" dev loopiterregistry7536.azurecr.io/loopiter:release build 2>"$err") || code=$?
+  if [[ "$mode" == refuse ]]; then
+    if [[ "$code" -eq 0 || "$out" == *"acr build"* ]] || ! grep -q 'Refusing to package environment or key files' "$err"; then
+      echo "expected refuse for $rel" >&2
+      printf '%s\n' "$out" >&2
+      cat "$err" >&2
+      exit 1
+    fi
+  else
+    if [[ "$code" -ne 0 || "$out" != *"acr build"* || "$out" == *"Refusing to package"* ]] || grep -q 'Refusing to package' "$err"; then
+      echo "expected allow for $rel" >&2
+      printf '%s\n' "$out" >&2
+      cat "$err" >&2
+      exit 1
+    fi
+  fi
+  rm -f "$err"
+  git -C "$platform" rm -q -- "$rel"
+  git -C "$platform" commit -q -m "drop $rel"
+}
+expect_packaged .env refuse
+expect_packaged apps/web/.env.production refuse
+expect_packaged Config/.ENV refuse
+expect_packaged keys/app.pem refuse
+expect_packaged keys/app.key refuse
+expect_packaged keys/app.p12 refuse
+expect_packaged keys/app.pfx refuse
+expect_packaged id_rsa refuse
+expect_packaged id_rsa.pub refuse
+expect_packaged prod.tfvars refuse
+expect_packaged terraform.tfstate refuse
+expect_packaged terraform.tfstate.backup refuse
+expect_packaged .npmrc refuse
+expect_packaged .pypirc refuse
+expect_packaged kubeconfig refuse
+expect_packaged credentials.json refuse
+expect_packaged credentials-prod.json refuse
+expect_packaged service-account.json refuse
+expect_packaged service-account-dev.json refuse
+expect_packaged .env.example.local refuse
+expect_packaged .env.sample.bak refuse
+expect_packaged .dev.vars refuse
+expect_packaged .env.example allow
+expect_packaged .ENV.EXAMPLE allow
+expect_packaged .dev.vars.sample allow
+echo "packaging guard ok"
+
+prev=loopiterregistry7536.azurecr.io/loopiter@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+retry_image=loopiterregistry7536.azurecr.io/loopiter:redeploy
+retry_first=$(mktemp)
+retry_err=$(mktemp)
+retry_code=0
+LOOPITER_DEPLOY_DRY_RUN=1 LOOPITER_DEPLOY_DRY_RUN_FAIL_APP=web \
+  "$ROOT/deploy.sh" dev "$retry_image" apply >"$retry_first" 2>"$retry_err" || retry_code=$?
+if [[ "$retry_code" -ne 1 ]]; then
+  echo "web wait failure with a successful restore must exit 1, got ${retry_code}" >&2
+  cat "$retry_err" >&2
+  exit 1
+fi
+if ! grep -q "image=${prev}" "$retry_first"; then
+  echo "rollback plan must use the previous digest" >&2
+  exit 1
+fi
+if ! grep -q -- '-target=azurerm_container_app.web' "$retry_first" \
+  || ! grep -q -- '-target=azurerm_container_app.worker' "$retry_first"; then
+  echo "rollback must target both apps through Terraform" >&2
+  exit 1
+fi
+if ! grep -q 'returned to the previous image' "$retry_err"; then
+  echo "successful restore should say the apps were returned" >&2
+  cat "$retry_err" >&2
+  exit 1
+fi
+retry_second=$(LOOPITER_DEPLOY_DRY_RUN=1 "$ROOT/deploy.sh" dev "$retry_image" apply)
+if ! grep -q ' apply ' <<<"$retry_second"; then
+  echo "retrying the same image must plan and apply again" >&2
+  exit 1
+fi
+if ! grep -q 'loopiter:redeploy' <<<"$retry_second"; then
+  echo "retry must roll out the requested image" >&2
+  exit 1
+fi
+rm -f "$retry_first" "$retry_err"
+
+lock_err=$(mktemp)
+lock_code=0
+LOOPITER_DEPLOY_DRY_RUN=1 LOOPITER_DEPLOY_DRY_RUN_FAIL_LOCK_RELEASE=1 \
+  "$ROOT/deploy.sh" dev "$IMAGE" apply >/dev/null 2>"$lock_err" || lock_code=$?
+if [[ "$lock_code" -eq 0 ]]; then
+  echo "a failed lock release must be non-zero" >&2
+  exit 1
+fi
+if ! grep -q "ERROR: failed to release deploy lock ${LOCK_BLOB:-locks/deploy-dev.lock}. The lease is still held." "$lock_err"; then
+  echo "lock release failure must name the still-held lease" >&2
+  cat "$lock_err" >&2
+  exit 1
+fi
+rm -f "$lock_err"
+
+nopy_code=0
+PATH=/does-not-exist /bin/bash "$ROOT/deploy.sh" dev "$IMAGE" plan >/dev/null 2>"$work/nopy.err" || nopy_code=$?
+if [[ "$nopy_code" -eq 0 ]] || ! grep -q 'python3 is required' "$work/nopy.err"; then
+  echo "missing python3 must fail early" >&2
+  cat "$work/nopy.err" >&2
+  exit 1
+fi
+echo "restore and lock checks ok"

@@ -85,10 +85,13 @@ serving during this window. Ship expands first. Drops, renames, and other
 contractions belong in a later release, after every running revision has
 moved on.
 
-The worker is updated and checked next. Web is not changed if that wait fails,
-and the worker is returned to its previous image. Web is updated only after
-the worker serves the digest. If the web wait fails, both apps are returned
-to the previous image. A remaining full apply runs only after both serve it.
+The worker is updated and checked next. Web is not changed if that wait fails.
+Web is updated only after the worker serves the digest. If either wait fails,
+the script restores the affected apps with a targeted Terraform apply of the
+previous image, checked by the same plan guard, so state matches what is
+running. Exit 3 means a restore step failed: the script names those apps and
+does not claim they were returned. A remaining full apply runs only after
+both serve the digest. `python3` must be on `PATH`; it checks those plans.
 The schema script never runs in HTTP requests.
 
 `LOOPITER_DEPLOY_DRY_RUN=1` prints this order and does not call Terraform or
