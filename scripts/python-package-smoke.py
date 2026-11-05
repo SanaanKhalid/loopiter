@@ -108,11 +108,68 @@ def main():
                 "-I",
                 "-c",
                 """
-import asyncio, importlib.util
-from loopiter import FeedbackLoop, InMemoryStore
+import asyncio, importlib.util, sys, tomllib
+from pathlib import Path
+import loopiter
+from loopiter import (
+    CallbackContext,
+    DeploymentAdapter,
+    FeedbackLoop,
+    FeedbackStore,
+    ImprovementController,
+    ImprovementWorkflow,
+    InMemoryStore,
+    LoopiterError,
+    StoreTransaction,
+    assign_cohort,
+    compare,
+    fingerprint,
+    prepare_dataset,
+    validate_change,
+    validate_policy,
+)
 from loopiter.postgres import migration_sql
 from loopiter.testing import run_store_conformance
 from loopiter.onboarding import read_agent_guide, read_reference
+declared = tomllib.loads((Path(sys.argv[1]) / 'pyproject.toml').read_text())['project']['version']
+assert loopiter.__version__ == declared and loopiter.__version__
+assert loopiter.__all__ == [
+    'DeploymentAdapter',
+    'FeedbackLoop',
+    'FeedbackStore',
+    'InMemoryStore',
+    'LoopiterError',
+    'StoreTransaction',
+    'fingerprint',
+    'assign_cohort',
+    'CallbackContext',
+    'ImprovementController',
+    'ImprovementWorkflow',
+    'compare',
+    'prepare_dataset',
+    'validate_change',
+    'validate_policy',
+]
+exports = {
+    'DeploymentAdapter': DeploymentAdapter,
+    'FeedbackLoop': FeedbackLoop,
+    'FeedbackStore': FeedbackStore,
+    'InMemoryStore': InMemoryStore,
+    'LoopiterError': LoopiterError,
+    'StoreTransaction': StoreTransaction,
+    'fingerprint': fingerprint,
+    'assign_cohort': assign_cohort,
+    'CallbackContext': CallbackContext,
+    'ImprovementController': ImprovementController,
+    'ImprovementWorkflow': ImprovementWorkflow,
+    'compare': compare,
+    'prepare_dataset': prepare_dataset,
+    'validate_change': validate_change,
+    'validate_policy': validate_policy,
+}
+assert list(exports) == loopiter.__all__
+assert all(getattr(loopiter, name) is obj for name, obj in exports.items())
+assert (Path(loopiter.__file__).resolve().parent / 'py.typed').is_file()
 assert importlib.util.find_spec('psycopg') is None
 assert importlib.util.find_spec('openai') is None
 from loopiter.integrations.openai import with_loopiter
@@ -125,6 +182,7 @@ assert 'prompt_workflow' in read_reference('workflows')
 asyncio.run(run_store_conformance(InMemoryStore()))
 print('Clean consumer capture/conformance/migration smoke passed')
 """,
+                str(PACKAGE),
                 cwd=work,
             )
             setup = work / f"self-hosted-{index}"

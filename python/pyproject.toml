@@ -25,7 +25,7 @@ classifiers = [
 [project.optional-dependencies]
 postgres = ["psycopg[binary,pool]>=3.2,<4"]
 openai = ["openai>=2,<3"]
-dev = ["build>=1.2,<2", "ruff>=0.12,<1", "twine>=6,<7"]
+dev = ["build>=1.2,<2", "mypy>=1.13,<2", "ruff>=0.12,<1", "twine>=6,<7"]
 
 [project.urls]
 Homepage = "https://loopiter.co"
