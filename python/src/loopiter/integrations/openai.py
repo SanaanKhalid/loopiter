@@ -67,10 +67,16 @@ class _Capture:
     def append(self, event: Any) -> None:
         if self.owner.policy["mode"] == "metadata-only" or self.truncated:
             return
-        data = _json(event)
-        if self.owner.policy["mode"] == "redacted":
-            data = redact_capture(data)
-        self.size += len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+        try:
+            data = _json(event)
+            if self.owner.policy["mode"] == "redacted":
+                data = redact_capture(data)
+            self.size += len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+        except Exception as error:
+            _log_capture("sanitize", error)
+            self.truncated = True
+            self.events.clear()
+            return
         if self.size > self.owner.maximum_output_bytes:
             self.truncated = True
             self.events.clear()
@@ -88,19 +94,21 @@ class _Capture:
                 value = {"omitted": True, "truncated": True}
                 truncated = True
             else:
-                value = {"events": self.events} if output is None else _json(output)
-                if self.owner.policy["mode"] == "redacted":
-                    value = redact_capture(value)
-                packed = capture_payload(cast(JsonValue, value), self.owner.policy)
-                truncated = bool(packed["truncated"])
-                value = {"omitted": True, "truncated": True} if truncated else packed["value"]
-                if (
-                    value is not None
-                    and len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
-                    > self.owner.maximum_output_bytes
-                ):
-                    truncated = True
-                    value = {"omitted": True, "truncated": True}
+                try:
+                    value = {"events": self.events} if output is None else _json(output)
+                    packed = capture_payload(cast(JsonValue, value), self.owner.policy)
+                    truncated = bool(packed["truncated"])
+                    value = {"omitted": True, "truncated": True} if truncated else packed["value"]
+                    if (
+                        value is not None
+                        and len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+                        > self.owner.maximum_output_bytes
+                    ):
+                        truncated = True
+                        value = {"omitted": True, "truncated": True}
+                except Exception as error:
+                    _log_capture("sanitize", error)
+                    return
             identity = self.execution["metadata"]["loopiter_capture"]
             updated = {
                 **identity,
@@ -277,44 +285,53 @@ class _Client(_Facade):
                     {key: params[key] for key in ("instructions", "messages") if key in params}
                 )
             attempt_id = str(uuid4())
-            stored_input = capture_payload(_json(input_), self.policy)
-            identity = {
-                "attempt_id": attempt_id,
-                "integration": request["integration"],
-                "status": "pending",
-                "mode": self.policy["mode"],
-                "truncated": stored_input["truncated"],
-                "replay_eligible": False,
-            }
-            extra = {}
-            if self.policy["mode"] != "metadata-only":
-                extra = context.get("metadata") or {}
-                if self.policy["mode"] == "redacted":
-                    extra = redact_capture(extra)
-                if not isinstance(extra, dict):
-                    extra = {}
+            try:
+                stored_input = capture_payload(_json(input_), self.policy)
+            except Exception as error:
+                _log_capture("sanitize", error)
+                stored_input = None
             capture: _Capture | None = None
             execution: dict[str, Any] | None = None
-            try:
-                execution = await self.loop.record_execution(
-                    **{
-                        key: context[key]
-                        for key in ("id", "episode_id", "entity_id", "parent_execution_id")
-                        if key in context
-                    },
-                    kind="inference",
-                    input=stored_input["value"],
-                    artifacts={**context["artifacts"], "model": request["model"]},
-                    metadata={**extra, "loopiter_capture": identity},
-                )
-                if execution["metadata"].get("loopiter_capture") != identity:
-                    raise LoopiterError(
-                        "capture_identity", "Sanitizer changed capture identity or status."
+            if stored_input is not None:
+                identity = {
+                    "attempt_id": attempt_id,
+                    "integration": request["integration"],
+                    "status": "pending",
+                    "mode": self.policy["mode"],
+                    "truncated": stored_input["truncated"],
+                    "replay_eligible": False,
+                }
+                extra: Any = {}
+                if self.policy["mode"] != "metadata-only":
+                    extra = context.get("metadata") or {}
+                    if self.policy["mode"] == "redacted":
+                        try:
+                            extra = redact_capture(extra)
+                        except Exception as error:
+                            _log_capture("sanitize", error)
+                            extra = {}
+                    if not isinstance(extra, dict):
+                        extra = {}
+                try:
+                    execution = await self.loop.record_execution(
+                        **{
+                            key: context[key]
+                            for key in ("id", "episode_id", "entity_id", "parent_execution_id")
+                            if key in context
+                        },
+                        kind="inference",
+                        input=stored_input["value"],
+                        artifacts={**context["artifacts"], "model": request["model"]},
+                        metadata={**extra, "loopiter_capture": identity},
                     )
-                capture = _Capture(self, execution)
-            except Exception as error:
-                _log_capture("record_execution", error)
-                capture = None
+                    if execution["metadata"].get("loopiter_capture") != identity:
+                        raise LoopiterError(
+                            "capture_identity", "Sanitizer changed capture identity or status."
+                        )
+                    capture = _Capture(self, execution)
+                except Exception as error:
+                    _log_capture("record_execution", error)
+                    capture = None
             if capture is not None and execution is not None and self.on_execution:
                 try:
                     await _resolve(self.on_execution(deepcopy(execution)))
@@ -325,7 +342,12 @@ class _Client(_Facade):
                 if params.get("stream"):
                     return _CapturedStream(response, capture, api, params.get("n", 1))
                 if capture is not None:
-                    await capture.finish(_status(_json(response), api), response)
+                    try:
+                        status = _status(_json(response), api)
+                    except Exception as error:
+                        _log_capture("sanitize", error)
+                        status = "incomplete"
+                    await capture.finish(status, response)
                 return response
             except BaseException as error:
                 if capture is not None:

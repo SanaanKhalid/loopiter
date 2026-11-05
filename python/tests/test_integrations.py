@@ -328,6 +328,75 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(create.await_count, 1)
             self.assertTrue(any(step in message for message in logs.output))
 
+    async def test_sanitizer_errors_do_not_replace_the_provider_result(self):
+        def redact(value):
+            if "secret-completion" in str(value):
+                raise RuntimeError("sanitizer unavailable")
+            return value
+
+        policy = {"mode": "redacted", "redact": redact}
+        completion = {
+            **RESULT,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"content": "secret-completion"},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        loop = FeedbackLoop(store=InMemoryStore(), namespace="sanitize-call")
+        create = AsyncMock(return_value=completion)
+        base = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+            responses=SimpleNamespace(create=AsyncMock()),
+        )
+        wrapped = with_loopiter(
+            base,
+            loop=loop,
+            context=lambda _request: {"artifacts": {"prompt": "v1"}},
+            capture=policy,
+        )
+        with self.assertLogs("loopiter.integrations.openai", level="WARNING") as logs:
+            self.assertIs(await wrapped.chat.completions.create(**PARAMS), completion)
+        self.assertEqual(create.await_count, 1)
+        self.assertTrue(any("sanitize" in message for message in logs.output))
+        self.assertNotIn("secret-completion", str((await self.rows(loop))[0].get("output")))
+
+        stream_loop = FeedbackLoop(store=InMemoryStore(), namespace="sanitize-stream")
+        source = Stream(
+            [
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": "secret-completion"},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+            ]
+        )
+        stream_create = AsyncMock(return_value=source)
+        stream_base = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=stream_create)),
+            responses=SimpleNamespace(create=AsyncMock()),
+        )
+        streamed = with_loopiter(
+            stream_base,
+            loop=stream_loop,
+            context=lambda _request: {"artifacts": {"prompt": "v1"}},
+            capture=policy,
+        )
+        seen = []
+        with self.assertLogs("loopiter.integrations.openai", level="WARNING") as stream_logs:
+            async for event in await streamed.chat.completions.create(**PARAMS, stream=True):
+                seen.append(event)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(stream_create.await_count, 1)
+        self.assertTrue(any("sanitize" in message for message in stream_logs.output))
+        self.assertNotIn("secret-completion", str((await self.rows(stream_loop))[0].get("output")))
+
 
 if __name__ == "__main__":
     unittest.main()
