@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "input": {
+        "note": "prefix eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.ZmFrZXNpZw suffix AKIAFAKEFAKEFAKE1234 accountkey=fakeaccountvalue sharedaccesssignature=fakesasvalue postgres://fixture:fakepass@db.example/app Bearer fakeTokenValue password=fakepassword sk-fakekeyvalue123",
+        "safe": "ordinary fixture text"
+      },
+      "output": {
+        "note": "prefix [REDACTED] suffix [REDACTED] accountkey=[REDACTED] sharedaccesssignature=[REDACTED] postgres://[REDACTED]@db.example/app Bearer [REDACTED] password=[REDACTED] [REDACTED]",
+        "safe": "ordinary fixture text"
+      }
+    },
+    {
+      "input": {
+        "end": "https://x.blob.core.windows.net/c/b?sv=2022-11-02&sp=r&sig=FAKEVALUE",
+        "middle": "https://x.blob.core.windows.net/c/b?sv=2022-11-02&sig=FAKEVALUE&sp=r",
+        "start": "https://x.blob.core.windows.net/c/b?sig=FAKEVALUE&sv=2022-11-02&sp=r",
+        "encoded": "https://x.blob.core.windows.net/c/b%3Fsv%3D2022-11-02%26sp%3Dr%26sig%3DFAKEVALUE",
+        "encoded_middle": "https://x.blob.core.windows.net/c/b%3Fsig%3DFAKEVALUE%26sv%3D2022-11-02",
+        "userinfo": "redis://:fakepass@cache.example/0 mongodb+srv://fixture:fakepass@cluster.example"
+      },
+      "output": {
+        "end": "https://x.blob.core.windows.net/c/b?sv=2022-11-02&sp=r&sig=[REDACTED]",
+        "middle": "https://x.blob.core.windows.net/c/b?sv=2022-11-02&sig=[REDACTED]&sp=r",
+        "start": "https://x.blob.core.windows.net/c/b?sig=[REDACTED]&sv=2022-11-02&sp=r",
+        "encoded": "https://x.blob.core.windows.net/c/b%3Fsv%3D2022-11-02%26sp%3Dr%26sig%3D[REDACTED]",
+        "encoded_middle": "https://x.blob.core.windows.net/c/b%3Fsig%3D[REDACTED]%26sv%3D2022-11-02",
+        "userinfo": "redis://[REDACTED]@cache.example/0 mongodb+srv://[REDACTED]@cluster.example"
+      }
+    }
+  ]
+}

@@ -1,12 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { FeedbackLoop, InMemoryStore, type JsonObject } from "../src/index.js";
 import { createObserver, capturePayload } from "../src/integrations/observe.js";
 import { createLoopiterSpanExporter, spanExecutionId, type ReadableSpan } from "../src/integrations/otel.js";
+import { redactCapture } from "../src/integrations/privacy.js";
 import { CaptureSession } from "../src/integrations/capture.js";
 
 const setup = () => new FeedbackLoop({ store: new InMemoryStore(), namespace: "observe-tests" });
 const state = (r: {metadata:JsonObject}) => r.metadata.loopiterCapture as JsonObject;
+
+test("redaction matches the shared fixture", () => {
+  const fixture = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../test/fixtures/redaction-parity.json"), "utf8"));
+  const cases = fixture.cases ?? [fixture];
+  for (const item of cases) assert.deepEqual(redactCapture(item.input), item.output);
+});
 
 test("capture redacts before bounding, preserves application values, and explicitly marks incomplete data", () => {
   const raw = { authorization:"Bearer top-secret", messages:[{content:"password=private https://alice:password@example.test sk-1234567890123456"}], apiKey:"private", text:"safe" };
@@ -108,4 +118,71 @@ test("OTel exporter deduplicates identities, keeps model versions, omits arbitra
   assert.doesNotMatch(JSON.stringify(row),/private|secret|authorization/);
   assert.equal((await send([{...span,status:{code:1}}])).code,1,"Changed duplicate evidence must not overwrite the original");
   await exporter.shutdown();assert.equal((await send([span])).code,1);
+});
+
+test("forceFlush returns within its timeout", async () => {
+  const loop = setup();
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const original = loop.recordExecution.bind(loop);
+  loop.recordExecution = (async (...args: Parameters<typeof original>) => {
+    await gate;
+    return original(...args);
+  }) as typeof loop.recordExecution;
+  const span: ReadableSpan = {
+    name: "fixture",
+    spanContext: () => ({ traceId: "d".repeat(32), spanId: "e".repeat(16) }),
+    startTime: [1780000000, 0],
+    endTime: [1780000001, 0],
+    status: { code: 0 },
+    attributes: {},
+  };
+  const exporter = createLoopiterSpanExporter({ loop });
+  const sent = new Promise<{ code: number }>((resolve) => exporter.export([span], resolve));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    const started = Date.now();
+    assert.equal(await exporter.forceFlush(40), false);
+    assert.ok(Date.now() - started < 400);
+    assert.ok(warnings.some((line) => line.includes("flush")));
+  } finally {
+    console.warn = originalWarn;
+  }
+  release();
+  assert.equal(await exporter.forceFlush(2000), true);
+  assert.equal((await sent).code, 0);
+});
+
+test("forceFlush returns false when the exporter fails", async () => {
+  const loop = setup();
+  loop.recordExecution = (async () => {
+    throw new Error("store down");
+  }) as typeof loop.recordExecution;
+  const span: ReadableSpan = {
+    name: "fixture",
+    spanContext: () => ({ traceId: "f".repeat(32), spanId: "a".repeat(16) }),
+    startTime: [1780000000, 0],
+    endTime: [1780000001, 0],
+    status: { code: 0 },
+    attributes: {},
+  };
+  const exporter = createLoopiterSpanExporter({ loop });
+  const sent = new Promise<{ code: number }>((resolve) => exporter.export([span], resolve));
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    assert.equal(await exporter.forceFlush(1000), false);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.ok(warnings.some((line) => line.includes("flush")));
+  assert.equal((await sent).code, 1);
 });
