@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Align Node and Python redaction and make `forceFlush` / `force_flush` return false with a warning on timeout or exporter error instead of raising.
+- **BREAKING:** Node OpenAI and Vercel AI SDK wrappers now default to metadata-only capture. Applications that read stored prompts or completions from those wrappers are affected. Pass `capture: { mode: "full" }` to retain request and response bodies. Oversized captured streams record `{ omitted: true, truncated: true }` instead of failing the call. Capture, context, and store failures are logged and do not replace the provider result.
 - Package a self-hosted agent guide and application-side references with both SDKs.
 - Add initialization, configuration inspection, isolated offline verification and explicit foreground worker commands in native Python and Node.
 - Document application-owned feedback verification, storage, evaluator selection (including optional Jev), provider budgets, autonomous activation and recovery.
