@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import venv
 import zipfile
@@ -35,6 +36,38 @@ def run(*args, cwd=ROOT):
         check=True,
         env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
     )
+
+
+def relative_doc_links(guide):
+    """Relative markdown targets in AGENT_GUIDE.md. Scheme and anchor-only links are skipped."""
+    links = []
+    for target in re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", guide):
+        if "://" in target or target.startswith("#"):
+            continue
+        path = target.split("#", 1)[0].split("?", 1)[0]
+        if not path:
+            continue
+        normalized = os.path.normpath(path)
+        if (
+            path.startswith("/")
+            or "\\" in path
+            or normalized.startswith("..")
+            or os.path.isabs(normalized)
+        ):
+            raise AssertionError(
+                f"AGENT_GUIDE.md link is not a package-relative doc: {target}"
+            )
+        links.append(normalized.replace(os.sep, "/"))
+    if not links:
+        raise AssertionError(
+            "AGENT_GUIDE.md should link to the packaged observation doc"
+        )
+    return links
+
+
+def assert_linked_docs(guide, read_packaged):
+    for path in relative_doc_links(guide):
+        assert read_packaged(path) == (ROOT / path).read_bytes(), path
 
 
 def main():
@@ -75,6 +108,14 @@ def main():
             assert "loopiter/__main__.py" in names
             assert "loopiter/starters/autonomous_demo.py" in names
             assert "loopiter/starters/autonomous_workflows.py" in names
+            guide = archive.read("loopiter/AGENT_GUIDE.md").decode()
+
+            def read_wheel(path, wheel_archive=archive):
+                name = "loopiter/" + path
+                assert name in names, name
+                return wheel_archive.read(name)
+
+            assert_linked_docs(guide, read_wheel)
             metadata = archive.read(
                 next(n for n in names if n.endswith("/METADATA"))
             ).decode()
@@ -87,6 +128,25 @@ def main():
                 requirements
             )
             assert any(n.endswith("/licenses/LICENSE") for n in names)
+        with tarfile.open(sdist) as sdist_archive:
+            sdist_names = sdist_archive.getnames()
+            assert any(name.endswith("/hatch_build.py") for name in sdist_names)
+            guide_name = next(
+                name for name in sdist_names if name.endswith("/AGENT_GUIDE.md")
+            )
+            guide_file = sdist_archive.extractfile(guide_name)
+            assert guide_file is not None
+            guide = guide_file.read().decode()
+
+            def read_sdist(path, source_archive=sdist_archive):
+                suffix = "/packaged-docs/" + path
+                matches = [name for name in sdist_names if name.endswith(suffix)]
+                assert len(matches) == 1, matches
+                extracted = source_archive.extractfile(matches[0])
+                assert extracted is not None
+                return extracted.read()
+
+            assert_linked_docs(guide, read_sdist)
         # Test both artifacts, not just an editable checkout. Core import must not need psycopg.
         for index, artifact in enumerate((wheel, sdist)):
             consumer = work / f"consumer-{index}"
@@ -107,7 +167,7 @@ def main():
                 str(python),
                 "-I",
                 "-c",
-                """
+                r"""
 import asyncio, importlib.util
 from loopiter import FeedbackLoop, InMemoryStore
 from loopiter.postgres import migration_sql
@@ -122,9 +182,20 @@ assert strip_guidance(replace_guidance('policy', 'guidance')) == 'policy'
 assert 'CREATE TABLE' in migration_sql()
 assert 'self-hosted SDK/library' in read_agent_guide()
 assert 'prompt_workflow' in read_reference('workflows')
+import importlib.resources, pathlib, re, sys
+repo = pathlib.Path(sys.argv[1])
+package = importlib.resources.files('loopiter')
+for target in re.findall(r'\[[^\]]*\]\(([^)\s]+)\)', read_agent_guide()):
+    if '://' in target or target.startswith('#'):
+        continue
+    path = target.split('#', 1)[0].split('?', 1)[0]
+    resource = package.joinpath(*path.split('/'))
+    assert resource.is_file(), path
+    assert resource.read_bytes() == (repo / path).read_bytes(), path
 asyncio.run(run_store_conformance(InMemoryStore()))
 print('Clean consumer capture/conformance/migration smoke passed')
 """,
+                str(ROOT),
                 cwd=work,
             )
             setup = work / f"self-hosted-{index}"

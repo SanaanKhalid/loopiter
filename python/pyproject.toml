@@ -46,9 +46,15 @@ core-metadata-version = "2.4"
 "examples/autonomous_provider.py" = "loopiter/starters/autonomous_provider.py"
 "examples/reviewed_loop.py" = "loopiter/starters/reviewed_loop.py"
 
+# Relative docs linked from AGENT_GUIDE.md are copied by hatch_build.py.
+# A static force-include of ../docs would be missing when pip builds the wheel from the sdist.
+[tool.hatch.build.targets.wheel.hooks.custom]
+
 [tool.hatch.build.targets.sdist]
 core-metadata-version = "2.4"
 include = ["src", "tests", "examples", "README.md", "AGENT_GUIDE.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "pyproject.toml"]
+
+[tool.hatch.build.targets.sdist.hooks.custom]
 
 [tool.ruff]
 target-version = "py311"
