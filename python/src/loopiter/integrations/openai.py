@@ -11,15 +11,25 @@ import asyncio
 import base64
 import inspect
 import json
+import logging
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
 from .._validation import LoopiterError
 from .context import guidance_messages, replace_guidance
-from .privacy import capture_payload, checked_policy, redact_capture
+from .privacy import CapturePolicy, JsonValue, capture_payload, checked_policy, redact_capture
+
+_LOG = logging.getLogger("loopiter.integrations.openai")
+ClientT = TypeVar("ClientT")
 
 
-def _json(value):
+def _log_capture(step: str, error: BaseException) -> None:
+    _LOG.warning("capture %s failed: %s", step, type(error).__name__)
+
+
+def _json(value: Any) -> Any:
     def convert(item):
         if hasattr(item, "model_dump"):
             return item.model_dump(mode="json")
@@ -48,20 +58,23 @@ def _status(payload, api):
 
 
 class _Capture:
-    def __init__(self, owner, execution):
+    def __init__(self, owner: _Client, execution: dict[str, Any]) -> None:
         self.owner, self.execution = owner, execution
-        self.events, self.size, self.finished = [], 0, False
+        self.events: list[Any] = []
+        self.size, self.finished, self.truncated = 0, False, False
         self.lock = asyncio.Lock()
 
-    def append(self, event):
-        if self.owner.policy["mode"] == "metadata-only":
+    def append(self, event: Any) -> None:
+        if self.owner.policy["mode"] == "metadata-only" or self.truncated:
             return
         data = _json(event)
         if self.owner.policy["mode"] == "redacted":
             data = redact_capture(data)
         self.size += len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
         if self.size > self.owner.maximum_output_bytes:
-            raise ValueError("Captured stream exceeded maximum_output_bytes.")
+            self.truncated = True
+            self.events.clear()
+            return
         self.events.append(data)
 
     async def finish(self, status, output=None):
@@ -69,23 +82,25 @@ class _Capture:
             if self.finished:
                 return
             if self.owner.policy["mode"] == "metadata-only":
-                value = {"omitted": True}
+                value: Any = {"omitted": True}
                 truncated = False
+            elif self.truncated:
+                value = {"omitted": True, "truncated": True}
+                truncated = True
             else:
                 value = {"events": self.events} if output is None else _json(output)
                 if self.owner.policy["mode"] == "redacted":
                     value = redact_capture(value)
-                packed = capture_payload(value, self.owner.policy)
-                truncated = packed["truncated"]
+                packed = capture_payload(cast(JsonValue, value), self.owner.policy)
+                truncated = bool(packed["truncated"])
                 value = {"omitted": True, "truncated": True} if truncated else packed["value"]
-            if (
-                value is not None
-                and len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
-                > self.owner.maximum_output_bytes
-            ):
-                if status in ("completed", "incomplete"):
-                    raise ValueError("Captured response exceeded maximum_output_bytes.")
-                value = None
+                if (
+                    value is not None
+                    and len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+                    > self.owner.maximum_output_bytes
+                ):
+                    truncated = True
+                    value = {"omitted": True, "truncated": True}
             identity = self.execution["metadata"]["loopiter_capture"]
             updated = {
                 **identity,
@@ -93,23 +108,36 @@ class _Capture:
                 "truncated": bool(identity.get("truncated") or truncated),
                 "replay_eligible": False,
             }
-            saved = await self.owner.loop.complete_execution(
-                self.execution["id"],
-                expected_revision=self.execution["revision"],
-                output=value,
-                metadata={"loopiter_capture": updated},
-            )
-            if saved["metadata"].get("loopiter_capture") != updated:
-                raise LoopiterError(
-                    "capture_identity", "Sanitizer changed capture identity or status."
+            try:
+                saved = await self.owner.loop.complete_execution(
+                    self.execution["id"],
+                    expected_revision=self.execution["revision"],
+                    output=value,
+                    metadata={"loopiter_capture": updated},
                 )
+            except Exception as error:
+                _log_capture("complete_execution", error)
+                return
+            if saved["metadata"].get("loopiter_capture") != updated:
+                _log_capture(
+                    "complete_execution",
+                    LoopiterError(
+                        "capture_identity", "Sanitizer changed capture identity or status."
+                    ),
+                )
+                return
             self.finished = True
             if self.owner.on_execution:
-                await _resolve(self.owner.on_execution(deepcopy(saved)))
+                try:
+                    await _resolve(self.owner.on_execution(deepcopy(saved)))
+                except Exception as error:
+                    _log_capture("on_execution", error)
 
 
 class _CapturedStream:
-    def __init__(self, source, capture, api, expected_choices):
+    def __init__(
+        self, source: Any, capture: _Capture | None, api: str, expected_choices: int
+    ) -> None:
         self.source, self.capture, self.api = source, capture, api
         self.expected_choices = expected_choices
         self.choices, self.status = set(), "incomplete"
@@ -121,7 +149,8 @@ class _CapturedStream:
     async def __anext__(self):
         try:
             event = await self.iterator.__anext__()
-            self.capture.append(event)
+            if self.capture is not None:
+                self.capture.append(event)
             data = _json(event)
             if self.api == "responses":
                 if data.get("type") in (
@@ -141,13 +170,15 @@ class _CapturedStream:
                     self.status = "completed"
             return event
         except StopAsyncIteration:
-            await self.capture.finish(self.status)
+            if self.capture is not None:
+                await self.capture.finish(self.status)
             raise
         except BaseException as error:
             try:
-                await self.capture.finish(
-                    "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
-                )
+                if self.capture is not None:
+                    await self.capture.finish(
+                        "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
+                    )
             finally:
                 await self.source.close()
             raise
@@ -156,7 +187,8 @@ class _CapturedStream:
         try:
             await self.source.close()
         finally:
-            await self.capture.finish("cancelled")
+            if self.capture is not None:
+                await self.capture.finish("cancelled")
 
     async def __aenter__(self):
         return self
@@ -217,9 +249,14 @@ class _Client(_Facade):
                 "model": str(params.get("model", "")),
                 "input": _json(input_),
             }
-            context = _json(await _resolve(self.context(deepcopy(request))))
+            try:
+                context = _json(await _resolve(self.context(deepcopy(request))))
+            except Exception as error:
+                _log_capture("context", error)
+                context = {"artifacts": {}}
             if not isinstance(context.get("artifacts"), dict):
-                raise TypeError("Capture context requires artifact versions.")
+                _log_capture("context", TypeError("Capture context requires artifact versions."))
+                context = {"artifacts": {}}
             guidance = context.get("guidance")
             if guidance is not None:
                 if not isinstance(guidance, str) or not context["artifacts"].get("prompt"):
@@ -256,48 +293,67 @@ class _Client(_Facade):
                     extra = redact_capture(extra)
                 if not isinstance(extra, dict):
                     extra = {}
-            execution = await self.loop.record_execution(
-                **{
-                    key: context[key]
-                    for key in ("id", "episode_id", "entity_id", "parent_execution_id")
-                    if key in context
-                },
-                kind="inference",
-                input=stored_input["value"],
-                artifacts={**context["artifacts"], "model": request["model"]},
-                metadata={**extra, "loopiter_capture": identity},
-            )
-            if execution["metadata"].get("loopiter_capture") != identity:
-                raise LoopiterError(
-                    "capture_identity", "Sanitizer changed capture identity or status."
-                )
-            capture = _Capture(self, execution)
+            capture: _Capture | None = None
+            execution: dict[str, Any] | None = None
             try:
-                if self.on_execution:
+                execution = await self.loop.record_execution(
+                    **{
+                        key: context[key]
+                        for key in ("id", "episode_id", "entity_id", "parent_execution_id")
+                        if key in context
+                    },
+                    kind="inference",
+                    input=stored_input["value"],
+                    artifacts={**context["artifacts"], "model": request["model"]},
+                    metadata={**extra, "loopiter_capture": identity},
+                )
+                if execution["metadata"].get("loopiter_capture") != identity:
+                    raise LoopiterError(
+                        "capture_identity", "Sanitizer changed capture identity or status."
+                    )
+                capture = _Capture(self, execution)
+            except Exception as error:
+                _log_capture("record_execution", error)
+                capture = None
+            if capture is not None and execution is not None and self.on_execution:
+                try:
                     await _resolve(self.on_execution(deepcopy(execution)))
+                except Exception as error:
+                    _log_capture("on_execution", error)
+            try:
                 response = await create(**params)
                 if params.get("stream"):
                     return _CapturedStream(response, capture, api, params.get("n", 1))
-                await capture.finish(_status(_json(response), api), response)
+                if capture is not None:
+                    await capture.finish(_status(_json(response), api), response)
                 return response
             except BaseException as error:
-                await capture.finish(
-                    "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
-                )
+                if capture is not None:
+                    await capture.finish(
+                        "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
+                    )
                 raise
 
         return captured
 
 
 def with_loopiter(
-    client, *, loop, context, on_execution=None, maximum_output_bytes=65536, capture=None
-):
+    client: ClientT,
+    *,
+    loop: Any,
+    context: Callable[[dict[str, Any]], dict[str, Any] | Awaitable[dict[str, Any]]],
+    on_execution: Callable[[dict[str, Any]], Any] | None = None,
+    maximum_output_bytes: int = 65536,
+    capture: CapturePolicy | None = None,
+) -> ClientT:
     """Return an isolated async client facade. Feedback remains an explicit record_signal call.
 
     Context returns artifact versions and optional id/episode_id/entity_id/guidance.
     Use a fresh execution id per provider call. Streams must be drained or closed;
-    use ``async with stream`` when breaking out early. Capture failures propagate.
+    use ``async with stream`` when breaking out early. Capture, store, and context
+    failures are logged and do not replace the provider result.
     ``capture`` defaults to metadata-only. Pass ``full`` or ``redacted`` to retain bodies.
+    Metadata-only input and output are ``{"omitted": true}``.
     """
     if type(maximum_output_bytes) is not int or maximum_output_bytes < 1:
         raise ValueError("maximum_output_bytes must be a positive integer.")

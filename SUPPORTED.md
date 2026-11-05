@@ -47,7 +47,9 @@ wrapping, OpenAI `.withResponse()` / `.asResponse()` / `request_id`, and
 `AbortSignal`. Python covers the same capture outcomes through `CaptureSession`,
 the async OpenAI facade, and task cancellation. `with_loopiter` uses that capture policy and defaults to metadata-only.
 Pass `capture={"mode": "full"}` or `"redacted"` to retain bodies. Metadata-only
-observation keeps lineage identifiers and omits other context fields.
+input and output are `{"omitted": true}` in both SDKs. A truncated body is
+`{"omitted": true, "truncated": true}`. Metadata-only observation keeps lineage
+identifiers and omits other context fields.
 
 ## Node SDK details
 
