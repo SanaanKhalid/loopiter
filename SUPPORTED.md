@@ -24,6 +24,7 @@ The following matrix describes 0.3. Existing 0.2 installations require explicit 
 | Durable reviewed/experiment/autonomous controller | Explicit flag + exact target policy; legacy apply removed | Equivalent async controller, native snake_case API |
 | Three autonomous workflows | Prompt, model routing, fixed-model decision routing; simulated paths | Same paths, plus optional fixed scikit-learn bridge |
 | Optional OpenAI/Azure providers | Native fetch, metered, explicitly enabled live mode | Standard-library application integration, metered, explicitly enabled live mode |
+| Observe, capture privacy, OTel span export | Yes: `observe`, `otel`, `privacy`, `capture` | Yes: same modules under `loopiter.integrations`, snake_case record fields; OTel SDK optional |
 | Distribution | Prepared `0.3.0-alpha.1`; not published by this work | Prepared `0.3.0a1`; not published by this work |
 
 Python and Node are separate lifecycle owners, not a shared-record/wire protocol.
@@ -47,6 +48,7 @@ Do not independently deploy both SDKs to the same external target. See
 | Starter | OpenAI/Azure OpenAI Responses via fetch, PostgreSQL prompt registry, exact-match evaluation, CLI | User credentials/model or Azure deployment; synthetic example dataset must be replaced for customer claims |
 | Self-hosted onboarding | Packaged Markdown agent guide; init, doctor, offline verification, reference sources and opt-in foreground worker in both languages | Application-specific callbacks, reviewed evidence, durable storage, provider credentials and process supervision remain application-owned; new onboarding build required |
 | Optional framework capture | OpenAI Node 6/7 and async Python 2.x; Vercel AI SDK 5/6/7; isolated client/model wrappers, released-guidance replacement, bounded stream capture | Only documented create/model calls; feedback and release selection remain application-owned. Capture statuses do not grade correctness. See [integration limits](fern/pages/framework-integrations.mdx). |
+| Application observation | `createObserver`, `createLoopiterSpanExporter`, `capturePayload` / `redactCapture`, `CaptureSession`; metadata-only default; OTel export codes 0 and 1 | Python `create_observer`, `create_loopiter_span_exporter`, `capture_payload` / `redact_capture`, `CaptureSession`. Same defaults, sentinel payload keys, and export codes. OpenTelemetry Python SDK is an optional extra imported only by `opentelemetry_span_exporter`. Vercel AI SDK remains Node-only. |
 | Other target kinds | Represent, recommend, evaluate and manually deploy through adapters | No built-in fine-tuning/training, code deployment, agent spawning or capacity scaling |
 | Telemetry / operations | Durable lifecycle events and structured controller reasons; no Loopiter telemetry | Existing logger, alerting, jobs, retention and incident response |
 | Hosted product | None | No dashboard, accounts, billing, SLA or managed service |

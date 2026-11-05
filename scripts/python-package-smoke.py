@@ -108,7 +108,7 @@ def main():
                 "-I",
                 "-c",
                 """
-import asyncio, importlib.util
+import asyncio, importlib.util, sys
 from loopiter import FeedbackLoop, InMemoryStore
 from loopiter.postgres import migration_sql
 from loopiter.testing import run_store_conformance
@@ -117,7 +117,14 @@ assert importlib.util.find_spec('psycopg') is None
 assert importlib.util.find_spec('openai') is None
 from loopiter.integrations.openai import with_loopiter
 from loopiter.integrations.context import replace_guidance, strip_guidance
+import loopiter.integrations.observe
+import loopiter.integrations.otel
+import loopiter.integrations.privacy
+import loopiter.integrations.capture
 assert callable(with_loopiter)
+assert not any(
+    name == "opentelemetry" or name.startswith("opentelemetry.") for name in sys.modules
+)
 assert strip_guidance(replace_guidance('policy', 'guidance')) == 'policy'
 assert 'CREATE TABLE' in migration_sql()
 assert 'self-hosted SDK/library' in read_agent_guide()

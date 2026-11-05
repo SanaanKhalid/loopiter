@@ -17,6 +17,8 @@ dependencies. Python **3.11+**, MIT. Python alpha version: **0.3.0a1** (PEP 440)
 python -m pip install 'loopiter==0.3.0a1'
 # Optional PostgreSQL adapter:
 python -m pip install 'loopiter[postgres]==0.3.0a1'
+# Optional OpenTelemetry exporter adapter:
+python -m pip install 'loopiter[otel]==0.3.0a1'
 ```
 
 Use an explicit version for this prerelease. The Node.js SDK is distributed separately
@@ -270,11 +272,56 @@ Default maximum is 20,000 executions and 20,000 signals per analysis; exceeding 
 raises an explicit error. Pages max at 1,000. Analysis materializes that bounded
 snapshot in memory; it is not a streaming warehouse engine.
 
+## Observe an application
+
+`create_observer` records an application, tool, or retrieval call on your
+`FeedbackLoop`. It does not install a tracer. The default capture mode is
+`metadata-only`: bodies are omitted, the return value is unchanged, and the
+original application error is re-raised. A durable `context["id"]` is claimed
+before the operation runs and is never replayed. Async iterables stay lazy.
+Python's `async for` does not close an iterator on `break`, so call `aclose()`
+or use `async with` before process shutdown. `pip install 'loopiter[otel]'`
+is required only for `opentelemetry_span_exporter`; importing the bridge does
+not import OpenTelemetry.
+
+```python
+import asyncio
+
+from loopiter import FeedbackLoop, InMemoryStore
+from loopiter.integrations.observe import create_observer
+
+
+async def main():
+    loop = FeedbackLoop(store=InMemoryStore(), namespace="support/dev")
+    observer = create_observer(loop=loop, capture={"mode": "redacted"})
+
+    async def generate():
+        return {"answer": "synthetic"}
+
+    answer = await observer.observe(
+        "support.answer",
+        generate,
+        kind="workflow",
+        input={"question": "synthetic"},
+        context={
+            "release_id": "support-v1",
+            "learning_context": {"tenant_id": "acme"},
+        },
+    )
+    print(answer["answer"])
+    await loop.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
 ## Scope and release checks
 
 Python includes capture, updates, structured analysis, manual candidate lifecycle,
 timeouts/cancellation, events, namespace deletion, an in-memory dev store, optional
-PostgreSQL 16/17 adapter, conformance tests and an offline end-to-end example.
+PostgreSQL 16/17 adapter, application observation, capture privacy, an OpenTelemetry
+span exporter, conformance tests and an offline end-to-end example.
 The Node-only legacy controller, JsonFileStore/legacy migration CLI,
 and OpenAI/Azure classification starter remain **Node-only**. Neither SDK automatically
 fine-tunes a model. Application callbacks, database permissions and deployment

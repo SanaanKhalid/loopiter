@@ -114,6 +114,26 @@ gets its own execution; use a common episode ID to group a tool loop. The wrappe
 records prompt/tool-message order and provider parameters, excluding transport
 headers and abort signals. It does not execute or replay tools.
 
+## Python: application observation
+
+Observers, the OpenTelemetry span bridge, capture privacy, and `CaptureSession`
+live in `loopiter.integrations`. They are not imported with the core package.
+`metadata-only` is the default for new observers and exporters. Install
+`loopiter[otel]` only when you call `opentelemetry_span_exporter`.
+
+```python
+from loopiter.integrations.observe import create_observer
+
+observer = create_observer(loop=loop, capture={"mode": "redacted", "maximum_bytes": 65536})
+```
+
+`observe(name, operation, *, context, kind, input)` preserves the return value.
+Pass an opaque `context["id"]` from authenticated server state when a retry must
+not run the operation twice. For a stream, iterate it and then `await
+stream.aclose()`, or use `async with`, because Python does not close an async
+iterator when `async for` breaks. See
+[Application observation](https://github.com/SanaanKhalid/loopiter/blob/main/docs/application-observation.md).
+
 ## Capture contract
 
 1. Resolve your application-owned context and freeze its artifact identity.
