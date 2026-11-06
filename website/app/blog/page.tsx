@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { JsonLd } from '../../components/json-ld';
-import { SiteFooter, SiteHeader } from '../../components/site-chrome';
+import { SiteFrame } from '../../components/site-chrome';
 import { docUrl } from '../../lib/docs-links';
 import { postPath, posts, publishedLabel } from '../../lib/posts';
 import { pageMetadata } from '../../lib/site';
@@ -19,8 +19,8 @@ export default function BlogIndex() {
     <>
       <JsonLd data={blogJsonLd(posts)} />
       <a className="skip-link" href="#blog">Skip to content</a>
-      <SiteHeader page="blog" />
-      <main id="blog" className="manifesto-page">
+      <SiteFrame page="blog">
+      <main id="blog" className="reading">
         <header className="manifesto-heading">
           <p className="eyebrow">Blog</p>
           <h1>Notes on feedback loops</h1>
@@ -43,7 +43,7 @@ export default function BlogIndex() {
           <a className="text-link" href={docUrl('overview')}>Read the documentation <span aria-hidden="true">↗</span></a>
         </div>
       </main>
-      <SiteFooter />
+      </SiteFrame>
     </>
   );
 }

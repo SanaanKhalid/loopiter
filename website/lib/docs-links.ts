@@ -15,6 +15,7 @@ export function docsHref(fragment = ''): string {
 
 export const docPath = {
   overview: '/get-started/overview',
+  python: '/get-started/python-quickstart',
   supported: '/get-started/supported-capabilities',
   autonomous: '/closing-the-loop/opt-in-autonomous-improvement',
   evaluation: '/closing-the-loop/evaluation-and-deployment',

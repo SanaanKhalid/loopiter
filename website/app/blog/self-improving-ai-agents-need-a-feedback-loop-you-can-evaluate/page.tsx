@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { FeedbackLoopArticle } from '../../../components/feedback-loop-article';
 import { JsonLd } from '../../../components/json-ld';
-import { SiteFooter, SiteHeader } from '../../../components/site-chrome';
+import { SiteFrame } from '../../../components/site-chrome';
 import { postPath, requirePost } from '../../../lib/posts';
 import { pageMetadata } from '../../../lib/site';
 import { articleJsonLd } from '../../../lib/structured-data';
@@ -20,11 +20,11 @@ export default function FeedbackLoopPost() {
     <>
       <JsonLd data={articleJsonLd(post)} />
       <a className="skip-link" href="#post-title">Skip to content</a>
-      <SiteHeader page="blog" />
-      <main className="manifesto-page">
+      <SiteFrame page="blog">
+      <main className="reading">
         <FeedbackLoopArticle post={post} />
       </main>
-      <SiteFooter />
+      </SiteFrame>
     </>
   );
 }

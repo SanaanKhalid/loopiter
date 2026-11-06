@@ -10,8 +10,8 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  title: "Loopiter — A better next answer",
-  description: "Turn real feedback into better prompts and knowledge. Loopiter records a correction, evaluates a proposed change, and keeps a version you can roll back.",
+  title: "Loopiter — Governed improvement for AI systems",
+  description: "Connect production AI behavior to verified outcomes, find recurring patterns, and turn evidence into governed improvements. MIT-licensed Python and Node.js SDKs.",
   applicationName: "Loopiter",
   openGraph: { siteName: "Loopiter", locale: "en_US", type: "website" },
   twitter: { card: "summary" },

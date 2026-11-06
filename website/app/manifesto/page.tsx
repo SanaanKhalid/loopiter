@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { SiteFooter, SiteHeader } from '../../components/site-chrome';
+import { SiteFrame } from '../../components/site-chrome';
 import { docsHref } from '../../lib/docs-links';
 import { pageMetadata } from '../../lib/site';
 
@@ -11,11 +11,10 @@ export const metadata: Metadata = pageMetadata({
 });
 
 export default function Manifesto() {
-  return <>
+  return <main>
     <a className="skip-link" href="#manifesto">Skip to content</a>
-    <SiteHeader page="manifesto" />
-    <main id="manifesto" className="manifesto-page">
-      <article aria-labelledby="manifesto-title">
+    <SiteFrame page="manifesto">
+    <article id="manifesto" className="reading" aria-labelledby="manifesto-title">
         <header className="manifesto-heading">
           <p className="eyebrow">The Loopiter manifesto</p>
           <h1 id="manifesto-title">Give feedback.<br />Let it improve.</h1>
@@ -68,8 +67,7 @@ export default function Manifesto() {
           <Link className="text-link" href="/blog/self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate">Why the loop has to be evaluable <span aria-hidden="true">↗</span></Link>
           <a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a>
         </div>
-      </article>
-    </main>
-    <SiteFooter />
-  </>;
+    </article>
+    </SiteFrame>
+  </main>;
 }
