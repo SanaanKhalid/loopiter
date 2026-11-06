@@ -88,13 +88,15 @@ Every proposal, response replay, judge and grounding provider call made inside c
 
 --enable authorizes improvement work and provider spending in that worker process: proposal, replay and judge calls, and, when the mode is autonomous, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start. Mode recommend stores proposals and does not apply a candidate. Installing the SDK, receiving feedback or completing the offline fixture is not spending authority.
 
+Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
+
 ## 7. Implement and run the self-hosted worker
 
 Create a local integration module in the initialized directory. The Node module exports async createIntegration({ signal }) returning { loop, workflows, close? }. The Python module exports async create_integration(*, cancellation) returning a dictionary with loop, workflows and optional async close. Construct the real FeedbackLoop with the application's durable store; supply actual ImprovementWorkflow objects. The runner constructs the SDK controller using the mode the operator selected. Close both the loop and application-owned database pool in the cleanup callback.
 
 After completing and reviewing integration-plan.json, doctor should report configured, with liveVerified=false until you separately verify the real app. Doctor only checks declared configuration, local module presence and required environment-variable names; it does not import application code, read credential files, call providers, run migrations or attest to a working integration.
 
-Run one development tick after agreement on costs and scope:
+Autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
 
 ```sh
 python -m loopiter worker --module loopiter/application.py --enable --mode autonomous --once

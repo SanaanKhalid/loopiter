@@ -85,7 +85,7 @@ Your agent creates application.py here, exporting async create_integration(*, ca
 
 This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.
 
-After doctor reports configured and verify passes:
+After doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
 
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --mode autonomous --once
 

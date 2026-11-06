@@ -57,6 +57,18 @@ test("self-hosted init never overwrites user files or follows an existing destin
       /fails closed without an audit partition, a budget, or --enable/,
     );
     assert.match(readme, /Omitting --mode on the worker still selects recommend/);
+    const confirmation =
+      "Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.";
+    assert.ok(readme.includes(confirmation));
+    assert.ok((await readAgentGuide()).includes(confirmation));
+    assert.ok(
+      readme.indexOf(confirmation) <
+        readme.indexOf("--enable --mode autonomous --once"),
+    );
+    assert.ok(
+      readme.indexOf("--enable --mode autonomous --once") <
+        readme.indexOf("--enable --mode recommend --once"),
+    );
     await writeFile(join(destination, "user-owned.txt"), "preserve me");
     await assert.rejects(initializeSelfHosted(destination), { code: "EEXIST" });
     assert.equal(

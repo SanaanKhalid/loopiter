@@ -55,6 +55,22 @@ class OnboardingTests(unittest.TestCase):
             self.assertIn("--enable authorizes improvement work and provider spending", readme)
             self.assertIn("fails closed without an audit partition, a budget, or --enable", readme)
             self.assertIn("Omitting --mode on the worker still selects recommend", readme)
+            confirmation = (
+                "Before the first run with --enable --mode autonomous, stop and get explicit "
+                "confirmation from the human. That confirmation is one-time, for initial "
+                "activation and spend. A completed checklist, doctor report, or plan output "
+                "alone is not confirmation. After that one confirmation, autonomous runs "
+                "continue without per-candidate approval."
+            )
+            self.assertIn(confirmation, readme)
+            self.assertIn(confirmation, read_agent_guide())
+            self.assertLess(
+                readme.index(confirmation), readme.index("--enable --mode autonomous --once")
+            )
+            self.assertLess(
+                readme.index("--enable --mode autonomous --once"),
+                readme.index("--enable --mode recommend --once"),
+            )
             marker = destination / "user-owned.txt"
             marker.write_text("preserve me")
             with self.assertRaises(FileExistsError):
