@@ -2,7 +2,7 @@
 
 > A lightweight, model-agnostic feedback loop for production AI systems.
 
-Loopiter is an MIT-licensed software development kit for Node.js 22 and 24 and for Python 3.11+. The libraries capture executions and feedback, analyze scored segments, evaluate immutable candidates, and coordinate approval, deployment, or rollback through adapters the application owns. The default mode stores recommendations. Autonomous changes require an explicit opt-in and a complete policy. The policy validator accepts only an exact prompt, routing, or agent_release target. Loopiter is a library, not a hosted service, a model, a trainer, or an agent runtime. The core has no runtime dependencies and sends no telemetry. Current alpha: npm `0.3.0-alpha.1`, Python `0.3.0a1`. The landing page introduces the SDK. A hosted console is separate from this library.
+Loopiter is an MIT-licensed software development kit for Node.js 22 and 24 and for Python 3.11+. The libraries capture executions and feedback, analyze scored segments, evaluate immutable candidates, and coordinate approval, deployment, or rollback through adapters the application owns. The default mode stores recommendations. Autonomous changes require an explicit opt-in and a complete policy. The policy validator accepts only an exact prompt or routing target. The Node validator also accepts agent_release. Python does not. Loopiter is a library, not a hosted service, a model, a trainer, or an agent runtime. The core has no runtime dependencies and sends no telemetry. Current alpha: npm `0.3.0-alpha.1`, Python `0.3.0a1`. The landing page introduces the SDK. A hosted console is separate from this library.
 
 Source code: https://github.com/SanaanKhalid/loopiter
 
