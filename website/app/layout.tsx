@@ -1,19 +1,30 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { JsonLd } from "../components/json-ld";
+import { siteGraph } from "../lib/structured-data";
+import { siteUrl } from "../lib/site";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: "Loopiter — A better next answer",
-  description: "Turn real feedback into better prompts and knowledge. Loopiter helps your AI agents improve through a continuous, evaluated feedback loop.",
+  description: "Turn real feedback into better prompts and knowledge. Loopiter records a correction, evaluates a proposed change, and keeps a version you can roll back.",
+  applicationName: "Loopiter",
+  openGraph: { siteName: "Loopiter", locale: "en_US", type: "website" },
+  twitter: { card: "summary" },
+  robots: { index: true, follow: true },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>
+        <JsonLd data={siteGraph} />
+        {children}
+      </body>
     </html>
   );
 }

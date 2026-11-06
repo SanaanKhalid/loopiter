@@ -1,7 +1,15 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { StartWithAgent } from '../components/start-with-agent';
 import { docsHref } from '../lib/docs-links';
+import { pageMetadata } from '../lib/site';
 import { SiteFooter, SiteHeader } from '../components/site-chrome';
+
+export const metadata: Metadata = pageMetadata({
+  title: 'Loopiter — A better next answer',
+  description: 'Turn real feedback into better prompts and knowledge. Loopiter records a correction, evaluates a proposed change, and keeps a version you can roll back.',
+  path: '/',
+});
 
 function LoopArtwork() {
   return <svg className="loop-art" viewBox="0 0 1400 950" fill="none" aria-hidden="true">
@@ -40,7 +48,7 @@ export default function Home() {
         <li><span className="step-number">02</span><h3>Give it feedback.</h3><p>Your coding agent connects the app and evaluation worker. Send a correction tied to an actual answer; Loopiter proposes and tests a prompt or knowledge change.</p></li>
         <li><span className="step-number">03</span><h3>Let it improve.</h3><p>Once enabled, the loop runs on its own. Passing improvements go live automatically. Follow them in your dashboard, with a version to roll back to.</p></li>
       </ol>
-      <div className="closing"><p>We’re building this in the open.<br /><span>The platform is in development. The SDK is yours to explore.</span></p><a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a></div>
+      <div className="closing"><p>We’re building this in the open.<br /><span>The platform is in development. The SDK is yours to explore.</span></p><div className="closing-links"><Link className="text-link" href="/blog">Read the blog <span aria-hidden="true">↗</span></Link><a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a></div></div>
     </section>
     <section className="manifesto-invitation" aria-labelledby="manifesto-invitation-title">
       <p className="eyebrow">Why we’re building Loopiter</p>

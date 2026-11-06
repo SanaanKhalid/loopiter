@@ -1,0 +1,25 @@
+# Loopiter
+
+> A lightweight, model-agnostic feedback loop for production AI systems.
+
+Loopiter is an MIT-licensed software development kit for Node.js 22 and 24 and for Python 3.11+. The libraries capture executions and feedback, analyze scored segments, evaluate immutable candidates, and coordinate approval, deployment, or rollback through adapters the application owns. The default mode stores recommendations. Autonomous changes require an explicit opt-in and a complete policy. The policy validator accepts only an exact prompt, routing, or agent_release target. Loopiter is a library, not a hosted service, a model, a trainer, or an agent runtime. The core has no runtime dependencies and sends no telemetry. Current alpha: npm `0.3.0-alpha.1`, Python `0.3.0a1`. The hosted platform described on the landing page is in development.
+
+Source code: https://github.com/SanaanKhalid/loopiter
+
+## Pages
+
+- [Home](https://loopiter.co/): What the product is for, and the three-step introduction. The platform is in development; the SDK is in this repository.
+- [Manifesto](https://loopiter.co/manifesto): Why a useful correction should start an improvement attempt, and what the application still decides.
+- [Blog](https://loopiter.co/blog): Notes on evaluation and feedback loops.
+- [Self-improving AI agents need a feedback loop you can evaluate](https://loopiter.co/blog/self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate): What self-improving agents change, why an outside check matters, and which parts of that loop this SDK implements.
+
+## Documentation
+
+Canonical documentation is hosted separately from this site.
+
+- [Overview](https://loopiter.docs.buildwithfern.com/get-started/overview): Capture, verified feedback, evaluation, approval, deployment, and rollback.
+- [Supported capabilities](https://loopiter.docs.buildwithfern.com/get-started/supported-capabilities): What the Node.js and Python alphas include, and what they leave to the application.
+- [Opt-in autonomous improvement](https://loopiter.docs.buildwithfern.com/closing-the-loop/opt-in-autonomous-improvement): Observe, recommend, experiment, and autonomous modes.
+- [Evaluation and deployment](https://loopiter.docs.buildwithfern.com/closing-the-loop/evaluation-and-deployment): Immutable candidates, holdout partitions, receipts, and rollback.
+- [Agent systems](https://loopiter.docs.buildwithfern.com/closing-the-loop/agent-systems): Recording turns and tool calls without treating the SDK as an agent runtime.
+- [Fine-tuning boundaries](https://loopiter.docs.buildwithfern.com/closing-the-loop/fine-tuning): The alpha does not train or fine-tune a model.

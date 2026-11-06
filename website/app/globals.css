@@ -17,8 +17,8 @@ a:focus-visible { outline: 3px solid #a2c8a6; outline-offset: 6px; }
 .site-header .brand { flex-shrink: 0; }
 .site-header nav { display: flex; align-items: center; gap: 30px; font-size: 14px; flex-shrink: 0; white-space: nowrap; }
 .nav-about { opacity: .85; }
-.nav-manifesto { padding: 5px 0; border-bottom: 1px solid transparent; }
-.nav-manifesto:hover, .nav-manifesto[aria-current="page"] { border-bottom-color: currentColor; }
+.nav-manifesto, .nav-blog { padding: 5px 0; border-bottom: 1px solid transparent; }
+.nav-manifesto:hover, .nav-manifesto[aria-current="page"], .nav-blog:hover, .nav-blog[aria-current="page"] { border-bottom-color: currentColor; }
 .nav-link { padding: 13px 19px; border: 1px solid #cad9cf50; border-radius: 100px; background: #f3f7ec08; }
 .nav-link span { margin-left: 15px; }
 .nav-link:hover { background: #f3f7ec15; }
@@ -69,6 +69,18 @@ footer > span { font-size: 12px; color: var(--muted); }
 .manifesto-body h2 { margin-bottom: 24px; font-size: clamp(31px, 3.3vw, 40px); line-height: 1.2; letter-spacing: -.035em; text-wrap: balance; }
 .manifesto-body .manifesto-signoff { margin: 38px 0 0; padding-left: 25px; border-left: 2px solid #91aa96; color: var(--ink); font-family: Georgia, 'Times New Roman', serif; font-size: 29px; line-height: 1.5; letter-spacing: -.025em; }
 .manifesto-next { display: flex; flex-wrap: wrap; gap: 28px; margin-top: 60px; padding-top: 28px; border-top: 1px solid var(--line); }
+.closing-links { display: flex; flex-wrap: wrap; gap: 18px 28px; justify-content: flex-end; }
+.inline-link { border-bottom: 1px solid #93a899; }
+.blog-list { list-style: none; padding: 0; margin: 0; }
+.blog-list li { border-top: 1px solid var(--line); padding: 28px 0; }
+.blog-list h2 { font-size: clamp(28px, 3vw, 36px); margin: 0 0 12px; }
+.blog-list p { margin: 0; max-width: 640px; color: var(--muted); font-size: 16px; line-height: 1.7; }
+.blog-list time, .post-byline { font-family: var(--font-geist-mono), monospace; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.post-byline { display: flex; gap: 18px; margin: 28px 0 0; }
+.manifesto-body h3 { margin: 28px 0 12px; font-size: 18px; font-weight: 500; letter-spacing: -.3px; }
+.manifesto-body code { font-family: var(--font-geist-mono), ui-monospace, monospace; font-size: .86em; }
+.reference-list { padding: 0; margin: 8px 0 0; list-style: none; }
+.reference-list li { margin: 0 0 16px; color: #4e6159; font-size: 15px; line-height: 1.6; }
 .page-shell { max-width: 900px; margin: 80px auto; padding: 24px; }
 @media (max-width: 1220px) {
  .manifesto-invitation { margin-left: 48px; margin-right: 48px; }
@@ -84,7 +96,8 @@ footer > span { font-size: 12px; color: var(--muted); }
  .site-header nav { gap: 19px; }
  .nav-about { display: none; }
  .nav-sdk { display: none; }
- .nav-manifesto { font-size: 12px; }
+ .nav-manifesto, .nav-blog { font-size: 12px; }
+ .closing-links { justify-content: flex-start; }
  .nav-link { padding: 11px 15px; font-size: 12px; }
  .nav-link span { margin-left: 5px; }
  h1 { font-size: clamp(47px, 9vw, 64px); letter-spacing: -.055em; }
