@@ -22,9 +22,9 @@ both-language examples and explain where the contracts differ.
 | Mode | Behavior |
 | --- | --- |
 | `observe` | Inspect eligible evidence without proposing changes |
-| `recommend` (default) | Store bounded proposals, without approval or deployment |
+| `recommend` (controller default) | Store bounded proposals, without approval or deployment |
 | `experiment` | Compare candidates, select one and independently audit it; no deployment |
-| `autonomous` | With the explicit flag and complete policy: approve, apply, observe, retain or roll back |
+| `autonomous` | With the explicit flag and complete policy: approve, apply, observe, retain or roll back. Fresh onboarding plans record this mode |
 
 Setting the flag alone does nothing. The application calls `tick` repeatedly. The old
 `apply` / `experimentalAutoApply` authorization path is rejected, even when the old flag
@@ -65,8 +65,14 @@ export async function scheduledTick(controller: ImprovementController, workflowI
   </Tab>
 </Tabs>
 
-Omit both options for recommendations. Select `experiment` for evaluation without
-deployment. Python names use snake_case; Node names use camelCase.
+Omit `mode` and the self-improving flag for recommendations. A fresh `init`
+plan (schemaVersion 2, preset `autonomous-default`) records autonomous mode and
+self-improving on. The worker still spends only when started with `--enable`,
+which authorizes provider spending inside the existing gates and does not bypass
+audit, budgets, or rollback. Pass `--mode recommend` to store proposals without
+applying them. Select `experiment` for evaluation without deployment. Python
+names use snake_case; Node names use camelCase. Existing schemaVersion 1 plans
+stay recommend and are not rewritten.
 
 ## Workflow and policy configuration
 

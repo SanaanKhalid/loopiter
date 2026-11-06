@@ -1,4 +1,4 @@
-"""Loopiter Python: dependency-free, no telemetry, reviewed by default; autonomy is opt-in."""
+"""Loopiter Python: dependency-free, no telemetry. The controller defaults to recommend; fresh onboarding records autonomous mode and still requires --enable."""
 
 from ._validation import LoopiterError, fingerprint
 from .client import DeploymentAdapter, FeedbackLoop

@@ -46,10 +46,17 @@ Give your coding agent this prompt:
 
 The guide covers existing and new applications, verified feedback, optional Jev
 judging, durable storage, real serving attribution, deliberate autonomous activation
-and recovery. The generated plan starts incomplete and disabled. `doctor` checks
-declared configuration; `verify` tests isolated simulated SDK mechanics. Your agent
-must still verify the real application. No platform login or Loopiter project key
-is involved; you pay your own model/judge, database and hosting providers.
+and recovery. A fresh plan is schemaVersion 2 (`autonomous-default`): mode
+`autonomous` and self-improving on, and it still starts incomplete. `doctor`
+checks declared configuration; `verify` tests isolated simulated SDK mechanics.
+Your agent must still verify the real application. After both succeed, the
+emitted worker recipe is `--enable --mode autonomous`. `--enable` authorizes
+improvement work and provider spending inside the existing gates; it does not
+bypass audit, budgets, or rollback. `--mode recommend` stores proposals and
+does not apply. Omitting `--mode` on the worker, or constructing
+`ImprovementController` without a mode, still selects recommend. Existing
+schemaVersion 1 plans are left unchanged. No platform login or Loopiter project
+key is involved; you pay your own model/judge, database and hosting providers.
 
 Read the guide with `python -m loopiter guide` or `npx --no-install loopiter guide`.
 Use `reference` for packaged source. New commands require this onboarding build;
@@ -58,9 +65,12 @@ publishing a new npm/PyPI release is separate.
 ## 0.3 opt-in autonomous alpha
 
 Release versions: `loopiter@0.3.0-alpha.1` and Python `loopiter==0.3.0a1`.
-It adds opt-in, policy-bounded `ImprovementController` APIs in both languages, durable
-experiments, single-winner selection, production observation and recovery. Default
-behavior remains recommendations. Installation never enables autonomous production changes.
+It adds policy-bounded `ImprovementController` APIs in both languages, durable
+experiments, single-winner selection, production observation and recovery.
+Constructing the controller without a mode still recommends and does not apply.
+A fresh self-hosted init records autonomous mode and self-improving on; the
+worker spends only with `--enable`, and every audit, budget, and rollback gate
+remains. Installation never starts a worker or spends by itself.
 
 See [autonomy guide source](fern/pages/autonomous.mdx), [migration](docs/autonomy-migration.md),
 [simulation workflows](examples/autonomous/README.md), and the
@@ -182,9 +192,10 @@ An uncertain result remains pending until inspection resolves it. Do not retry a
 blindly. An adapter must implement idempotent apply, durable inspect, fenced
 `not_applied`, and real rollback. There is no universal exactly-once guarantee.
 
-Default automation only recommends. Experimental auto-apply needs explicit opt-in,
-allowed targets, passing metric gates and low-risk prompt/routing changes. Callbacks
-run in your process; cancellation is cooperative, **not a sandbox**.
+Constructing the controller without a mode only recommends. A fresh self-hosted
+init records autonomous mode; spending still requires `--enable`, and every
+policy gate still applies. The removed experimental auto-apply path stays
+rejected. Callbacks run in your process; cancellation is cooperative, **not a sandbox**.
 
 The complete PostgreSQL/OpenAI or Azure OpenAI starter includes real prompt selection, exact-match
 holdout evaluation, review, rollback and recovery. Live mode is opt-in, requires

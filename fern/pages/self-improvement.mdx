@@ -38,10 +38,13 @@ The application owns the run invocation/schedule; no background daemon is starte
 
 ## Migrating automatic application
 
-The legacy controller no longer approves or deploys. Use a fresh `ImprovementController`
-workflow with `mode: 'autonomous'`, `selfImproving: true`, exact target policy, persistent
-budgets, separate validation/audit datasets and production observation. Legacy evaluations
-and approvals do not grant autonomous authority. Start with `recommend` or `experiment`.
+The legacy controller no longer approves or deploys. Its omitted autonomy remains
+recommend. Use a fresh `ImprovementController` workflow with `mode: 'autonomous'`,
+`selfImproving: true`, exact target policy, persistent budgets, separate
+validation/audit datasets and production observation. New onboarding plans record
+that pair; constructing this legacy controller, or the new controller without a
+mode, does not. Legacy evaluations and approvals do not grant autonomous authority.
+`--mode recommend` or `experiment` remains available.
 
 Constraints support gte/lte/gt/lt/eq with finite thresholds. They supplement, not
 override, the evaluator's own passing result. Set `deploymentsEnabled: () => false`

@@ -18,7 +18,9 @@ payload/query limits, source verification, least-privilege credentials, TLS and 
 Keep model calls and deployments outside database transactions. Do not reuse one
 namespace for unrelated tenants or mix synthetic and real evidence in the same cohort.
 
-Start in recommend mode. Freeze a held-out dataset and independent evaluation gates.
+A fresh onboarding plan records autonomous mode. Run `--mode recommend` when you
+want proposals only; omitting the controller mode does the same. Freeze a held-out
+dataset and independent evaluation gates.
 Review the actual diff, evidence counts, model/prompt/dataset versions and evaluation
 report. Human approval is an application authorization decision; the SDK records the
 actor and exact passing evaluation, not the actor's real-world identity.

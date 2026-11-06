@@ -5,8 +5,10 @@ title: Loopiter reliable alpha
 Loopiter is an MIT-licensed SDK that coordinates feedback-driven AI
 improvements. It is not an LLM, trainer, hosted observability service or rollout daemon.
 The **0.3 alpha** (`0.3.0-alpha.1` on npm; `0.3.0a1` on PyPI) adds
-[opt-in autonomous improvement](/closing-the-loop/opt-in-autonomous-improvement) in both SDKs.
-Autonomy remains disabled by default. Start with the native, async **Python 3.11+ SDK**:
+[autonomous improvement](/closing-the-loop/opt-in-autonomous-improvement) in both SDKs.
+The controller stays on recommend unless mode and the self-improving flag are set.
+A fresh self-hosted init records autonomous mode; the worker still requires `--enable`
+before spending. Start with the native, async **Python 3.11+ SDK**:
 capture predictions and verified corrections, evaluate proposed changes, and deploy
 through your own application adapters. The core has **zero runtime dependencies**
 and no telemetry; PostgreSQL support is optional. No Node.js installation is needed
@@ -61,8 +63,7 @@ callbacks. Loopiter stores evidence, bounds orchestration and protects lifecycle
 - Durable deployment attempts, target reservations, receipts, inspect/reconcile and
   explicit predecessor-based rollback through your deployment adapter.
 - Node store v3 / Python store v2 contracts, optional PostgreSQL 16/17 reference adapters and conformance suites.
-- Review-first defaults with explicitly enabled prompt/routing autonomy, independent audit,
-  production observation and automatic rollback through application adapters.
+- Controller default of recommend. Fresh onboarding plans record autonomous mode; spending still requires the explicit enable flag, independent audit, production observation and automatic rollback through application adapters.
 - Native Python and Node.js autonomous workflow examples, plus offline fixtures.
 - A separate Node.js reviewed support-intent CLI with PostgreSQL and OpenAI/Azure integration.
 

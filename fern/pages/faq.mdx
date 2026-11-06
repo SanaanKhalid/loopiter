@@ -29,10 +29,13 @@ evaluation is expected and must not be rewritten as a success.
 
 ### Does recommend mode deploy? Is experiment sandboxed?
 
-Recommend stores proposals only. Experiment evaluates without automatic deployment,
-but callbacks are ordinary code in your process. Autonomous mode requires the explicit
-self-improvement flag, an exact prompt/routing policy, independent audit, budgets and
-observation/rollback adapters. The old experimental apply mode is rejected.
+Recommend stores proposals only and never applies a candidate. Experiment evaluates
+without automatic deployment, but callbacks are ordinary code in your process.
+A fresh onboarding plan records autonomous mode and self-improving on. Autonomous
+mode still requires the explicit `--enable` spending authorization, an exact
+prompt/routing/`agent_release` policy, an audit partition, budgets and
+observation/rollback adapters. It fails closed without those. The old experimental
+apply mode is rejected. Omit the controller mode to stay on recommend.
 
 ### A deploy timed out. Should I retry?
 

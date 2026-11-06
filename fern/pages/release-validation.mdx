@@ -11,7 +11,9 @@ Both cores remain dependency-free and send no telemetry. Read the
 
 Autonomy requires `selfImproving: true` in Node.js or `self_improving=True` in Python,
 `mode: autonomous`, a complete exact-target policy and application adapters. The flag
-alone does not schedule work. The application repeatedly calls `tick`.
+alone does not schedule work. The application repeatedly calls `tick`. A fresh
+onboarding plan records that mode and flag; the worker still requires `--enable`,
+and constructing the controller without a mode still recommends.
 Start with [the complete policy guide](/closing-the-loop/opt-in-autonomous-improvement).
 
 ## Mock support application

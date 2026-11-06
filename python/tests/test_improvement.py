@@ -219,6 +219,52 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reason"], "audit_evaluation_conflict")
         self.assertEqual(self.registry.calls, 0)
 
+    async def test_omitted_mode_stays_recommend_and_never_applies(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        controller = ImprovementController(self.loop, workflows=[self.workflow])
+        self.assertEqual(controller.mode, "recommend")
+        self.assertIs(controller.self_improving, False)
+        result = await controller.tick("classification")
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(result["reason"], "recommendations_only")
+        self.assertEqual(self.registry.calls, 0)
+        self.assertEqual(self.proposals, 1)
+        again = await controller.tick("classification")
+        self.assertEqual(again["reason"], "unchanged_evidence")
+        self.assertEqual(self.registry.calls, 0)
+        page = await self.loop.list("coordination")
+        row = next(item for item in page["items"] if item["id"] == "workflow:classification")
+        self.assertEqual(row["data"]["mode"], "recommend")
+        self.assertIs(row["data"]["self_improving"], False)
+
+    async def test_autonomous_fails_closed_without_audit_budget_or_enable(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        disabled = ImprovementController(self.loop, workflows=[self.workflow], mode="autonomous")
+        paused = await disabled.tick("classification")
+        self.assertEqual(paused["reason"], "self_improvement_disabled")
+        self.assertEqual(paused["state"], "paused")
+        self.assertEqual(self.registry.calls, 0)
+        self.assertEqual(self.proposals, 0)
+        insufficient = next(
+            scenario for scenario in FIXTURES["scenarios"] if scenario["name"] == "insufficient"
+        )
+        self.setup_workflow(insufficient)
+        waiting = await self.controller().tick("classification")
+        self.assertEqual(waiting["reason"], "insufficient_evidence")
+        self.assertEqual(waiting["state"], "waiting_for_evidence")
+        self.assertEqual(self.registry.calls, 0)
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        del self.workflow.policy["daily"]["tokens"]
+        with self.assertRaises(LoopiterError) as error:
+            ImprovementController(
+                self.loop,
+                workflows=[self.workflow],
+                mode="autonomous",
+                self_improving=True,
+            )
+        self.assertEqual(error.exception.code, "invalid_input")
+        self.assertEqual(self.registry.calls, 0)
+
     async def test_flag_and_concurrency(self):
         self.setup_workflow(FIXTURES["scenarios"][0])
         self.assertEqual(

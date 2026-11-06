@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Minor
+
+- Fresh self-hosted `init` writes onboarding plan schemaVersion 2, preset `autonomous-default`, in Node and Python: `mode` autonomous and self-improving on. Doctor still accepts schemaVersion 1 plans and does not rewrite them.
+- `ImprovementController` constructed without a mode still recommends and does not apply. The worker still requires `--enable` before spending. New setup recipes pass `--enable --mode autonomous` after doctor and verify. `--mode recommend` remains one flag away, and omitting `--mode` still selects recommend.
+- `--enable` authorizes improvement work and provider spending inside the existing gates. Autonomous mode still fails closed without an audit partition, a budget, or that flag. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks are unchanged. No storage migration.
+- Before the first `--enable --mode autonomous` run, the agent guide and init recipe require one-time explicit confirmation from the human. A checklist, doctor report, or plan output is not that confirmation. Later autonomous runs do not add per-candidate approval.
+
 - Package a self-hosted agent guide and application-side references with both SDKs.
 - Add initialization, configuration inspection, isolated offline verification and explicit foreground worker commands in native Python and Node.
 - Document application-owned feedback verification, storage, evaluator selection (including optional Jev), provider budgets, autonomous activation and recovery.
