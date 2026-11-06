@@ -51,10 +51,11 @@ def initialize_self_hosted(directory):
     # Never merge with or follow an existing destination/symlink.
     destination.mkdir(mode=0o700)
     plan = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "language": "python",
-        "mode": "recommend",
-        "selfImproving": False,
+        "preset": "autonomous-default",
+        "mode": "autonomous",
+        "selfImproving": True,
         "namespace": "",
         "applicationModule": "./application.py",
         "storage": "unconfigured",
@@ -82,11 +83,21 @@ Run from the application root:
 
 Your agent creates application.py here, exporting async create_integration(*, cancellation) returning a dictionary with loop, workflows and optional async close. Connect these to your real serving code, reviewed datasets, evaluator and durable artifact registry. Initialization leaves the plan incomplete and does not claim the application is connected.
 
-After reviewing the plan and verifying the actual integration:
+This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.
+
+After doctor reports configured and verify passes:
+
+    python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --mode autonomous --once
+
+--enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.
+
+--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:
 
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --mode recommend --once
 
-One tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your process manager. Automatic releases require the explicit --mode autonomous choice and all SDK policy/evidence gates. A worker does not remain running after its process exits.
+Omitting --mode on the worker still selects recommend. Constructing ImprovementController without a mode also stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.
+
+One tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your process manager. A worker does not remain running after its process exits.
 
 You pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for feedback verification, Jev selection, production storage and recovery.
 """,
@@ -99,7 +110,10 @@ You pay your selected model/judge, database, retrieval, hosting and logging prov
     return {
         "directory": str(destination),
         "files": list(files),
-        "mode": "recommend",
+        "schemaVersion": 2,
+        "preset": "autonomous-default",
+        "mode": "autonomous",
+        "selfImproving": True,
         "connected": False,
         "prompt": f"Read {destination / 'AGENT_GUIDE.md'} and complete the self-hosted SDK integration in this project.",
     }
@@ -108,8 +122,8 @@ You pay your selected model/judge, database, retrieval, hosting and logging prov
 def inspect_self_hosted_setup(directory, environment=None):
     root = Path(directory).resolve()
     plan = json.loads((root / "integration-plan.json").read_text(encoding="utf-8"))
-    if plan.get("schemaVersion") != 1 or plan.get("language") != "python":
-        raise ValueError("Expected a Python self-hosted integration plan, schemaVersion 1.")
+    if plan.get("schemaVersion") not in (1, 2) or plan.get("language") != "python":
+        raise ValueError("Expected a Python self-hosted integration plan, schemaVersion 1 or 2.")
     if plan.get("mode") not in MODES or type(plan.get("selfImproving")) is not bool:
         raise ValueError("Invalid mode or selfImproving in integration plan.")
     module = plan.get("applicationModule")
@@ -267,8 +281,17 @@ def main(argv=None):
     commands.add_parser("reference").add_argument("--name", choices=tuple(REFERENCES))
     worker = commands.add_parser("worker")
     worker.add_argument("--module", required=True)
-    worker.add_argument("--enable", action="store_true")
-    worker.add_argument("--mode", choices=MODES, default="recommend")
+    worker.add_argument(
+        "--enable",
+        action="store_true",
+        help="Authorize improvement work and provider spending. Required before the worker imports application code.",
+    )
+    worker.add_argument(
+        "--mode",
+        choices=MODES,
+        default="recommend",
+        help="Defaults to recommend. Fresh init recipes pass autonomous after doctor and verify.",
+    )
     worker.add_argument("--once", action="store_true")
     worker.add_argument("--interval-ms", type=int, default=30000)
     args = parser.parse_args(argv)

@@ -42,10 +42,11 @@ export async function initializeSelfHosted(directory: string) {
   // Existing directories (including symlinks) are deliberately never merged or replaced.
   await mkdir(destination, { mode: 0o700 });
   const plan = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     language: "node",
-    mode: "recommend",
-    selfImproving: false,
+    preset: "autonomous-default",
+    mode: "autonomous",
+    selfImproving: true,
     namespace: "",
     applicationModule: "./application.mjs",
     storage: "unconfigured",
@@ -64,7 +65,7 @@ export async function initializeSelfHosted(directory: string) {
     "integration-plan.json": JSON.stringify(plan, null, 2) + "\n",
     "verify.mjs":
       'import { verifySelfHostedInstallation } from "loopiter/onboarding";\nconsole.log(JSON.stringify(await verifySelfHostedInstallation(), null, 2));\n',
-    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nAfter reviewing the plan and verifying the real integration:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode recommend --once\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. Automatic releases require the explicit --mode autonomous choice and all SDK policy/evidence gates. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
+    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode autonomous --once\n\n--enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode recommend --once\n\nOmitting --mode on the worker still selects recommend. Constructing ImprovementController without a mode also stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
   };
   for (const [name, contents] of Object.entries(files)) {
     await writeFile(resolve(destination, name), contents, {
@@ -75,7 +76,10 @@ export async function initializeSelfHosted(directory: string) {
   return {
     directory: destination,
     files: Object.keys(files),
-    mode: "recommend",
+    schemaVersion: 2,
+    preset: "autonomous-default",
+    mode: "autonomous",
+    selfImproving: true,
     connected: false,
     prompt: `Read ${resolve(destination, "AGENT_GUIDE.md")} and complete the self-hosted SDK integration in this project.`,
   };
@@ -89,9 +93,12 @@ export async function inspectSelfHostedSetup(
   const plan = JSON.parse(
     await readFile(resolve(root, "integration-plan.json"), "utf8"),
   ) as Record<string, unknown>;
-  if (plan.schemaVersion !== 1 || plan.language !== "node")
+  if (
+    (plan.schemaVersion !== 1 && plan.schemaVersion !== 2) ||
+    plan.language !== "node"
+  )
     throw Error(
-      "Expected a Node self-hosted integration plan, schemaVersion 1.",
+      "Expected a Node self-hosted integration plan, schemaVersion 1 or 2.",
     );
   const missing: string[] = [];
   if (typeof plan.namespace !== "string" || !plan.namespace.trim())

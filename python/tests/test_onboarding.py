@@ -19,15 +19,42 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class OnboardingTests(unittest.TestCase):
-    def test_init_preserves_files_and_starts_disabled(self):
+    def test_init_preserves_files_and_records_autonomous_default(self):
         with tempfile.TemporaryDirectory(prefix="loopiter onboarding ") as root:
             destination = Path(root) / "my app"
             result = initialize_self_hosted(destination)
             self.assertFalse(result["connected"])
+            self.assertEqual(result["schemaVersion"], 2)
+            self.assertEqual(result["preset"], "autonomous-default")
+            self.assertEqual(result["mode"], "autonomous")
+            self.assertTrue(result["selfImproving"])
             self.assertEqual((destination / "AGENT_GUIDE.md").read_text(), read_agent_guide())
             plan = json.loads((destination / "integration-plan.json").read_text())
-            self.assertFalse(plan["selfImproving"])
-            self.assertEqual(plan["mode"], "recommend")
+            self.assertEqual(plan["schemaVersion"], 2)
+            self.assertEqual(plan["preset"], "autonomous-default")
+            self.assertEqual(plan["mode"], "autonomous")
+            self.assertTrue(plan["selfImproving"])
+            self.assertEqual(
+                set(plan),
+                {
+                    "schemaVersion",
+                    "language",
+                    "preset",
+                    "mode",
+                    "selfImproving",
+                    "namespace",
+                    "applicationModule",
+                    "storage",
+                    "requiredEnvironment",
+                    "reviewed",
+                },
+            )
+            readme = (destination / "README.md").read_text()
+            self.assertIn("--enable --mode autonomous --once", readme)
+            self.assertIn("--enable --mode recommend --once", readme)
+            self.assertIn("--enable authorizes improvement work and provider spending", readme)
+            self.assertIn("fails closed without an audit partition, a budget, or --enable", readme)
+            self.assertIn("Omitting --mode on the worker still selects recommend", readme)
             marker = destination / "user-owned.txt"
             marker.write_text("preserve me")
             with self.assertRaises(FileExistsError):
@@ -65,6 +92,8 @@ class OnboardingTests(unittest.TestCase):
             )
             self.assertTrue(result["configured"])
             self.assertFalse(result["liveVerified"])
+            self.assertEqual(result["mode"], "autonomous")
+            self.assertTrue(result["selfImproving"])
             self.assertNotIn("private-test-sentinel", json.dumps(result))
             plan["requiredEnvironment"] = ["secret-value-with-punctuation!"]
             path.write_text(json.dumps(plan))
@@ -78,6 +107,41 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("prompt_workflow", read_reference("workflows"))
         with self.assertRaises(ValueError):
             read_reference("../../.env")
+
+    def test_schema_version_1_plans_stay_recommend_and_are_not_rewritten(self):
+        with tempfile.TemporaryDirectory() as root:
+            destination = Path(root) / "legacy"
+            initialize_self_hosted(destination)
+            path = destination / "integration-plan.json"
+            legacy = {
+                "schemaVersion": 1,
+                "language": "python",
+                "mode": "recommend",
+                "selfImproving": False,
+                "namespace": "app/legacy",
+                "applicationModule": "./application.py",
+                "storage": "postgres",
+                "requiredEnvironment": [],
+                "reviewed": {
+                    "target": True,
+                    "feedback": True,
+                    "evaluation": True,
+                    "budgets": True,
+                    "deployment": True,
+                },
+            }
+            body = json.dumps(legacy, indent=2) + "\n"
+            path.write_text(body)
+            (destination / "application.py").write_text("pass\n")
+            report = inspect_self_hosted_setup(destination, {})
+            self.assertTrue(report["configured"])
+            self.assertEqual(report["mode"], "recommend")
+            self.assertFalse(report["selfImproving"])
+            self.assertEqual(path.read_text(), body)
+            legacy["schemaVersion"] = 3
+            path.write_text(json.dumps(legacy))
+            with self.assertRaisesRegex(ValueError, "schemaVersion 1 or 2"):
+                inspect_self_hosted_setup(destination)
 
 
 class WorkerTests(unittest.IsolatedAsyncioTestCase):

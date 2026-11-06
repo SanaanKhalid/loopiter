@@ -40,10 +40,14 @@ Give the agent this prompt:
 > evaluation and budgets, connect our storage and providers, verify the actual
 > integration, and explain how to run, pause and roll it back.
 
-Initialization never overwrites an existing directory. It creates a disabled,
-incomplete integration plan and local verification script. Your application-specific
-model, feedback intake, trusted verification, datasets, serving registry and worker
-module still need to be connected. Unverified user comments are not ground truth.
+Initialization never overwrites an existing directory. A fresh plan is
+schemaVersion 2 with preset `autonomous-default`: mode `autonomous` and
+self-improving on. It is still incomplete. Doctor blocks until the reviewed
+checklist, namespace, durable storage and application module are set. Existing
+schemaVersion 1 plans stay recommend and are not rewritten. Your
+application-specific model, feedback intake, trusted verification, datasets,
+serving registry and worker module still need to be connected. Unverified user
+comments are not ground truth.
 
 `verify` exercises the actual SDK controller with simulated acceptance, rejection,
 insufficient-evidence, receipt-recovery and rollback paths, without provider calls.
@@ -62,24 +66,33 @@ store. Use `reference` to inspect packaged examples; no repository clone is need
 <Tab title="Python">
 
 ```sh
-python -m loopiter worker --module loopiter/application.py --enable --mode recommend --once
+python -m loopiter worker --module loopiter/application.py --enable --mode autonomous --once
 ```
 
 </Tab>
 <Tab title="Node.js">
 
 ```sh
-npx --no-install loopiter worker --module loopiter/application.mjs --enable --mode recommend --once
+npx --no-install loopiter worker --module loopiter/application.mjs --enable --mode autonomous --once
 ```
 
 </Tab>
 </Tabs>
 
-One tick advances one durable phase. Omit `--once` for a foreground worker ticking
-every 30 seconds, and supervise it with your deployment's process manager. Choose
-`--mode autonomous` deliberately for automatic releases after real verification.
-SDK budgets, leases, independent audit, observation and rollback gates remain in
-force. Inspect pending outcomes before any retries.
+`--enable` authorizes improvement work and provider spending in that process:
+proposal, replay and judge calls, and, in autonomous mode, a deployment that has
+passed validation and audit. It does not bypass validation, audit, minimum
+improvement, guardrails, trusted sources, budgets, cooldown, the
+consecutive-failure stop, canary promotion, observation rollback, pause, or
+lease checks. Autonomous mode fails closed without an audit partition, a budget,
+or `--enable`. Omit `--enable` and the worker refuses to start.
+
+`--mode recommend` stores proposals and does not apply a candidate. Omitting
+`--mode` still selects recommend, as does constructing the controller without a
+mode. One tick advances one durable phase. Omit `--once` for a foreground worker
+ticking every 30 seconds, and supervise it with your deployment's process
+manager. SDK budgets, leases, independent audit, observation and rollback gates
+remain in force. Inspect pending outcomes before any retries.
 
 ## Choose the evaluator
 

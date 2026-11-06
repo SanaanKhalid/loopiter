@@ -27,8 +27,36 @@ test("self-hosted init never overwrites user files or follows an existing destin
     const plan = JSON.parse(
       await readFile(join(destination, "integration-plan.json"), "utf8"),
     );
-    assert.equal(plan.selfImproving, false);
-    assert.equal(plan.mode, "recommend");
+    assert.equal(plan.schemaVersion, 2);
+    assert.equal(plan.preset, "autonomous-default");
+    assert.equal(plan.mode, "autonomous");
+    assert.equal(plan.selfImproving, true);
+    assert.deepEqual(Object.keys(plan).sort(), [
+      "applicationModule",
+      "language",
+      "mode",
+      "namespace",
+      "preset",
+      "requiredEnvironment",
+      "reviewed",
+      "schemaVersion",
+      "selfImproving",
+      "storage",
+    ]);
+    assert.equal(setup.mode, "autonomous");
+    assert.equal(setup.selfImproving, true);
+    const readme = await readFile(join(destination, "README.md"), "utf8");
+    assert.match(readme, /--enable --mode autonomous --once/);
+    assert.match(readme, /--enable --mode recommend --once/);
+    assert.match(
+      readme,
+      /--enable authorizes improvement work and provider spending/,
+    );
+    assert.match(
+      readme,
+      /fails closed without an audit partition, a budget, or --enable/,
+    );
+    assert.match(readme, /Omitting --mode on the worker still selects recommend/);
     await writeFile(join(destination, "user-owned.txt"), "preserve me");
     await assert.rejects(initializeSelfHosted(destination), { code: "EEXIST" });
     assert.equal(
@@ -77,6 +105,8 @@ test("doctor checks configuration without executing the module or exposing secre
     });
     assert.equal(report.configured, true);
     assert.equal(report.liveVerified, false);
+    assert.equal(report.mode, "autonomous");
+    assert.equal(report.selfImproving, true);
     assert.ok(!JSON.stringify(report).includes("private-test-sentinel"));
     plan.requiredEnvironment = ["secret-value-with-punctuation!"];
     await writeFile(path, JSON.stringify(plan));
@@ -191,6 +221,45 @@ export async function createIntegration() {
       /Workflows required/,
     );
     assert.equal((await import(pathToFileURL(invalid).href)).closed, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("schemaVersion 1 plans stay recommend and are not rewritten", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-v1-"));
+  try {
+    const destination = join(root, "legacy");
+    await initializeSelfHosted(destination);
+    const path = join(destination, "integration-plan.json");
+    const legacy = {
+      schemaVersion: 1,
+      language: "node",
+      mode: "recommend",
+      selfImproving: false,
+      namespace: "app/legacy",
+      applicationModule: "./application.mjs",
+      storage: "postgres",
+      requiredEnvironment: [],
+      reviewed: {
+        target: true,
+        feedback: true,
+        evaluation: true,
+        budgets: true,
+        deployment: true,
+      },
+    };
+    const body = JSON.stringify(legacy, null, 2) + "\n";
+    await writeFile(path, body);
+    await writeFile(join(destination, "application.mjs"), "export {};\n");
+    const report = await inspectSelfHostedSetup(destination, {});
+    assert.equal(report.configured, true);
+    assert.equal(report.mode, "recommend");
+    assert.equal(report.selfImproving, false);
+    assert.equal(await readFile(path, "utf8"), body);
+    legacy.schemaVersion = 3;
+    await writeFile(path, JSON.stringify(legacy));
+    await assert.rejects(inspectSelfHostedSetup(destination), /schemaVersion 1 or 2/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -258,6 +258,44 @@ for (const scenario of fixtures.scenarios)
     if (scenario.name === "regression" || scenario.name === "missing")
       assert.equal(x.registry.version, null);
   });
+test("omitted controller mode stays recommend and never applies", async () => {
+  const x = setup();
+  const controller = new ImprovementController(x.loop, {
+    workflows: [x.workflow],
+  });
+  const result = await controller.tick("classification");
+  assert.equal(result.state, "completed");
+  assert.equal(result.reason, "recommendations_only");
+  assert.equal(x.registry.applications, 0);
+  assert.equal(x.counts().proposals, 1);
+  const again = await controller.tick("classification");
+  assert.equal(again.reason, "unchanged_evidence");
+  assert.equal(x.registry.applications, 0);
+  const page = await x.loop.list("coordination");
+  const row = page.items.find((item) => item.id === "workflow:classification");
+  assert.equal(row?.data.mode, "recommend");
+  assert.equal(row?.data.selfImproving, false);
+});
+test("autonomous fails closed without audit, budget, or enable", async () => {
+  const disabled = setup();
+  const paused = await new ImprovementController(disabled.loop, {
+    mode: "autonomous",
+    workflows: [disabled.workflow],
+  }).tick("classification");
+  assert.equal(paused.reason, "self_improvement_disabled");
+  assert.equal(paused.state, "paused");
+  assert.equal(disabled.registry.applications, 0);
+  assert.equal(disabled.counts().proposals, 0);
+  const unaudited = setup({ name: "insufficient", scores: [1], errors: 0 });
+  const waiting = await unaudited.controller().tick("classification");
+  assert.equal(waiting.reason, "insufficient_evidence");
+  assert.equal(waiting.state, "waiting_for_evidence");
+  assert.equal(unaudited.registry.applications, 0);
+  delete (disabled.workflow.policy.daily as Partial<AutonomyPolicy["daily"]>)
+    .tokens;
+  assert.throws(() => disabled.controller(), { code: "invalid_input" });
+  assert.equal(disabled.registry.applications, 0);
+});
 test("flag, exact schema and required budgets fail closed", async () => {
   const x = setup();
   assert.equal(

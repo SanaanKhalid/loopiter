@@ -22,9 +22,13 @@ and do not automatically enable autonomy while upgrading storage or code.
 6. Remove `apply` / `experimentalAutoApply`. Create fresh workflows with versioned policy,
    schemas, dataset eligibility, budgets and adapters. Old proposals/evaluations/approvals
    cannot authorize new autonomous work: controller candidates are fresh and baseline-bound.
-7. Start in recommend, then experiment, then an explicitly isolated autonomous environment.
-   Exercise failed monitoring, lost receipts, cancellation and rollback before any production
-   enablement. Use one authoritative configuration and one SDK language per external target.
+7. For an existing installation, start in recommend, then experiment, then an explicitly
+   isolated autonomous environment. Exercise failed monitoring, lost receipts, cancellation
+   and rollback before any production enablement. Use one authoritative configuration and
+   one SDK language per external target. Do not rewrite an existing schemaVersion 1
+   onboarding plan. Fresh `init` plans (schemaVersion 2, preset `autonomous-default`)
+   record autonomous mode separately; the controller constructed without a mode still
+   recommends, and the worker still requires `--enable` before spending.
 
 ## JSON development stores
 
