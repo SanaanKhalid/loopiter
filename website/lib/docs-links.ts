@@ -12,3 +12,18 @@ export function docsHref(fragment = ''): string {
   const key = fragment.replace(/^#/, '');
   return DOCS + (Object.hasOwn(legacyDocs, key) ? legacyDocs[key] : legacyDocs.overview);
 }
+
+export const docPath = {
+  overview: '/get-started/overview',
+  python: '/get-started/python-quickstart',
+  supported: '/get-started/supported-capabilities',
+  autonomous: '/closing-the-loop/opt-in-autonomous-improvement',
+  evaluation: '/closing-the-loop/evaluation-and-deployment',
+  selfImprovement: '/closing-the-loop/governed-self-improvement',
+  agentSystems: '/closing-the-loop/agent-systems',
+  fineTuning: '/closing-the-loop/fine-tuning',
+} as const;
+
+export function docUrl(page: keyof typeof docPath): string {
+  return DOCS + docPath[page];
+}

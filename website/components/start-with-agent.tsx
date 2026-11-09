@@ -11,8 +11,7 @@ export function StartWithAgent() {
     catch { setCopied(false); }
   }
   return <div className="agent-start">
-    <button className="button" onClick={() => void start()}>{copied ? 'Setup prompt copied' : 'Start with your agent'} <span aria-hidden="true">↗</span></button>
-    <p className="agent-start-hint">Paste into Codex or Claude Code. Set up through conversation.</p>
-    {open && <div className="agent-start-panel"><label htmlFor="setup-prompt">{copied ? 'Open your project and paste this into your coding agent.' : 'Copy this prompt into your coding agent.'}</label><textarea id="setup-prompt" readOnly rows={6} value={prompt} /><button className="text-link" onClick={() => setOpen(false)}>Close</button></div>}
+    <button className="button button-primary" type="button" onClick={() => void start()}>{copied ? 'Setup prompt copied' : 'Start with your agent'} <span aria-hidden="true">↗</span></button>
+    {open && <div className="agent-start-panel"><label htmlFor="setup-prompt">{copied ? 'Open your project and paste this into your coding agent.' : 'Copy this prompt into your coding agent.'}</label><textarea id="setup-prompt" readOnly rows={6} value={prompt} /><button className="text-link" type="button" onClick={() => setOpen(false)}>Close</button></div>}
   </div>;
 }

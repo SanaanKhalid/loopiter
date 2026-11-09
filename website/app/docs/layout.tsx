@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { pageMetadata } from "../../lib/site";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "Documentation — Loopiter",
-  robots: { index: false, follow: true },
-  description: "Complete documentation for capturing AI executions, connecting outcomes, detecting patterns, evaluating improvements, and operating governed self-improvement loops.",
-};
+  description: "Loopiter documentation has moved to the canonical Fern docs: capture, evaluation, deployment, and governed self-improvement.",
+  path: "/docs",
+  index: false,
+});
 
 export default function DocsLayout({ children }: Readonly<{ children: ReactNode }>) {
   return children;
