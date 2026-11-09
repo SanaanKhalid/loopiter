@@ -38,6 +38,9 @@ import {
 } from "./money.js";
 import { bootstrapMeanInterval, wilsonInterval } from "./stats.js";
 import {
+  ACCURACY_FLOOR,
+  OBSERVATION_ERROR_CEILING,
+  SPLIT_COUNTS,
   answer,
   baselineFragment,
   buildSplit,
@@ -88,7 +91,7 @@ export interface RateView {
 }
 
 export interface OfflineReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   harness: "loopiter-offline-kb-qa";
   phase: 0;
   task: "internal-kb-qa";
@@ -206,6 +209,7 @@ export async function runOfflineBenchmark(
       comparison,
       priceTable,
       model,
+      seed,
     );
     if (comparison.stopReason)
       throw new Error("Comparison baseline hit the spend cap. Raise the caps.");
@@ -283,7 +287,7 @@ export async function runOfflineBenchmark(
     candidateCompleted &&
     candidateBootstrap.mean > baselineBootstrap.mean;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     harness: "loopiter-offline-kb-qa",
     phase: 0,
     task: "internal-kb-qa",
@@ -291,7 +295,7 @@ export async function runOfflineBenchmark(
     provider: "mock",
     model,
     description:
-      "Frozen baseline versus the SDK autonomous loop on a synthetic internal KB. Retrieval is frozen. The loop may change only the versioned KB fragment. Held-out items are scored after the loop and are not part of train or dev.",
+      "Frozen baseline versus the SDK autonomous loop on a synthetic internal KB. Retrieval is frozen and can return a distractor, miss, or out-of-scope result. The loop may change only the versioned KB fragment. Mock answers slip by seed. Held-out items are scored after the loop and are not part of train or dev.",
     seeds,
     priceTable,
     caps: {
@@ -317,7 +321,7 @@ export async function runOfflineBenchmark(
       bootstrapSamples,
       bootstrapSeed,
       wilsonZ: baselineWilson.z,
-      note: "Primary interval: percentile bootstrap of the mean held-out success rate, resampling seeds with replacement. Endpoints use linear interpolation between order statistics (NumPy percentile type 7). The seed is the resampling unit. Wilson score intervals are also reported on pooled held-out trials and treat those trials as i.i.d. Bernoulli draws; that is a convenience interval for this balanced synthetic set, not a claim about production traffic. When every seed has the same rate, the bootstrap interval collapses to that rate.",
+      note: "Primary interval: percentile bootstrap of the mean held-out success rate, resampling seeds with replacement. Endpoints use linear interpolation between order statistics (NumPy percentile type 7). The seed is the resampling unit. Each seed has its own mock reliability and per-row slip draws, so the seed rates are not identical and the interval has width. Wilson score intervals are also reported on pooled held-out trials and treat those trials as i.i.d. Bernoulli draws; that is a convenience view of this synthetic set, not a claim about production traffic.",
     },
     arms: {
       baseline: armSummary(baselineRates, baselineBootstrap, baselineWilson, perSeed.map((row) => row.baseline.spend)),
@@ -420,7 +424,7 @@ async function runRegressionCheck(input: {
     observation: "honest",
     scenario: "harmful",
   });
-  const counterfactual = successCount(harmfulFragment(), rowsOf(split.test));
+  const counterfactual = successCount(harmfulFragment(), rowsOf(split.test), input.seed);
   const rollbackLedger = looseLedger();
   const rollback = await runLoop({
     seed: input.seed,
@@ -432,7 +436,7 @@ async function runRegressionCheck(input: {
     observation: "fail",
     scenario: "rollback",
   });
-  const baseline = successCount(baselineFragment(), rowsOf(split.test));
+  const baseline = successCount(baselineFragment(), rowsOf(split.test), input.seed);
   return {
     tolerance: input.tolerance,
     harmful: {
@@ -556,7 +560,7 @@ async function runLoop(input: {
         let errors = 0;
         for (const row of input.split.production) {
           await metered(context, input.ledger, input.priceTable, input.model, "predict");
-          errors += Number(answer(fragment, row.question) !== row.label);
+          errors += Number(answer(fragment, row.question, input.seed) !== row.label);
         }
         if (input.observation === "fail") errors = input.split.production.length;
         const identity = await workflow.artifact(readContext());
@@ -594,7 +598,7 @@ async function runLoop(input: {
       predict: async ({ fragment, text }, context) => {
         await metered(context, input.ledger, input.priceTable, input.model, "predict");
         return {
-          label: answer(fragment, text),
+          label: answer(fragment, text, input.seed),
           cost: 0,
           latencyMs: quote("predict", input.priceTable, input.model).latencyMs,
         };
@@ -630,6 +634,7 @@ async function runLoop(input: {
           input.ledger,
           input.priceTable,
           input.model,
+          input.seed,
         );
     const spend = view(input.ledger);
     const testIds = new Set(input.split.test.map((row) => row.id));
@@ -657,13 +662,14 @@ function scoreCharged(
   ledger: SpendLedger,
   table: PriceTable,
   model: string,
+  seed: number,
 ): RateView {
   let successes = 0;
   for (const row of rows) {
     const priced = quote("predict", table, model);
     if (!ledger.tryCharge(priced.microUsd, priced.latencyMs))
       throw new Error(`Held-out scoring hit the spend cap (${ledger.stopReason}).`);
-    successes += Number(answer(fragment, questionText(row)) === String(row.label));
+    successes += Number(answer(fragment, questionText(row), seed) === String(row.label));
   }
   return { successes, trials: rows.length, rate: successes / rows.length };
 }
@@ -687,13 +693,19 @@ async function metered(
 }
 
 function policyFor() {
+  const auditCalls = SPLIT_COUNTS.audit * 2;
+  const loopCalls =
+    1 +
+    SPLIT_COUNTS.validation * 2 +
+    auditCalls +
+    SPLIT_COUNTS.production;
   return {
-    version: "offline-kb-qa-v1",
+    version: "offline-kb-qa-v2",
     target: { kind: "prompt" as const, key: "internal-kb" },
     changeSchema: {
       type: "object" as const,
       properties: {
-        fragment: { type: "string" as const, maxLength: 400 },
+        fragment: { type: "string" as const, maxLength: 800 },
       },
       required: ["fragment"],
       additionalProperties: false as const,
@@ -706,24 +718,37 @@ function policyFor() {
       alpha: 0.05,
     },
     guardrails: [
-      { metric: "accuracy", comparator: "gte" as const, value: 0.95 },
+      { metric: "accuracy", comparator: "gte" as const, value: ACCURACY_FLOOR },
       { metric: "latencyMs", comparator: "lte" as const, value: 100 },
     ],
     trustedSources: ["verified-export"],
-    minimumNewUnits: 10,
-    minimumValidationUnits: 20,
-    minimumAuditUnits: 30,
+    minimumNewUnits: SPLIT_COUNTS.train,
+    minimumValidationUnits: SPLIT_COUNTS.validation,
+    minimumAuditUnits: SPLIT_COUNTS.audit,
     outcomeMaturityMs: 3_600_000,
-    maximumRows: 100,
-    daily: { modelRequests: 400, tokens: 200_000, deployments: 1 },
-    callbackReservation: { modelRequests: 80, tokens: 20_000 },
+    maximumRows: SPLIT_COUNTS.audit,
+    daily: {
+      modelRequests: loopCalls + 50,
+      tokens: (loopCalls + 50) * 200,
+      deployments: 1,
+    },
+    callbackReservation: {
+      modelRequests: auditCalls + 20,
+      tokens: (auditCalls + 20) * 200,
+    },
     cooldownMs: 0,
     rollout: { mode: "immediate" as const },
     observation: {
       minimumDurationMs: 3_600_000,
       timeoutMs: 86_400_000,
-      minimumUnits: 10,
-      guardrails: [{ metric: "errors", comparator: "lte" as const, value: 0.05 }],
+      minimumUnits: SPLIT_COUNTS.production,
+      guardrails: [
+        {
+          metric: "errors",
+          comparator: "lte" as const,
+          value: OBSERVATION_ERROR_CEILING,
+        },
+      ],
       onTimeout: "rollback" as const,
       onFailure: "rollback" as const,
     },

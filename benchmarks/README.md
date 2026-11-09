@@ -21,22 +21,27 @@ Internal knowledge-base QA, in the same style as the autonomous prompt example.
 
 - The artifact is a short KB fragment (`id=passage` lines). That fragment is the
   only thing the loop is allowed to change.
-- Retrieval is a frozen keyword lookup. Baseline and candidate select the same
-  passage id. They differ only in the passage text stored in the artifact.
+- Retrieval is a frozen keyword lookup. It does not read the artifact. A hit
+  returns the named passage and a distractor. Near-miss facts are similar
+  entities with different values (staff vacation versus contractor vacation).
+  Multi-hop questions need two passages. Some questions miss retrieval or are
+  out of scope; the fragment cannot make those correct.
 - Train rows are the controller's optimization partition (the proposer sees these).
 - Dev rows are the validation and audit partitions. Audit is a pre-deploy gate,
   not the final score.
 - The held-out test split is scored only after the loop finishes. It is not passed
   to `dataset`, `propose`, or `evaluate`.
 
-The mock proposer writes train labels into the KB fragment. The mock answerer
-reads the retrieved line and returns that text. Both are pure functions of the
-seed, so a run replays exactly.
+The mock proposer writes train labels into the passages a hit actually names.
+It leaves misses and out-of-scope rows alone. The mock answerer reads those
+passages, then sometimes slips. The slip is a seeded draw: same seed and
+question always slip the same way, and a different seed does not. A slip uses
+the distractor or returns only the first fact of a multi-hop question. Because
+some rows are unfixable and the mock is imperfect, held-out success stays below
+the ceiling. The rates are whatever that mixture produces.
 
-Default seeds are 1 through 5. The seed shuffles which question wording lands in
-each split. Every fact is still present in every split, so the success rate on
-this synthetic set does not depend on the seed. Latency and token bills are
-deterministic.
+Default seeds are 1 through 5. Latency and token bills are deterministic. The
+per-seed success rates are not.
 
 ## Run locally
 
@@ -93,8 +98,9 @@ short table.
 - `bootstrap` is the primary 95% interval. It resamples seeds with replacement and
   takes a percentile interval of the mean (linear interpolation between order
   statistics, the same index rule as NumPy's default percentile). The seed is the
-  unit because seeds are the repeated runs. If every seed has the same rate, the
-  interval collapses to that rate.
+  unit because seeds are the repeated runs. Seed rates differ, so the interval
+  has width. An interval collapses to a point only when every seed rate is the
+  same.
 - `wilsonPooled` is a Wilson score interval on the pooled held-out trials, using
   z = 1.959963984540054. It treats items as i.i.d. Bernoulli trials. That is a
   convenience view of this balanced synthetic set, not a claim about production

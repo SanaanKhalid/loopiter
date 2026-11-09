@@ -14,12 +14,12 @@ import {
   wilsonInterval,
 } from "../benchmarks/kb-qa/stats.js";
 import {
-  FACTS,
   answer,
   baselineFragment,
   buildSplit,
   harmfulFragment,
   improveFragment,
+  mockReliability,
   questionText,
   retrieve,
   successCount,
@@ -102,7 +102,7 @@ test("price table and spend caps use integer micro-USD", () => {
   assert.equal(both.totalMicroUsd, 0);
 });
 
-test("held-out items stay out of train and dev, and retrieval ignores the artifact", () => {
+test("held-out items stay unseen, and retrieval is frozen around harder rows", () => {
   const split = buildSplit(7);
   const partitions = [
     split.optimization,
@@ -119,13 +119,17 @@ test("held-out items stay out of train and dev, and retrieval ignores the artifa
     ...split.audit,
   ])
     assert.equal(testIds.has(row.id), false);
-  for (const fact of FACTS)
-    for (const rows of partitions)
-      assert.equal(
-        rows.filter((row) => questionText(row).includes(fact.keyword)).length >
-          0,
-        true,
-      );
+  for (const rows of partitions) {
+    const kinds = new Set(rows.map((row) => retrieve(questionText(row)).kind));
+    for (const kind of [
+      "single",
+      "near-miss",
+      "multi-hop",
+      "miss",
+      "out-of-scope",
+    ] as const)
+      assert.equal(kinds.has(kind), true, kind);
+  }
   const times = (rows: { occurredAt: string }[]) =>
     rows.map((row) => Date.parse(row.occurredAt));
   assert.ok(
@@ -136,6 +140,17 @@ test("held-out items stay out of train and dev, and retrieval ignores the artifa
     Math.max(...times(split.validation)) < Math.min(...times(split.audit)),
   );
   assert.ok(Math.max(...times(split.audit)) < Math.min(...times(split.test)));
+  const near = split.test.find(
+    (row) => retrieve(questionText(row)).kind === "near-miss",
+  );
+  assert.ok(near);
+  const nearHit = retrieve(questionText(near));
+  assert.ok(nearHit.passages.length >= 2);
+  assert.equal(retrieve(questionText(near)).passages.join(), nearHit.passages.join());
+  const missed = split.test.filter(
+    (row) => retrieve(questionText(row)).mode !== "hit",
+  );
+  assert.ok(missed.length / split.test.length >= 0.2);
   const baseline = baselineFragment();
   const improved = improveFragment(
     baseline,
@@ -144,20 +159,28 @@ test("held-out items stay out of train and dev, and retrieval ignores the artifa
       label: String(row.label),
     })),
   );
-  const stale = split.test.find((row) =>
-    questionText(row).includes("expense"),
-  );
-  assert.ok(stale);
-  const staleQuestion = questionText(stale);
-  assert.equal(retrieve(staleQuestion), "expense");
-  assert.notEqual(answer(baseline, staleQuestion), answer(improved, staleQuestion));
   const heldOut = split.test.map((row) => ({
     question: questionText(row),
     label: String(row.label),
   }));
-  assert.equal(successCount(baseline, heldOut).rate, 0.4);
-  assert.equal(successCount(improved, heldOut).rate, 1);
-  assert.equal(successCount(harmfulFragment(), heldOut).rate, 0);
+  const base = successCount(baseline, heldOut, 7);
+  const next = successCount(improved, heldOut, 7);
+  const harmful = successCount(harmfulFragment(), heldOut, 7);
+  assert.ok(next.rate > base.rate);
+  assert.ok(next.rate < 1);
+  assert.ok(harmful.rate < base.rate);
+  for (const row of missed) {
+    const question = questionText(row);
+    assert.notEqual(answer(baseline, question, 7), row.label);
+    assert.notEqual(answer(improved, question, 7), row.label);
+  }
+  const again = successCount(improved, heldOut, 7);
+  assert.equal(again.successes, next.successes);
+  assert.notEqual(mockReliability(1), mockReliability(2));
+  const seedRates = [1, 2, 3, 4, 5].map(
+    (seed) => successCount(improved, heldOut, seed).rate,
+  );
+  assert.ok(new Set(seedRates).size > 1);
 });
 
 test("regression and budget judgments fail closed", () => {
@@ -259,22 +282,47 @@ test("regression and budget judgments fail closed", () => {
 });
 
 test("mocked autonomous loop beats the frozen baseline without live calls", async () => {
-  const report = await runOfflineBenchmark({
-    seeds: [1],
-    bootstrapSamples: 200,
-  });
+  const options = { seeds: [1, 2, 3, 4, 5], bootstrapSamples: 400 };
+  const report = await runOfflineBenchmark(options);
+  const again = await runOfflineBenchmark(options);
   assert.equal(report.liveCalls, 0);
   assert.equal(report.provider, "mock");
   assert.equal(report.passed, true);
-  assert.equal(report.arms.baseline.heldOutSuccessRate, 0.4);
-  assert.equal(report.arms.candidate.heldOutSuccessRate, 1);
-  assert.equal(report.perSeed[0]?.candidate.state, "completed");
-  assert.notEqual(
-    report.perSeed[0]?.candidate.servedArtifactVersion,
-    report.perSeed[0]?.candidate.baselineArtifactVersion,
+  assert.ok(report.arms.candidate.heldOutSuccessRate < 1);
+  assert.ok(
+    report.arms.candidate.heldOutSuccessRate >
+      report.arms.baseline.heldOutSuccessRate,
   );
+  assert.ok(
+    report.arms.candidate.bootstrap.lower < report.arms.candidate.bootstrap.upper,
+  );
+  assert.ok(
+    report.arms.baseline.bootstrap.lower < report.arms.baseline.bootstrap.upper,
+  );
+  const candidateRates = report.perSeed.map((row) => row.candidate.heldOut.rate);
+  const baselineRates = report.perSeed.map((row) => row.baseline.heldOut.rate);
+  assert.ok(new Set(candidateRates).size > 1);
+  assert.ok(new Set(baselineRates).size > 1);
+  assert.deepEqual(
+    again.perSeed.map((row) => row.candidate.heldOut),
+    report.perSeed.map((row) => row.candidate.heldOut),
+  );
+  assert.deepEqual(
+    again.perSeed.map((row) => row.baseline.heldOut),
+    report.perSeed.map((row) => row.baseline.heldOut),
+  );
+  for (const row of report.perSeed) {
+    assert.equal(row.candidate.state, "completed");
+    assert.ok(row.candidate.heldOut.rate < 1);
+    assert.notEqual(
+      row.candidate.servedArtifactVersion,
+      row.candidate.baselineArtifactVersion,
+    );
+  }
+  assert.equal(report.regression.passed, true);
   assert.equal(report.regression.harmful.finalReason, "validation_failed");
   assert.equal(report.regression.rollback.finalState, "rolled_back");
+  assert.equal(report.budget.passed, true);
   assert.equal(report.budget.runs[0]?.stopReason, "per_run_cap");
   assert.equal(report.budget.runs[1]?.stopReason, "total_cap");
   assert.ok(report.budget.totalMicroUsd <= report.budget.totalCapMicroUsd);
