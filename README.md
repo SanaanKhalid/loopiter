@@ -119,6 +119,12 @@ fixture without a checkout or credentials. Its live PostgreSQL path requires the
 application to install `pg` and explicitly select `--live`; provider code stays
 outside the default core import.
 
+## Offline improvement benchmark
+
+`npm run benchmark:offline` compares a frozen baseline with the autonomous
+controller on a synthetic knowledge-base task. It uses seeded mocks only.
+See [benchmarks/README.md](benchmarks/README.md).
+
 ## Capture a local example
 
 ```typescript
