@@ -42,7 +42,7 @@ Do not independently deploy both SDKs to the same external target. See the
 | Development stores | InMemoryStore and single-process JsonFileStore | Not supported for multi-process production writes |
 | Evaluation | Versioned callback, immutable evidence/content references, finite metrics | Representative holdouts, independent gates, model drift assessment |
 | Deployment | Pending attempts, active pointer, receipts, reconciliation and rollback lineage | Real idempotent apply/inspect/rollback; fences; no out-of-band target writes |
-| Controller | Recommend default; durable leases/reservations, 3 proposals/3 candidates, 10 min tick, 2 min callback | Application scheduling, finite cost policy, trusted callbacks, process isolation |
+| Controller | Omitted mode is recommend and does not apply. Fresh init records autonomous mode; spending still requires enablement. Durable leases/reservations, 3 proposals/3 candidates, 10 min tick, 2 min callback | Application scheduling, finite cost policy, trusted callbacks, process isolation |
 | Autonomous changes | Flag + autonomous mode + exact prompt/routing policy; single winner, audit, observation/rollback | Adapters enforce external fencing and mature outcome attribution; no universal improvement guarantee |
 | Canary | Stable bucket helper and inspectable promotion/withdrawal coordination | Durable cohort assignment/exposure, traffic routing and valid comparison method are application-owned |
 | Starter | OpenAI/Azure OpenAI Responses via fetch, PostgreSQL prompt registry, exact-match evaluation, CLI | User credentials/model or Azure deployment; synthetic example dataset must be replaced for customer claims |

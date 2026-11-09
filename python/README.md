@@ -4,8 +4,10 @@
 > `ImprovementController` with durable budgets, independent audits and observation/rollback.
 > Start with the [autonomous workflow guide](https://github.com/SanaanKhalid/loopiter/blob/main/fern/pages/autonomous.mdx)
 > and [explicit migration guide](https://github.com/SanaanKhalid/loopiter/blob/main/docs/autonomy-migration.md).
-> Autonomy is disabled by default. Upgrading requires explicit storage migration;
-> enabling it requires `self_improving=True`, autonomous mode and a complete policy.
+> The controller stays on recommend unless mode and `self_improving` are set.
+> A fresh self-hosted init records autonomous mode and self-improving on.
+> The worker still requires `--enable` before spending. Storage upgrades stay
+> an explicit migration, and schemaVersion 1 plans are not rewritten.
 
 Native, async Python SDK for **reviewed, evidence-driven AI improvements**.
 No Node.js subprocess, hosted service, model dependency, telemetry, or core runtime
@@ -40,11 +42,16 @@ activation, recovery and handoff. No platform account or Loopiter project key is
 needed. You pay the providers and infrastructure you select directly.
 
 `verify` uses isolated, simulated fixtures with zero provider calls. Initialization
-does not connect the real app or enable automatic releases; `doctor` initially lists
-the missing integration decisions. Once the application-owned module is implemented
-and verified, run it with `python -m loopiter worker --module loopiter/application.py
---enable --mode recommend --once`. Omit `--once` for a supervised foreground worker.
-Automatic releases require deliberate autonomous mode and all policy/evidence gates.
+does not connect the real app or start a worker; `doctor` initially lists the
+missing integration decisions. A fresh plan is schemaVersion 2
+(`autonomous-default`): mode autonomous and self-improving on. Once the
+application-owned module is implemented and doctor and verify pass, run
+`python -m loopiter worker --module loopiter/application.py --enable --mode autonomous --once`.
+`--enable` authorizes improvement work and provider spending inside the existing
+gates. It does not bypass audit, budgets, or rollback. Omit `--once` for a
+supervised foreground worker. `--mode recommend` stores proposals and does not
+apply. Omitting `--mode` still selects recommend. Constructing
+`ImprovementController` without a mode does the same.
 
 Read the installed guide with `python -m loopiter guide`, and reference code with
 `python -m loopiter reference`. The optional examples also ship under
@@ -211,8 +218,10 @@ proposal deduplication choose a stable ID derived with `fingerprint({...})` from
 target, proposed change, evidence fingerprint, evaluator version and dataset hash.
 Changed evidence/evaluator versions should produce a new ID. No callback runs
 automatically after feedback capture. In the 0.3 alpha, the native
-`ImprovementController` adds scheduled-by-your-application, opt-in autonomous cycles;
-reviewed calls above remain supported without enabling autonomy.
+`ImprovementController` adds scheduled-by-your-application autonomous cycles.
+Omitting `mode` and `self_improving` still recommends and does not apply.
+A fresh init records autonomous mode; the worker spends only with `--enable`.
+Reviewed calls above remain supported.
 
 ## Deployment and recovery contract
 

@@ -28,7 +28,9 @@ def autonomous_controller(loop: FeedbackLoop, workflow: ImprovementWorkflow):
     )
 ```
 
-Your scheduler calls `await controller.tick(workflow.id)`. Use `get_run`, paginated
+`reviewed_controller` omits mode, so it recommends and does not apply. A fresh init
+plan records autonomous mode and self-improving on; the worker still spends only
+with `--enable`. Your scheduler calls `await controller.tick(workflow.id)`. Use `get_run`, paginated
 `list_runs`, `pause(workflow.id, reason)` and administrative `resume(workflow.id)`.
 Pass an `asyncio.Event` to `tick` for cooperative cancellation.
 

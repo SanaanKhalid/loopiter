@@ -81,7 +81,10 @@ in [building application adapters](/closing-the-loop/building-application-adapte
 
 ## 7. Exercise reviewed and experiment modes first
 
-Default recommendation mode produces candidates without deploying. Experiment mode
+The controller's omitted-mode default is recommend: it produces candidates without
+deploying. A fresh onboarding plan records autonomous mode and self-improving on.
+Pass `--mode recommend`, or construct the controller without autonomous mode, to
+stay on recommendations. Experiment mode
 validates alternatives, selects one and audits it without automatic application.
 Inspect candidate content, per-example results, frozen identities, budget usage and
 reasons. Remember that audits are consumed even when not deployed.
@@ -92,7 +95,9 @@ correction with an ordinary application ID; it must not depend on a fixture nami
 
 ## 8. Enable bounded autonomy in an isolated environment
 
-Set both autonomous mode and the explicit self-improvement flag. The application—not
+A fresh plan already records both autonomous mode and self-improving on. The worker
+still spends only with `--enable`, and autonomous mode fails closed without an audit
+partition or a budget. The application—not
 the SDK—calls `tick`. Use conservative provider quotas and exact target permissions.
 Do not expose real users merely because an offline sample passed.
 

@@ -71,5 +71,7 @@ usefulness on production data or model reliability.
 ## Maintenance commitments for this alpha
 
 Newest-alpha fixes only; no SLA, billing or managed operations. Document breaking
-changes and data migration. Keep recommendation as the default, treat auto-apply as
-experimental, and preserve application ownership of scheduling, databases and secrets.
+changes and data migration. Keep the controller default as recommend when mode is
+omitted. Fresh onboarding plans may record autonomous mode; spending still requires
+explicit enablement. The removed auto-apply path stays rejected. Preserve application
+ownership of scheduling, databases and secrets.

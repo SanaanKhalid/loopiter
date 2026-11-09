@@ -41,7 +41,10 @@ Do not manually alter targets/attempts/candidate states.
 `ImprovementController(loop, {workflows, mode?, selfImproving?})` is the 0.3 durable
 controller. Defaults are `mode: 'recommend'` and `selfImproving: false`. Automatic
 approval/deployment requires both autonomous mode and the explicit flag, plus a valid
-exact-target policy and all adapters. Methods: `tick(workflowId, signal?)`, `getRun(runId)`,
+exact-target policy and all adapters. A fresh onboarding plan (schemaVersion 2,
+preset `autonomous-default`) records autonomous mode and self-improving on; the
+worker still requires `--enable` before spending, and schemaVersion 1 plans are
+unchanged. Methods: `tick(workflowId, signal?)`, `getRun(runId)`,
 `listRuns(options?)`, `pause(workflowId, reason)`, and `resume(workflowId)`.
 Applications own scheduling. See [autonomous improvement](/closing-the-loop/opt-in-autonomous-improvement).
 
