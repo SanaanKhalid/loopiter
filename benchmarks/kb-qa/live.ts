@@ -55,6 +55,8 @@ export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"] as
 export const OMIT_REASONING = "omit";
 export const REQUEST_TIMEOUT_MS = 20_000;
 export const MAX_ATTEMPTS = 2;
+export const DEFAULT_MAX_429_RETRIES = 6;
+export const DEFAULT_MAX_RETRY_WAIT_SECONDS = 60;
 export const SMOKE_ROWS = 14;
 export const FULL_SEEDS = [1, 2, 3, 4, 5] as const;
 export const LIVE_OUTPUT_DIR = "reports/kb-qa-live";
@@ -80,6 +82,9 @@ export const LIVE_ENV = {
   reasoning: "LOOPITER_BENCH_REASONING_EFFORT",
   predictMax: "LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS",
   proposeMax: "LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS",
+  maxTpm: "LOOPITER_BENCH_MAX_TPM",
+  maxRetryWait: "LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS",
+  max429Retries: "LOOPITER_BENCH_MAX_429_RETRIES",
 } as const;
 
 const PREDICT_INSTRUCTIONS =
@@ -514,6 +519,13 @@ export interface LiveRunOptions {
   predictMaxOutputTokens?: number;
   proposeMaxOutputTokens?: number;
   reasoningEffort?: string | null;
+  /** 0 disables pacing. Unset defaults to 0. */
+  maxTokensPerMinute?: number;
+  maxRetryWaitMs?: number;
+  max429Retries?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
 }
 
 export interface LiveReport {
@@ -546,6 +558,11 @@ export interface LiveReport {
     marker: string | null;
   };
   stopped: { reason: string; message: string } | null;
+  pacing: {
+    maxTokensPerMinute: number;
+    rateLimitResponses: number;
+    waitMs: number;
+  };
   perSeed: LiveSeed[];
   arms: {
     baseline: LiveArm | null;
@@ -603,11 +620,59 @@ interface LiveArm {
 }
 
 /** One Azure Responses session. Retries are bounded and each attempt is billed. */
+export class RateLimitStop extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RateLimitStop";
+  }
+}
+
+/** Sliding 60s window. A request larger than the limit runs only when the window is empty. */
+export class TokenMinuteWindow {
+  private stamps: { at: number; tokens: number }[] = [];
+  constructor(
+    private readonly limit: number,
+    private readonly now: () => number,
+    private readonly sleep: (ms: number) => Promise<void>,
+  ) {}
+
+  async acquire(tokens: number): Promise<number> {
+    if (this.limit <= 0) return 0;
+    let waited = 0;
+    for (;;) {
+      const now = this.now();
+      this.stamps = this.stamps.filter((stamp) => now - stamp.at < 60_000);
+      const used = this.stamps.reduce((sum, stamp) => sum + stamp.tokens, 0);
+      if (used === 0 || used + tokens <= this.limit) {
+        this.stamps.push({ at: now, tokens });
+        return waited;
+      }
+      const oldest = this.stamps[0]!;
+      const wait = Math.max(1, 60_000 - (now - oldest.at));
+      const before = this.now();
+      await this.sleep(wait);
+      const after = this.now();
+      if (after <= before) throw new Error("Pacer clock did not advance.");
+      waited += after - before;
+    }
+  }
+}
+
 export class LiveSession {
   readonly provider: AzureOpenAIProvider;
   readonly limits: RequestLimits;
+  readonly maxTokensPerMinute: number;
+  readonly max429Retries: number;
   lastError: string | null = null;
+  rateLimitResponses = 0;
+  waitMs = 0;
+  rateLimitExhausted = false;
   private warned = false;
+  private readonly maxRetryWaitMs: number;
+  private readonly now: () => number;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly random: () => number;
+  private readonly pacer: TokenMinuteWindow;
 
   constructor(
     readonly ledger: LiveLedger,
@@ -619,6 +684,12 @@ export class LiveSession {
       deployment: string;
       apiVersion: string;
       fetch?: typeof fetch;
+      maxTokensPerMinute: number;
+      maxRetryWaitMs: number;
+      max429Retries: number;
+      now: () => number;
+      sleep: (ms: number) => Promise<void>;
+      random: () => number;
     } & RequestLimits,
   ) {
     this.limits = {
@@ -626,6 +697,13 @@ export class LiveSession {
       proposeMaxOutputTokens: options.proposeMaxOutputTokens,
       reasoningEffort: options.reasoningEffort,
     };
+    this.maxTokensPerMinute = options.maxTokensPerMinute;
+    this.max429Retries = options.max429Retries;
+    this.maxRetryWaitMs = options.maxRetryWaitMs;
+    this.now = options.now;
+    this.sleep = options.sleep;
+    this.random = options.random;
+    this.pacer = new TokenMinuteWindow(options.maxTokensPerMinute, options.now, options.sleep);
     const hidden = this.secrets;
     const baseFetch = options.fetch ?? fetch;
     const fetchImpl: typeof fetch = async (url, init) => {
@@ -658,20 +736,48 @@ export class LiveSession {
     meter: Meter,
     signal: AbortSignal,
   ): Promise<Generation> {
-    let last: unknown;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let otherRetries = 0;
+    let rateRetries = 0;
+    for (;;) {
       try {
         return await this.once(input, body, maxOutput, meter, signal);
       } catch (error) {
-        last = error;
         if (error instanceof LoopiterError && error.code === "spend_cap") throw error;
-        if (!retryable(error) || attempt === MAX_ATTEMPTS) break;
-        await delay(200 * attempt);
+        if (error instanceof ProviderRequestError && error.status === 429) {
+          this.rateLimitResponses += 1;
+          if (rateRetries >= this.max429Retries) {
+            this.rateLimitExhausted = true;
+            const message = redactSecrets(
+              `Rate limit persisted after ${this.max429Retries} retries (HTTP 429).`,
+              this.secrets,
+            );
+            this.lastError = message;
+            throw new RateLimitStop(message);
+          }
+          const worst: TokenUse = {
+            input: inputTokenCeiling(body),
+            output: maxOutput,
+            cached: 0,
+          };
+          if (!this.ledger.allow(worst, this.stopAtWarn))
+            throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
+          rateRetries += 1;
+          const wait = retryWaitMs(rateRetries, error.retryAfterMs, this.maxRetryWaitMs, this.random);
+          this.waitMs += wait;
+          await this.sleep(wait);
+          continue;
+        }
+        if (!retryable(error) || otherRetries >= MAX_ATTEMPTS - 1) {
+          const message = redactSecrets(errorText(error), this.secrets);
+          this.lastError = message;
+          throw new Error(message);
+        }
+        otherRetries += 1;
+        const wait = 200 * otherRetries;
+        this.waitMs += wait;
+        await this.sleep(wait);
       }
     }
-    const message = redactSecrets(errorText(last), this.secrets);
-    this.lastError = message;
-    throw new Error(message);
   }
 
   private async once(
@@ -685,6 +791,8 @@ export class LiveSession {
     const worst: TokenUse = { input: ceiling, output: maxOutput, cached: 0 };
     if (!this.ledger.allow(worst, this.stopAtWarn))
       throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
+    const waited = await this.pacer.acquire(ceiling + maxOutput);
+    this.waitMs += waited;
     const held = await this.ledger.beginAttempt(worst);
     try {
       const generated = await meter(ceiling + maxOutput + 64, async () => {
@@ -704,12 +812,14 @@ export class LiveSession {
       });
       await this.ledger.finishAttempt(held, generated.usage, true);
       this.maybeWarn();
+      this.noteProgress();
       return generated.result;
     } catch (error) {
       if (!(error instanceof LoopiterError && error.code === "spend_cap")) {
         const usage = extractUsage(error) ?? worst;
         await this.ledger.finishAttempt(held, usage, false);
         this.maybeWarn();
+        this.noteProgress();
       }
       throw error;
     }
@@ -722,6 +832,14 @@ export class LiveSession {
 
   redact(text: string): string {
     return redactSecrets(text, this.secrets);
+  }
+
+  private noteProgress(): void {
+    if (this.ledger.invocationAttempts === 0 || this.ledger.invocationAttempts % 50 !== 0)
+      return;
+    console.log(
+      `progress calls=${this.ledger.invocationAttempts} spend=${formatUsd(this.ledger.invocationMicroUsd)} USD`,
+    );
   }
 
   private maybeWarn(): void {
@@ -746,6 +864,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
   if (new Set(options.seeds).size !== options.seeds.length)
     throw new LiveGateError("Seeds must be unique.");
   const limits = requestLimits(options);
+  const pace = paceSettings(options);
   assertLiveSpendGuards(options);
   const secrets = [options.apiKey];
   const caps = {
@@ -754,7 +873,11 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
     warnMicroUsd: usdToMicro(options.warnUsd),
   };
   const ledger = await LiveLedger.open(options.ledgerPath, caps, options.prices);
-  const session = new LiveSession(ledger, secrets, options.stopAtWarn, { ...options, ...limits });
+  const session = new LiveSession(ledger, secrets, options.stopAtWarn, {
+    ...options,
+    ...limits,
+    ...pace,
+  });
   if (ledger.totalMicroUsd >= caps.warnMicroUsd) {
     ledger.warnCrossed = true;
     session.markWarned();
@@ -796,15 +919,24 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
       if (ledger.stopReason || loop.failure) break;
     }
   } catch (error) {
-    failure = {
-      reason: "provider_error",
-      message: redactSecrets(errorText(error), secrets),
-    };
+    failure = session.rateLimitExhausted
+      ? {
+          reason: "rate_limit",
+          message: session.lastError ?? "Rate limit persisted (HTTP 429).",
+        }
+      : {
+          reason: "provider_error",
+          message: redactSecrets(errorText(error), secrets),
+        };
   }
   if (!failure && ledger.stopReason) failure = stopView(ledger.stopReason);
   if (!failure && session.lastError)
     failure = { reason: "provider_error", message: session.lastError };
-  const report = buildReport(options, ledger, perSeed, failure);
+  const report = buildReport(options, ledger, perSeed, failure, {
+    maxTokensPerMinute: session.maxTokensPerMinute,
+    rateLimitResponses: session.rateLimitResponses,
+    waitMs: session.waitMs,
+  });
   assertNoSecrets(report, secrets);
   return report;
 }
@@ -824,6 +956,7 @@ export function renderLiveMarkdown(report: LiveReport): string {
     "",
     `Spend this invocation ${report.spend.invocationUsd} USD. Cumulative ${report.spend.totalUsd} USD.`,
     `Calls ${report.spend.calls}. Attempts ${report.spend.attempts}.`,
+    `HTTP 429 responses: ${report.pacing.rateLimitResponses}. Waited ${report.pacing.waitMs} ms.`,
     "",
     "| Seed | Baseline | Candidate | State |",
     "| ---: | ---: | ---: | --- |",
@@ -877,6 +1010,7 @@ export function liveOptionsFromEnv(
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(apiVersion))
     throw new LiveGateError(`Invalid ${LIVE_ENV.apiVersion}.`);
   const limits = readRequestLimits(env);
+  const pace = paceSettingsFromEnv(env);
   return {
     seeds: args.seeds,
     ...(args.rowLimit === undefined ? {} : { rowLimit: args.rowLimit }),
@@ -894,6 +1028,9 @@ export function liveOptionsFromEnv(
     predictMaxOutputTokens: limits.predictMaxOutputTokens,
     proposeMaxOutputTokens: limits.proposeMaxOutputTokens,
     reasoningEffort: limits.reasoningEffort,
+    maxTokensPerMinute: pace.maxTokensPerMinute,
+    maxRetryWaitMs: pace.maxRetryWaitMs,
+    max429Retries: pace.max429Retries,
   };
 }
 
@@ -931,6 +1068,92 @@ function assertLiveSpendGuards(input: {
     throw new LiveGateError(
       `${LIVE_ENV.warn} must be less than or equal to ${LIVE_ENV.totalCap}. Refusing to start.`,
     );
+}
+
+interface PaceSettings {
+  maxTokensPerMinute: number;
+  maxRetryWaitMs: number;
+  max429Retries: number;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  random: () => number;
+}
+
+function paceSettings(options: LiveRunOptions): PaceSettings {
+  const maxTokensPerMinute = options.maxTokensPerMinute ?? 0;
+  if (!Number.isSafeInteger(maxTokensPerMinute) || maxTokensPerMinute < 0)
+    throw new LiveGateError(
+      `${LIVE_ENV.maxTpm} must be a finite integer greater than zero, or 0 to disable pacing. Refusing to start.`,
+    );
+  const maxRetryWaitMs = options.maxRetryWaitMs ?? DEFAULT_MAX_RETRY_WAIT_SECONDS * 1000;
+  requirePositiveInt(maxRetryWaitMs, LIVE_ENV.maxRetryWait);
+  const max429Retries = options.max429Retries ?? DEFAULT_MAX_429_RETRIES;
+  requirePositiveInt(max429Retries, LIVE_ENV.max429Retries);
+  return {
+    maxTokensPerMinute,
+    maxRetryWaitMs,
+    max429Retries,
+    now: options.now ?? Date.now,
+    sleep: options.sleep ?? delay,
+    random: options.random ?? Math.random,
+  };
+}
+
+function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
+  PaceSettings,
+  "maxTokensPerMinute" | "maxRetryWaitMs" | "max429Retries"
+> {
+  return {
+    maxTokensPerMinute: readMaxTpm(env),
+    maxRetryWaitMs: readOptionalIntOr(env, LIVE_ENV.maxRetryWait, DEFAULT_MAX_RETRY_WAIT_SECONDS) * 1000,
+    max429Retries: readOptionalIntOr(env, LIVE_ENV.max429Retries, DEFAULT_MAX_429_RETRIES),
+  };
+}
+
+function readMaxTpm(env: NodeJS.ProcessEnv): number {
+  const raw = env[LIVE_ENV.maxTpm];
+  if (raw === undefined) return 0;
+  const trimmed = raw.trim();
+  if (trimmed === "0") return 0;
+  if (!/^[1-9]\d*$/.test(trimmed))
+    throw new LiveGateError(
+      `${LIVE_ENV.maxTpm} must be a finite integer greater than zero, or 0 to disable pacing. Refusing to start.`,
+    );
+  const value = Number(trimmed);
+  requirePositiveInt(value, LIVE_ENV.maxTpm);
+  return value;
+}
+
+function readOptionalIntOr(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined) return fallback;
+  if (!/^[1-9]\d*$/.test(raw.trim()))
+    throw new LiveGateError(
+      `${name} must be a finite integer greater than zero. Refusing to start.`,
+    );
+  const value = Number(raw.trim());
+  requirePositiveInt(value, name);
+  return value;
+}
+
+function retryWaitMs(
+  retryIndex: number,
+  retryAfterMs: number | null,
+  maxWaitMs: number,
+  random: () => number,
+): number {
+  let chosen: number;
+  if (retryAfterMs !== null && Number.isFinite(retryAfterMs) && retryAfterMs >= 0)
+    chosen = retryAfterMs;
+  else {
+    const exponent = Math.min(Math.max(retryIndex, 1) - 1, 16);
+    const base = 1000 * 2 ** exponent;
+    const draw = random();
+    const unit = Number.isFinite(draw) ? Math.max(0, Math.min(1, draw)) : 0;
+    chosen = base + Math.floor(base * 0.25 * unit);
+  }
+  if (!Number.isFinite(chosen) || chosen < 0) chosen = maxWaitMs;
+  return Math.min(maxWaitMs, Math.max(0, Math.round(chosen)));
 }
 
 function readRequestLimits(env: NodeJS.ProcessEnv): RequestLimits {
@@ -1248,7 +1471,12 @@ async function runCandidate(
     split.validation.length * 2 +
     split.audit.length * 2 +
     split.production.length;
-  const policy = livePolicy(split, reserve, inLoop);
+  const policy = livePolicy(
+    split,
+    reserve,
+    inLoop,
+    Math.max(MAX_ATTEMPTS, 1 + session.max429Retries),
+  );
   const clock = { now: new Date(CLOCK_START) };
   const store = new InMemoryStore();
   const loop = new FeedbackLoop({
@@ -1452,16 +1680,18 @@ async function runCandidate(
       servedVersion: served.version,
       baselineVersion,
       failure:
-        session.ledger.stopReason
-          ? stopView(session.ledger.stopReason)
-          : state === "failed"
-            ? {
-                reason: "provider_error",
-                message: session.lastError ?? `Loop failed (${reason}).`,
-              }
-            : !result || !TERMINAL.has(result.state)
-              ? { reason: "tick_limit", message: "Loop did not finish." }
-              : null,
+        session.rateLimitExhausted
+          ? rateLimitFailure(session)
+          : session.ledger.stopReason
+            ? stopView(session.ledger.stopReason)
+            : state === "failed"
+              ? {
+                  reason: "provider_error",
+                  message: session.lastError ?? `Loop failed (${reason}).`,
+                }
+              : !result || !TERMINAL.has(result.state)
+                ? { reason: "tick_limit", message: "Loop did not finish." }
+                : null,
     };
   } catch (error) {
     if (error instanceof LoopiterError && error.code === "spend_cap") {
@@ -1476,22 +1706,24 @@ async function runCandidate(
     }
     return {
       state: "failed",
-      reason: "provider_error",
+      reason: session.rateLimitExhausted ? "rate_limit" : "provider_error",
       servedFragment: null,
       servedVersion: baselineVersion,
       baselineVersion,
-      failure: {
-        reason: "provider_error",
-        message: session.redact(errorText(error)),
-      },
+      failure: session.rateLimitExhausted
+        ? rateLimitFailure(session)
+        : {
+            reason: "provider_error",
+            message: session.redact(errorText(error)),
+          },
     };
   } finally {
     await loop.close();
   }
 }
 
-function livePolicy(split: TaskSplit, reserve: number, inLoop: number) {
-  const callbackCalls = Math.max(2, OBSERVE_CHUNK) * MAX_ATTEMPTS + 2;
+function livePolicy(split: TaskSplit, reserve: number, inLoop: number, attemptsPerCall: number) {
+  const callbackCalls = Math.max(2, OBSERVE_CHUNK) * attemptsPerCall + 2;
   return {
     version: "live-kb-qa-v1",
     target: { kind: "prompt" as const, key: "internal-kb" },
@@ -1526,8 +1758,8 @@ function livePolicy(split: TaskSplit, reserve: number, inLoop: number) {
       1,
     ),
     daily: {
-      modelRequests: inLoop * MAX_ATTEMPTS + 10,
-      tokens: (inLoop * MAX_ATTEMPTS + 10) * reserve,
+      modelRequests: inLoop * attemptsPerCall + 10,
+      tokens: (inLoop * attemptsPerCall + 10) * reserve,
       deployments: 1,
     },
     callbackReservation: {
@@ -1608,6 +1840,7 @@ function buildReport(
   ledger: LiveLedger,
   perSeed: LiveSeed[],
   failure: { reason: string; message: string } | null,
+  pacing: LiveReport["pacing"],
 ): LiveReport {
   const baselineRates = perSeed
     .filter((row) => row.baseline.complete)
@@ -1667,6 +1900,7 @@ function buildReport(
       marker,
     },
     stopped: failure,
+    pacing,
     perSeed,
     arms: {
       baseline: armOf(baselineRates, perSeed.map((row) => row.baseline)),
@@ -1721,6 +1955,13 @@ function armOf(rates: number[], scores: ScoreView[]): LiveArm | null {
 
 function emptyScore(trials: number): ScoreView {
   return { successes: 0, scored: 0, trials, rate: 0, complete: false };
+}
+
+function rateLimitFailure(session: LiveSession): { reason: string; message: string } {
+  return {
+    reason: "rate_limit",
+    message: session.lastError ?? "Rate limit persisted (HTTP 429).",
+  };
 }
 
 function stopView(reason: LiveStopReason): { reason: string; message: string } {

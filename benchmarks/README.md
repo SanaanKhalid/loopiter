@@ -183,6 +183,9 @@ There are no baked-in prices or caps.
 | `LOOPITER_BENCH_REASONING_EFFORT` | no | `reasoning.effort` on each request. Default `low`. Accepted values: `none`, `minimal`, `low`, `medium`, `high`. `minimal` is for deployments that accept it. `omit` leaves the field off. Anything else refuses to start |
 | `LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS` | no | `max_output_tokens` for an answer. Default `256`. A finite integer greater than zero |
 | `LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS` | no | `max_output_tokens` for a proposal. Default `1024`. A finite integer greater than zero |
+| `LOOPITER_BENCH_MAX_TPM` | no | Worst-case tokens per rolling minute. Unset or `0` turns pacing off. Any other value must be a finite integer greater than zero |
+| `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS` | no | Cap on each 429 wait. Default `60`. A finite integer greater than zero |
+| `LOOPITER_BENCH_MAX_429_RETRIES` | no | Extra attempts after HTTP 429. Default `6`. A finite integer greater than zero |
 
 Do not put the key in the shell history if that is a problem for you, and do
 not echo it. The process redacts the key and `api-key` / `Authorization` header
@@ -248,8 +251,19 @@ and return status `incomplete` with `incomplete_details.reason` of
 `max_output_tokens`. The run stops and the report's `stopped.message` includes
 that reason. It does not include headers or the API key. Use `minimal` when
 the deployment accepts it, or raise the answer bound, if that happens. Each
-request times out after 20 seconds and retries at most once on 408, 409, 429,
-500, 502, 503, 504, or a transport timeout.
+request times out after 20 seconds. Transport errors and HTTP 408, 409, 500,
+502, 503, and 504 are retried once. HTTP 429 is retried up to
+`LOOPITER_BENCH_MAX_429_RETRIES` times. The wait uses `retry-after-ms` or
+`Retry-After` when the response has one, otherwise exponential backoff with
+jitter, and each wait is capped by `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS`.
+Every attempt, including those retries, is checked against the spend caps and
+added to the ledger. If the retries run out, the process stops with a partial
+report that counts the 429 responses and the total wait. When
+`LOOPITER_BENCH_MAX_TPM` is set, requests are delayed so the rolling minute of
+worst-case tokens (input estimate plus the output bound) stays under that
+limit. A single request larger than the limit is sent only while nothing else
+is in the window. Progress lines print every 50 attempts with the call count
+and spend. Waits are not logged with headers or the API key.
 
 ### Reset the ledger
 

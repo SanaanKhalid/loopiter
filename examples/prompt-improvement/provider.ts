@@ -42,10 +42,12 @@ export interface ResponseUsage {
 /** HTTP failure. The message is status-only so response bodies and headers stay out of logs. */
 export class ProviderRequestError extends Error {
   readonly usage: ResponseUsage | null;
-  constructor(readonly status: number, usage: ResponseUsage | null) {
+  readonly retryAfterMs: number | null;
+  constructor(readonly status: number, usage: ResponseUsage | null, retryAfterMs: number | null = null) {
     super(`OpenAI request failed (HTTP ${status}); no automatic retry.`);
     this.name = "ProviderRequestError";
     this.usage = usage;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 export function responsesRequestBody(input: {
@@ -133,8 +135,9 @@ class ResponsesProvider implements GenerationProvider {
       },
     );
     if (!response.ok) {
+      const retryAfterMs = retryAfterMsFrom(response);
       const usage = await usageFromBody(response);
-      throw new ProviderRequestError(response.status, usage);
+      throw new ProviderRequestError(response.status, usage, retryAfterMs);
     }
     input.signal.throwIfAborted();
     const body: unknown = await response.json();
@@ -211,6 +214,25 @@ export class AzureOpenAIProvider extends ResponsesProvider {
       return { "api-key": options.apiKey! };
     });
   }
+}
+
+/** Milliseconds from retry-after-ms or Retry-After. The header text is not returned. */
+function retryAfterMsFrom(response: Response): number | null {
+  const millis = response.headers.get("retry-after-ms");
+  if (millis !== null && /^[0-9]+$/.test(millis.trim())) {
+    const value = Number(millis.trim());
+    if (Number.isSafeInteger(value)) return value;
+  }
+  const header = response.headers.get("retry-after");
+  if (header === null) return null;
+  const trimmed = header.trim();
+  if (/^[0-9]+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    if (Number.isSafeInteger(seconds)) return seconds * 1000;
+  }
+  const when = Date.parse(trimmed);
+  if (Number.isFinite(when)) return Math.max(0, when - Date.now());
+  return null;
 }
 
 function incompleteMessage(body: unknown): string {

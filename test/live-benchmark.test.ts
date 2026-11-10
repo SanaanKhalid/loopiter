@@ -633,6 +633,176 @@ test("reasoning effort, output bounds, and incomplete reasons stay on the fake s
   }
 });
 
+test("pacing and HTTP 429 retries stay on the fake server", async () => {
+  for (const [name, value] of [
+    [LIVE_ENV.maxTpm, "nope"],
+    [LIVE_ENV.maxTpm, "-1"],
+    [LIVE_ENV.maxTpm, "1.5"],
+    [LIVE_ENV.maxTpm, ""],
+    [LIVE_ENV.max429Retries, "0"],
+    [LIVE_ENV.max429Retries, "NaN"],
+    [LIVE_ENV.maxRetryWait, "0"],
+    [LIVE_ENV.maxRetryWait, "-5"],
+  ] as const)
+    assert.throws(
+      () => liveOptionsFromEnv(scrubbed({ ...readyEnv(), [name]: value }), blankArgs()),
+      new RegExp(name),
+    );
+  const disabled = liveOptionsFromEnv(
+    scrubbed({ ...readyEnv(), [LIVE_ENV.maxTpm]: "0" }),
+    blankArgs(),
+  );
+  assert.equal(disabled.maxTokensPerMinute, 0);
+
+  const clock = fakeClock();
+  const paced = await fakeServer(async () => ({
+    status: 200,
+    text: JSON.stringify({ label: "incomplete" }),
+  }));
+  try {
+    const pacedReport = await runLiveBenchmark({
+      ...liveShape(paced, await tempLedger()),
+      prices: pricesOf(1, 1, 0),
+      totalCapUsd: 50,
+      invocationCapUsd: 50,
+      warnUsd: 40,
+      rowLimit: 1,
+      seeds: [1],
+      maxTokensPerMinute: 1,
+      now: clock.now,
+      sleep: clock.sleep,
+      random: clock.random,
+    });
+    assert.ok(paced.requests.length >= 2);
+    assert.ok(clock.sleeps.some((ms) => ms >= 60_000));
+    assert.equal(pacedReport.pacing.maxTokensPerMinute, 1);
+    assert.ok(pacedReport.pacing.waitMs >= 60_000);
+    assert.equal(JSON.stringify(pacedReport).includes(KEY), false);
+  } finally {
+    await paced.close();
+  }
+
+  const retryClock = fakeClock();
+  let retryCalls = 0;
+  const retried = await fakeServer(async () => {
+    retryCalls += 1;
+    if (retryCalls === 1)
+      return {
+        status: 429,
+        text: JSON.stringify({ error: KEY }),
+        headers: { "Retry-After": "30" },
+      };
+    return { status: 200, text: JSON.stringify({ label: "incomplete" }) };
+  });
+  try {
+    const report = await runLiveBenchmark({
+      ...liveShape(retried, await tempLedger()),
+      prices: pricesOf(1, 1, 0),
+      totalCapUsd: 50,
+      invocationCapUsd: 50,
+      warnUsd: 40,
+      rowLimit: 1,
+      seeds: [1],
+      maxRetryWaitMs: 4_000,
+      max429Retries: 2,
+      now: retryClock.now,
+      sleep: retryClock.sleep,
+      random: retryClock.random,
+    });
+    assert.equal(retryClock.sleeps[0], 4_000);
+    assert.ok(report.pacing.rateLimitResponses >= 1);
+    assert.ok(report.pacing.waitMs >= 4_000);
+    assert.ok(report.attempts > report.liveCalls);
+    assert.equal((report.stopped?.message ?? "").includes(KEY), false);
+  } finally {
+    await retried.close();
+  }
+
+  const plan = planLiveRun({
+    label: "selected",
+    seeds: [1],
+    rowLimit: 1,
+    deployment: "gpt-5.4-mini",
+  });
+  const first = plan.calls[0]!;
+  const worst = Math.round(first.ceilingInputTokens + first.outputTokens);
+  const capped = await fakeServer(async () => ({
+    status: 429,
+    text: "{}",
+    headers: { "retry-after-ms": "2500" },
+  }));
+  const capClock = fakeClock();
+  try {
+    const report = await runLiveBenchmark({
+      ...liveShape(capped, await tempLedger()),
+      prices: pricesOf(1, 1, 0),
+      totalCapUsd: Number(formatUsd(worst)),
+      invocationCapUsd: 100,
+      warnUsd: Number(formatUsd(worst)),
+      rowLimit: 1,
+      seeds: [1],
+      now: capClock.now,
+      sleep: capClock.sleep,
+      random: capClock.random,
+    });
+    assert.equal(capped.requests.length, 1);
+    assert.equal(report.stopped?.reason, "total_cap");
+    assert.equal(report.attempts, 1);
+    assert.ok(report.spend.totalMicroUsd > 0);
+    assert.equal(report.pacing.rateLimitResponses, 1);
+    assert.equal(capClock.sleeps.length, 0);
+  } finally {
+    await capped.close();
+  }
+
+  const exhaustedClock = fakeClock();
+  const exhausted = await fakeServer(async () => ({
+    status: 429,
+    text: JSON.stringify({ api_key: KEY }),
+    headers: { "retry-after-ms": "1500" },
+  }));
+  try {
+    const report = await runLiveBenchmark({
+      ...liveShape(exhausted, await tempLedger()),
+      prices: pricesOf(1, 1, 0),
+      totalCapUsd: 50,
+      invocationCapUsd: 50,
+      warnUsd: 40,
+      rowLimit: 1,
+      seeds: [1],
+      max429Retries: 1,
+      now: exhaustedClock.now,
+      sleep: exhaustedClock.sleep,
+      random: exhaustedClock.random,
+    });
+    assert.equal(exhausted.requests.length, 2);
+    assert.equal(report.stopped?.reason, "rate_limit");
+    assert.equal(report.passed, false);
+    assert.equal(report.pacing.rateLimitResponses, 2);
+    assert.equal(report.pacing.waitMs, 1_500);
+    assert.equal(report.attempts, 2);
+    assert.equal((report.stopped?.message ?? "").includes(KEY), false);
+    assert.equal(JSON.stringify(report).includes(KEY), false);
+    assert.equal((report.stopped?.message ?? "").includes("retry-after"), false);
+  } finally {
+    await exhausted.close();
+  }
+});
+
+function fakeClock() {
+  let now = 1_000;
+  const sleeps: number[] = [];
+  return {
+    sleeps,
+    now: () => now,
+    sleep: async (ms: number) => {
+      sleeps.push(ms);
+      now += ms;
+    },
+    random: () => 0,
+  };
+}
+
 function blankArgs() {
   return {
     seeds: [1],
@@ -719,6 +889,7 @@ async function fakeServer(
     status: number;
     text: string;
     raw?: string;
+    headers?: Record<string, string>;
     usage?: { input_tokens: number; output_tokens: number; cached_tokens: number };
   }>,
 ): Promise<FakeServer> {
@@ -733,8 +904,12 @@ async function fakeServer(
     };
     requests.push(recorded);
     const response = await respond(recorded);
+    const headers = {
+      "content-type": "application/json",
+      ...response.headers,
+    };
     if (response.raw) {
-      res.writeHead(response.status, { "content-type": "application/json" });
+      res.writeHead(response.status, headers);
       res.end(response.raw);
       return;
     }
@@ -767,8 +942,8 @@ async function fakeServer(
       );
       return;
     }
-    res.writeHead(response.status, { "content-type": "application/json" });
-    res.end(response.text);
+      res.writeHead(response.status, headers);
+      res.end(response.text);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
