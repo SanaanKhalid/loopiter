@@ -19,6 +19,7 @@ import {
   LiveLedger,
   LiveSession,
   MAX_ATTEMPTS,
+  MAX_STEP_MS,
   PREDICT_MAX_OUTPUT_TOKENS,
   PROPOSE_MAX_OUTPUT_TOKENS,
   SMOKE_ROWS,
@@ -939,8 +940,30 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
     maxTotalWaitMs,
   });
   assert.equal(deadline, plan.callbackTimeoutMs);
-  assert.ok(deadline <= 3_600_000);
-  assert.ok(plan.attemptDeadlineMs >= requestTimeoutMs || deadline === 3_600_000);
+  assert.equal(plan.attemptDeadlineMs, 255_000);
+  assert.equal(plan.callbackTimeoutMs, 4_920_000);
+  assert.equal(MAX_STEP_MS, 7_200_000);
+  assert.ok(plan.attemptDeadlineMs >= requestTimeoutMs + 75_000);
+  assert.throws(
+    () =>
+      liveDeadlinePlan({
+        callsPerStep,
+        requestTimeoutMs: 600_000,
+        max429Retries: 6,
+        maxRetryWaitMs: 60_000,
+        maxTotalWaitMs,
+      }),
+    /Refusing to start/,
+  );
+  const shrunkWaits = liveDeadlinePlan({
+    callsPerStep,
+    requestTimeoutMs: 300_000,
+    max429Retries: 6,
+    maxRetryWaitMs: 60_000,
+    maxTotalWaitMs,
+  });
+  assert.equal(shrunkWaits.attemptDeadlineMs, 435_000);
+  assert.equal(shrunkWaits.callbackTimeoutMs, MAX_STEP_MS);
 
   const clock = fakeClock();
   const directory = await tempLedger();
@@ -1317,6 +1340,7 @@ test("transient fetch failures retry within the attempt and wait caps", async ()
 
 test("a stalled provider and a stalled ledger stop on the attempt deadline", async () => {
   const directory = await tempLedger();
+  const exits: number[] = [];
   const hung = await runLiveBenchmark({
     seeds: [1],
     smoke: false,
@@ -1337,7 +1361,9 @@ test("a stalled provider and a stalled ledger stop on the attempt deadline", asy
     maxTotalWaitMs: 5_000,
     attemptDeadlineMs: 40,
     fetch: () => new Promise(() => undefined),
+    exit: (code) => exits.push(code),
   });
+  assert.deepEqual(exits, [1]);
   assert.equal(hung.stopped?.reason, "attempt_deadline");
   assert.match(hung.stopped?.message ?? "", /Attempt deadline exceeded/);
 
@@ -1696,6 +1722,214 @@ test("exit guard, late abort, hung body, and pacing stall", async () => {
   assert.equal(pacedOut, true);
   assert.equal(paceSession.inFlight > 0, true);
   void second.catch(() => undefined);
+});
+
+test("cause codes, one timeout sentence, and a retry wait that does not look stalled", async () => {
+  const directory = await tempLedger();
+  const meter = async <T>(
+    _maximum: number,
+    call: () => Promise<{ value: T; tokens: number | null }>,
+  ) => (await call()).value;
+  const base = {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    maxTokensPerMinute: 0,
+    maxRetryWaitMs: 1_000,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 5_000,
+    now: () => Date.now(),
+    sleep: async () => undefined,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  } as const;
+  let lookups = 0;
+  const lookup = new LiveSession(
+    new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, "lookup.json"),
+    ),
+    [KEY],
+    false,
+    {
+      ...base,
+      fetch: async () => {
+        lookups += 1;
+        throw new TypeError("fetch failed", {
+          cause: Object.assign(new Error(`getaddrinfo ENOTFOUND example.openai.azure.com ${KEY}`), {
+            code: "ENOTFOUND",
+          }),
+        });
+      },
+    },
+  );
+  await assert.rejects(
+    lookup.generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      new AbortController().signal,
+    ),
+    /fetch failed: ENOTFOUND getaddrinfo ENOTFOUND/,
+  );
+  assert.equal(lookups, 1);
+  const lookupError = await lookup
+    .generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      new AbortController().signal,
+    )
+    .catch((error: unknown) => error);
+  assert.match(String((lookupError as Error).message), /\[redacted\]/);
+  assert.equal(String((lookupError as Error).message).includes(KEY), false);
+
+  const timed = new LiveSession(
+    new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, "timeout.json"),
+    ),
+    [],
+    false,
+    {
+      ...base,
+      requestTimeoutMs: 80,
+      fetch: (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) return;
+          if (signal.aborted) reject(signal.reason);
+          else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    },
+  );
+  const timeoutError = await timed
+    .generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      new AbortController().signal,
+    )
+    .catch((error: unknown) => error);
+  const timeoutMessage = (timeoutError as Error).message;
+  assert.equal(timeoutMessage.split("Request timed out after 80 ms.").length - 1, 1);
+
+  const capped = new LiveSession(
+    new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, "cap.json"),
+    ),
+    [],
+    false,
+    {
+      ...base,
+      maxTotalWaitMs: 2_500,
+      maxRetryWaitMs: 2_000,
+      max429Retries: 4,
+      fetch: async () => new Response("{}", { status: 429, headers: { "retry-after-ms": "2000" } }),
+    },
+  );
+  const capError = await capped
+    .generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      new AbortController().signal,
+    )
+    .catch((error: unknown) => error);
+  assert.match((capError as Error).message, /2\.5 seconds/);
+  assert.equal((capError as Error).message.includes("(3 seconds)"), false);
+
+  let quietStalled = false;
+  const quiet = new LiveSession(
+    new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, "quiet.json"),
+    ),
+    [],
+    false,
+    {
+      ...base,
+      max429Retries: 2,
+      maxRetryWaitMs: 1_000,
+      attemptDeadlineMs: 2_000,
+      fetch: async () => new Response("{}", { status: 429, headers: { "retry-after-ms": "500" } }),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    },
+  );
+  const quietWatch = createStallWatchdog({
+    intervalMs: 15,
+    stallMs: 40,
+    lastActivity: () => quiet.activityMs(),
+    onStall: () => {
+      quietStalled = true;
+    },
+  });
+  const quietResult = quiet
+    .generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      new AbortController().signal,
+    )
+    .catch((error: unknown) => error);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  quietWatch.stop();
+  assert.equal(quietStalled, false);
+  await quietResult;
+
+  let hungRetry = false;
+  const hung = new LiveSession(
+    new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, "hung-retry.json"),
+    ),
+    [],
+    false,
+    {
+      ...base,
+      max429Retries: 2,
+      maxRetryWaitMs: 1_000,
+      attemptDeadlineMs: 400,
+      fetch: async () => new Response("{}", { status: 429, headers: { "retry-after-ms": "30" } }),
+      sleep: () => new Promise(() => undefined),
+    },
+  );
+  const hungWatch = createStallWatchdog({
+    intervalMs: 15,
+    stallMs: 40,
+    lastActivity: () => hung.activityMs(),
+    onStall: () => {
+      hungRetry = true;
+    },
+  });
+  const hungResult = hung
+    .generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      new AbortController().signal,
+    )
+    .catch((error: unknown) => error);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  hungWatch.stop();
+  assert.equal(hungRetry, true);
+  await hungResult;
 });
 
 test("pace reservation settles to actual tokens", async () => {

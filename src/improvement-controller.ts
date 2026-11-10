@@ -96,8 +96,8 @@ export class ImprovementController {
       options.tickTimeoutMs ?? Math.max(600000, this.callbackMs + 1000);
     integer(this.callbackMs, "callbackTimeoutMs");
     integer(this.tickMs, "tickTimeoutMs");
-    if (this.callbackMs > 3_600_000 || this.tickMs > 3_660_000)
-      fail("invalid_input", "Step timeout cannot exceed 1 hour.");
+    if (this.callbackMs > 7_200_000 || this.tickMs > 7_260_000)
+      fail("invalid_input", "Step timeout cannot exceed 2 hours.");
     if (this.tickMs < this.callbackMs)
       fail("invalid_input", "Tick timeout must cover the step timeout.");
     if (!Array.isArray(options.workflows) || !options.workflows.length)

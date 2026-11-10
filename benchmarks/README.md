@@ -263,10 +263,12 @@ the deployment accepts it, or raise the answer bound, if that happens. Each
 request is aborted after `LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS` (default 120).
 A timeout counts as a retryable attempt. The controller step that runs
 `evaluateBatch` or `observe` is calls × reserved attempts × the attempt
-deadline, plus each call's retry-wait cap. Reserved attempts are
-`MAX_ATTEMPTS + max 429 retries`. The retry-wait cap is per call and does not
-include pace waits. The step is clamped to one hour so the controller accepts
-it. The tick deadline covers that step. A per-request timeout, HTTP 500, 502, 503, and 504,
+deadline, plus the retry sleep each call can actually spend. That sleep is the
+smaller of the per-call wait cap and `(network retries + 429 retries) × max
+retry wait`. Reserved attempts are `MAX_ATTEMPTS + max 429 retries`. The
+attempt deadline stays at least the request timeout plus 60 seconds of pacing
+and 15 seconds of ledger time. The controller accepts a step of up to 2 hours.
+A plan that still does not fit is refused. The tick deadline covers that step. A per-request timeout, HTTP 500, 502, 503, and 504,
 and transient network failures whose cause is `ECONNRESET`, `ETIMEDOUT`,
 `ECONNREFUSED`, `EAI_AGAIN`, or `UND_ERR_SOCKET` (including a socket hang up)
 are retried once. A bare `fetch failed`, `ENOTFOUND`, and TLS or certificate

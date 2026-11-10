@@ -89,7 +89,11 @@ export function maxModelCallsPerStep(
   return Math.max(1, batchSize * 2, observeChunk);
 }
 
-const MAX_CALLBACK_MS = 3_600_000;
+/** Controller step cap. Two hours holds the default live budget (16 × 255s plus retry waits). */
+export const MAX_STEP_MS = 7_200_000;
+export const MAX_TICK_MS = 7_260_000;
+/** Pace window plus ledger persist, kept inside every derived attempt deadline. */
+const ATTEMPT_MARGIN_MS = 75_000;
 
 export function defaultAttemptDeadlineMs(input: {
   requestTimeoutMs: number;
@@ -98,7 +102,21 @@ export function defaultAttemptDeadlineMs(input: {
   return input.requestTimeoutMs + 60_000 + input.maxRetryWaitMs + 15_000;
 }
 
-/** Step budget: every reserved attempt's deadline, plus each call's retry-wait cap. Clamped to the controller's one-hour step. */
+export function attemptDeadlineFloorMs(requestTimeoutMs: number): number {
+  return requestTimeoutMs + ATTEMPT_MARGIN_MS;
+}
+
+/** Retry sleep one call can actually spend: each retry is capped, and so is the call. */
+export function perCallRetryWaitMs(input: {
+  max429Retries: number;
+  maxRetryWaitMs: number;
+  maxTotalWaitMs: number;
+}): number {
+  const retries = Math.max(0, MAX_ATTEMPTS - 1) + Math.max(0, input.max429Retries);
+  return Math.min(input.maxTotalWaitMs, retries * input.maxRetryWaitMs);
+}
+
+/** Step budget: every reserved attempt's deadline, plus each call's real retry-wait maximum. */
 export function liveDeadlinePlan(input: {
   callsPerStep: number;
   requestTimeoutMs: number;
@@ -109,18 +127,25 @@ export function liveDeadlinePlan(input: {
 }): { callbackTimeoutMs: number; attemptDeadlineMs: number } {
   const attempts = reservedAttemptsPerCall(input.max429Retries);
   const slots = Math.max(1, input.callsPerStep * attempts);
-  let attempt = input.attemptDeadlineMs ?? defaultAttemptDeadlineMs(input);
-  const waits = input.callsPerStep * input.maxTotalWaitMs;
-  if (slots * attempt + waits > MAX_CALLBACK_MS) {
-    const room = MAX_CALLBACK_MS - waits;
-    attempt =
-      room >= slots
-        ? Math.min(attempt, Math.floor(room / slots))
-        : Math.min(attempt, Math.max(input.requestTimeoutMs, Math.floor(MAX_CALLBACK_MS / slots)));
+  const explicit = input.attemptDeadlineMs !== undefined;
+  const floor = attemptDeadlineFloorMs(input.requestTimeoutMs);
+  let attempt = explicit ? input.attemptDeadlineMs! : defaultAttemptDeadlineMs(input);
+  if (!explicit) attempt = Math.max(attempt, floor);
+  let waits = input.callsPerStep * perCallRetryWaitMs(input);
+  if (!explicit && slots * attempt + waits > MAX_STEP_MS) {
+    const room = MAX_STEP_MS - slots * attempt;
+    if (room >= 0) waits = Math.min(waits, room);
+    else if (slots * floor <= MAX_STEP_MS) {
+      attempt = Math.max(floor, Math.floor(MAX_STEP_MS / slots));
+      waits = Math.min(waits, Math.max(0, MAX_STEP_MS - slots * attempt));
+    }
   }
-  attempt = Math.max(1, attempt);
-  const budget = Math.min(MAX_CALLBACK_MS, Math.max(1, slots * attempt + Math.min(waits, MAX_CALLBACK_MS)));
-  return { callbackTimeoutMs: budget, attemptDeadlineMs: attempt };
+  const budget = slots * attempt + waits;
+  if (budget > MAX_STEP_MS)
+    throw new LiveGateError(
+      `Live step budget is ${budget} ms, above the ${MAX_STEP_MS} ms controller cap. Lower the request timeout or the retry limits. Refusing to start.`,
+    );
+  return { callbackTimeoutMs: Math.max(1, budget), attemptDeadlineMs: Math.max(1, attempt) };
 }
 
 export function liveCallbackTimeoutMs(
@@ -357,7 +382,7 @@ export class LiveLedger {
     }
     if (signal?.aborted) {
       this.undoHold(micro, tokens);
-      await this.persist().catch(() => undefined);
+      await this.persist(AbortSignal.timeout(REPORT_IO_MS)).catch(() => undefined);
       throw abortReason(signal);
     }
     return { micro, tokens };
@@ -674,6 +699,8 @@ export interface LiveRunOptions {
   attemptDeadlineMs?: number;
   /** Exit if no attempt, ledger write, or retry records progress for this long. */
   stallTimeoutMs?: number;
+  /** Replaces process.exit when leftover attempt I/O outlives the stall watchdog. */
+  exit?: (code: number) => void;
   /** Heartbeat while idle. Unset prints every PROGRESS_INTERVAL_MS. */
   progressIntervalMs?: number;
   reportPath?: string;
@@ -854,6 +881,7 @@ export class LiveSession {
   readonly attemptDeadlineMs: number;
   lastActivityMs = Date.now();
   private inflight = 0;
+  private retryQuietUntil = 0;
   private readonly idle: (() => void)[] = [];
   activity = "running";
   lastError: string | null = null;
@@ -909,7 +937,7 @@ export class LiveSession {
         : { attemptDeadlineMs: options.attemptDeadlineMs }),
     });
     this.callbackTimeoutMs = deadline.callbackTimeoutMs;
-    this.tickTimeoutMs = Math.min(3_660_000, deadline.callbackTimeoutMs + 1000);
+    this.tickTimeoutMs = Math.min(MAX_TICK_MS, deadline.callbackTimeoutMs + 1000);
     this.attemptDeadlineMs = deadline.attemptDeadlineMs;
     this.now = options.now;
     this.sleep = options.sleep;
@@ -955,6 +983,11 @@ export class LiveSession {
     this.lastActivityMs = Date.now();
   }
 
+  /** Last progress, or the end of a scheduled retry wait that is still inside its budget. */
+  activityMs(): number {
+    return Math.max(this.lastActivityMs, this.retryQuietUntil);
+  }
+
   get inFlight(): number {
     return this.inflight;
   }
@@ -989,6 +1022,7 @@ export class LiveSession {
           this.rateLimitResponses += 1;
           if (rateRetries >= this.max429Retries) {
             this.rateLimitExhausted = true;
+            this.touch();
             const message = redactSecrets(
               `Rate limit persisted after ${this.max429Retries} retries (HTTP 429).`,
               this.secrets,
@@ -1041,7 +1075,14 @@ export class LiveSession {
     this.chargeRetryWait(already, wait);
     this.activity = "waiting on retry";
     this.waitMs += wait;
-    await this.withDeadline(signal, (deadline) => abortableSleep(this.sleep, wait, deadline));
+    this.retryQuietUntil = Date.now() + wait;
+    this.touch();
+    try {
+      await this.withDeadline(signal, (deadline) => abortableSleep(this.sleep, wait, deadline));
+    } finally {
+      this.touch();
+      this.retryQuietUntil = 0;
+    }
     signal.throwIfAborted();
     this.activity = "running";
   }
@@ -1148,10 +1189,10 @@ export class LiveSession {
         throw error;
       }
       const timedOut = timeout.signal.aborted && isTimeoutError(timeout.signal.reason);
+      const timeoutText = `Request timed out after ${this.requestTimeoutMs} ms.`;
+      const detail = redactSecrets(errorText(error), this.secrets);
       const normalized = timedOut
-        ? timeoutError(
-            `Request timed out after ${this.requestTimeoutMs} ms. ${redactSecrets(errorText(error), this.secrets)}`,
-          )
+        ? timeoutError(detail === timeoutText ? timeoutText : `${timeoutText} ${detail}`)
         : error;
       if (!(normalized instanceof LoopiterError && normalized.code === "spend_cap")) {
         const usage = extractUsage(normalized);
@@ -1178,8 +1219,7 @@ export class LiveSession {
 
   private chargeRetryWait(already: number, ms: number): void {
     if (already + ms <= this.maxTotalWaitMs) return;
-    const seconds = Math.round(this.maxTotalWaitMs / 1000);
-    const message = `Retry wait for this call reached ${LIVE_ENV.maxTotalWait} (${seconds} seconds). Pace waits are not counted. Stopping instead of waiting longer.`;
+    const message = `Retry wait for this call reached ${LIVE_ENV.maxTotalWait} (${formatSeconds(this.maxTotalWaitMs)}). Pace waits are not counted. Stopping instead of waiting longer.`;
     this.lastError = message;
     this.waitLimitReached = true;
     throw new RateLimitStop(message);
@@ -1257,7 +1297,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
       ? createStallWatchdog({
           intervalMs: Math.max(1, Math.min(30_000, Math.floor(stallMs / 2))),
           stallMs,
-          lastActivity: () => session.lastActivityMs,
+          lastActivity: () => session.activityMs(),
           onStall: () => {
             guard.arm(1, () =>
               writeInterruptedReport({
@@ -1333,11 +1373,12 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
           };
   } finally {
     heartbeat.stop();
-    await Promise.race([
-      session.waitUntilSettled(),
-      new Promise((resolve) => setTimeout(resolve, REPORT_IO_MS)),
+    const settled = await Promise.race([
+      session.waitUntilSettled().then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), REPORT_IO_MS)),
     ]);
     watchdog?.stop();
+    if (!settled || session.inFlight > 0) (options.exit ?? process.exit)(1);
     if (onInterrupt) {
       process.off("SIGINT", onInterrupt);
       process.off("SIGTERM", onInterrupt);
@@ -2676,8 +2717,30 @@ function isTimeoutError(error: unknown): boolean {
 }
 
 function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return "Model request failed.";
+  if (!(error instanceof Error)) return "Model request failed.";
+  const parts = [error.message];
+  const seen = new Set<unknown>();
+  let current: unknown = error.cause;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const code = (current as { code?: unknown }).code;
+    const message = current instanceof Error ? current.message : "";
+    const extra = [
+      typeof code === "string" ? code : "",
+      message && message !== error.message ? message : "",
+    ]
+      .filter((part) => part.length > 0)
+      .join(" ");
+    if (extra) parts.push(extra);
+    current = (current as { cause?: unknown }).cause;
+  }
+  return parts.join(": ");
+}
+
+function formatSeconds(ms: number): string {
+  const seconds = ms / 1000;
+  const text = Number.isInteger(seconds) ? String(seconds) : (Math.round(seconds * 10) / 10).toFixed(1);
+  return `${text} ${text === "1" ? "second" : "seconds"}`;
 }
 
 function assertNoSecrets(report: LiveReport, secrets: readonly string[]): void {
