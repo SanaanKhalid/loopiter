@@ -54,9 +54,12 @@ export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"] as
 /** Env value that leaves `reasoning` off the request. */
 export const OMIT_REASONING = "omit";
 export const REQUEST_TIMEOUT_MS = 20_000;
+export const DEFAULT_REQUEST_TIMEOUT_SECONDS = 120;
+export const PROGRESS_INTERVAL_MS = 120_000;
 export const MAX_ATTEMPTS = 2;
 export const DEFAULT_MAX_429_RETRIES = 6;
 export const DEFAULT_MAX_RETRY_WAIT_SECONDS = 60;
+export const DEFAULT_MAX_TOTAL_WAIT_SECONDS = 900;
 export const SMOKE_ROWS = 14;
 export const FULL_SEEDS = [1, 2, 3, 4, 5] as const;
 export const LIVE_OUTPUT_DIR = "reports/kb-qa-live";
@@ -85,6 +88,8 @@ export const LIVE_ENV = {
   maxTpm: "LOOPITER_BENCH_MAX_TPM",
   maxRetryWait: "LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS",
   max429Retries: "LOOPITER_BENCH_MAX_429_RETRIES",
+  requestTimeout: "LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS",
+  maxTotalWait: "LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS",
 } as const;
 
 const PREDICT_INSTRUCTIONS =
@@ -313,6 +318,10 @@ export class LiveLedger {
       throw new Error("Spend ledger underflow.");
   }
 
+  async flush(): Promise<void> {
+    await this.persist();
+  }
+
   private async persist(): Promise<void> {
     const file: LedgerFile = {
       schemaVersion: 1,
@@ -456,6 +465,7 @@ export function renderEstimate(
   deployment = DEFAULT_DEPLOYMENT,
   apiVersion = DEFAULT_API_VERSION,
   limits: RequestLimits = requestLimits(),
+  maxTokensPerMinute = 0,
 ): string {
   const priced: LivePrices = {
     inputUsdPerMillion: prices.inputUsdPerMillion,
@@ -487,12 +497,12 @@ export function renderEstimate(
     `Reasoning effort: ${limits.reasoningEffort ?? "omitted"}`,
     `Predict max output tokens: ${limits.predictMaxOutputTokens}`,
     `Propose max output tokens: ${limits.proposeMaxOutputTokens}`,
-    `Projection: input tokens are ceil(UTF-8 bytes / 4) of each request body. Output tokens are the max_output_tokens bound (${limits.predictMaxOutputTokens} for predict, ${limits.proposeMaxOutputTokens} for propose). Each call is rounded to micro-USD and summed. Cache discounts are not included. The pre-call ceiling counts one input token per request byte plus that same output bound.`,
+    `Projection: input tokens are ceil(UTF-8 bytes / 4) of each request body. Output tokens are the max_output_tokens bound (${limits.predictMaxOutputTokens} for predict, ${limits.proposeMaxOutputTokens} for propose). Each call is rounded to micro-USD and summed. Cache discounts are not included. The pre-call spend ceiling still counts one input token per request byte plus that same output bound. TPM pacing reserves the smaller estimate (bytes/4 plus the output bound) and the wall-time line uses that reservation, not the spend ceiling.`,
     "Candidate prompt sizes use a same-shape replacement fragment because the live proposal is not known ahead of time.",
     "",
-    formatPlan(smoke, priced),
+    formatPlan(smoke, priced, maxTokensPerMinute),
     "",
-    formatPlan(full, priced),
+    formatPlan(full, priced, maxTokensPerMinute),
     "",
     `Full candidate/baseline call ratio: ${(ratio).toFixed(6)}`,
     "On the full split the candidate arm is about 12x the baseline call count: one proposal, paired validation, paired audit, production observation, and held-out scoring.",
@@ -523,6 +533,14 @@ export interface LiveRunOptions {
   maxTokensPerMinute?: number;
   maxRetryWaitMs?: number;
   max429Retries?: number;
+  /** Per-request abort. Unset uses DEFAULT_REQUEST_TIMEOUT_SECONDS. */
+  requestTimeoutMs?: number;
+  /** Cumulative retry and pace wait. Unset uses DEFAULT_MAX_TOTAL_WAIT_SECONDS. */
+  maxTotalWaitMs?: number;
+  /** Heartbeat while idle. Unset prints every PROGRESS_INTERVAL_MS. */
+  progressIntervalMs?: number;
+  reportPath?: string;
+  handleSignals?: boolean;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
@@ -629,32 +647,54 @@ export class RateLimitStop extends Error {
 
 /** Sliding 60s window. A request larger than the limit runs only when the window is empty. */
 export class TokenMinuteWindow {
-  private stamps: { at: number; tokens: number }[] = [];
+  private stamps: { at: number; tokens: number; id: number }[] = [];
+  private nextId = 1;
   constructor(
     private readonly limit: number,
     private readonly now: () => number,
     private readonly sleep: (ms: number) => Promise<void>,
   ) {}
 
-  async acquire(tokens: number): Promise<number> {
-    if (this.limit <= 0) return 0;
+  /** Reserve `tokens`. `beforeWait` may throw to refuse a stall. */
+  async acquire(
+    tokens: number,
+    beforeWait?: (ms: number) => void,
+  ): Promise<{ waited: number; id: number }> {
+    if (!Number.isFinite(tokens) || tokens < 0) throw new Error("Invalid paced token count.");
+    if (this.limit <= 0) return { waited: 0, id: this.nextId++ };
     let waited = 0;
     for (;;) {
       const now = this.now();
       this.stamps = this.stamps.filter((stamp) => now - stamp.at < 60_000);
       const used = this.stamps.reduce((sum, stamp) => sum + stamp.tokens, 0);
       if (used === 0 || used + tokens <= this.limit) {
-        this.stamps.push({ at: now, tokens });
-        return waited;
+        const id = this.nextId++;
+        this.stamps.push({ at: now, tokens, id });
+        return { waited, id };
       }
       const oldest = this.stamps[0]!;
       const wait = Math.max(1, 60_000 - (now - oldest.at));
+      beforeWait?.(wait);
       const before = this.now();
       await this.sleep(wait);
       const after = this.now();
       if (after <= before) throw new Error("Pacer clock did not advance.");
       waited += after - before;
     }
+  }
+
+  /** Replace a reservation with actual tokens. A larger actual debits the difference. */
+  settle(id: number, actual: number): void {
+    if (!Number.isFinite(actual) || actual < 0) throw new Error("Invalid paced token count.");
+    const stamp = this.stamps.find((item) => item.id === id);
+    if (!stamp) return;
+    stamp.tokens = Math.ceil(actual);
+  }
+
+  reservedTokens(now = this.now()): number {
+    return this.stamps
+      .filter((stamp) => now - stamp.at < 60_000)
+      .reduce((sum, stamp) => sum + stamp.tokens, 0);
   }
 }
 
@@ -663,10 +703,14 @@ export class LiveSession {
   readonly limits: RequestLimits;
   readonly maxTokensPerMinute: number;
   readonly max429Retries: number;
+  readonly requestTimeoutMs: number;
+  readonly maxTotalWaitMs: number;
+  activity = "running";
   lastError: string | null = null;
   rateLimitResponses = 0;
   waitMs = 0;
   rateLimitExhausted = false;
+  waitLimitReached = false;
   private warned = false;
   private readonly maxRetryWaitMs: number;
   private readonly now: () => number;
@@ -687,6 +731,8 @@ export class LiveSession {
       maxTokensPerMinute: number;
       maxRetryWaitMs: number;
       max429Retries: number;
+      requestTimeoutMs: number;
+      maxTotalWaitMs: number;
       now: () => number;
       sleep: (ms: number) => Promise<void>;
       random: () => number;
@@ -699,6 +745,8 @@ export class LiveSession {
     };
     this.maxTokensPerMinute = options.maxTokensPerMinute;
     this.max429Retries = options.max429Retries;
+    this.requestTimeoutMs = options.requestTimeoutMs;
+    this.maxTotalWaitMs = options.maxTotalWaitMs;
     this.maxRetryWaitMs = options.maxRetryWaitMs;
     this.now = options.now;
     this.sleep = options.sleep;
@@ -710,7 +758,10 @@ export class LiveSession {
       try {
         return await baseFetch(url, init);
       } catch (error) {
-        throw new Error(redactSecrets(errorText(error), hidden));
+        const text = redactSecrets(errorText(error), hidden);
+        if (isTimeoutError(error) || isTimeoutError(init?.signal?.reason))
+          throw timeoutError(`Request timed out. ${text}`);
+        throw new Error(text);
       }
     };
     this.provider = new AzureOpenAIProvider({
@@ -724,7 +775,7 @@ export class LiveSession {
         options.proposeMaxOutputTokens,
       ),
       maximumInputBytes: 65_536,
-      timeoutMs: REQUEST_TIMEOUT_MS,
+      timeoutMs: options.requestTimeoutMs,
       fetch: fetchImpl,
     });
   }
@@ -763,8 +814,11 @@ export class LiveSession {
             throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
           rateRetries += 1;
           const wait = retryWaitMs(rateRetries, error.retryAfterMs, this.maxRetryWaitMs, this.random);
+          this.activity = "waiting on retry";
+          this.guardWait(wait);
           this.waitMs += wait;
           await this.sleep(wait);
+          this.activity = "running";
           continue;
         }
         if (!retryable(error) || otherRetries >= MAX_ATTEMPTS - 1) {
@@ -774,8 +828,11 @@ export class LiveSession {
         }
         otherRetries += 1;
         const wait = 200 * otherRetries;
+        this.activity = "waiting on retry";
+        this.guardWait(wait);
         this.waitMs += wait;
         await this.sleep(wait);
+        this.activity = "running";
       }
     }
   }
@@ -791,9 +848,17 @@ export class LiveSession {
     const worst: TokenUse = { input: ceiling, output: maxOutput, cached: 0 };
     if (!this.ledger.allow(worst, this.stopAtWarn))
       throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
-    const waited = await this.pacer.acquire(ceiling + maxOutput);
-    this.waitMs += waited;
+    const reserved = projectedInputTokens(body) + maxOutput;
+    this.activity = "waiting on pace";
+    const paced = await this.pacer.acquire(reserved, (ms) => this.guardWait(ms));
+    this.activity = "running";
+    this.waitMs += paced.waited;
     const held = await this.ledger.beginAttempt(worst);
+    const timeout = new AbortController();
+    const timer = setTimeout(() => {
+      timeout.abort(timeoutError(`Request timed out after ${this.requestTimeoutMs} ms.`));
+    }, this.requestTimeoutMs);
+    const requestSignal = AbortSignal.any([signal, timeout.signal]);
     try {
       const generated = await meter(ceiling + maxOutput + 64, async () => {
         const result = await this.provider.generate({
@@ -802,7 +867,7 @@ export class LiveSession {
             ? { reasoningEffort: this.limits.reasoningEffort }
             : {}),
           maximumOutputTokens: maxOutput,
-          signal,
+          signal: requestSignal,
         });
         const usage = billedUsage(result);
         return {
@@ -810,19 +875,48 @@ export class LiveSession {
           tokens: usage.input + usage.output,
         };
       });
+      this.pacer.settle(paced.id, generated.usage.input + generated.usage.output);
       await this.ledger.finishAttempt(held, generated.usage, true);
       this.maybeWarn();
       this.noteProgress();
       return generated.result;
     } catch (error) {
-      if (!(error instanceof LoopiterError && error.code === "spend_cap")) {
-        const usage = extractUsage(error) ?? worst;
-        await this.ledger.finishAttempt(held, usage, false);
+      const timedOut = timeout.signal.aborted && isTimeoutError(timeout.signal.reason);
+      const normalized = timedOut
+        ? timeoutError(
+            `Request timed out after ${this.requestTimeoutMs} ms. ${redactSecrets(errorText(error), this.secrets)}`,
+          )
+        : error;
+      if (!(normalized instanceof LoopiterError && normalized.code === "spend_cap")) {
+        const usage = extractUsage(normalized);
+        if (usage) this.pacer.settle(paced.id, usage.input + usage.output);
+        await this.ledger.finishAttempt(held, usage ?? worst, false);
         this.maybeWarn();
         this.noteProgress();
       }
-      throw error;
+      throw normalized;
+    } finally {
+      clearTimeout(timer);
     }
+  }
+
+  emitProgress(): void {
+    console.log(
+      formatProgress({
+        calls: this.ledger.invocationAttempts,
+        spendUsd: formatUsd(this.ledger.invocationMicroUsd),
+        state: this.activity,
+      }),
+    );
+  }
+
+  private guardWait(ms: number): void {
+    if (this.waitMs + ms <= this.maxTotalWaitMs) return;
+    const seconds = Math.round(this.maxTotalWaitMs / 1000);
+    const message = `Cumulative wait reached ${LIVE_ENV.maxTotalWait} (${seconds} seconds). Stopping instead of waiting longer.`;
+    this.lastError = message;
+    this.waitLimitReached = true;
+    throw new RateLimitStop(message);
   }
 
   /** Skip a second warning when the loaded ledger was already past the threshold. */
@@ -837,9 +931,7 @@ export class LiveSession {
   private noteProgress(): void {
     if (this.ledger.invocationAttempts === 0 || this.ledger.invocationAttempts % 50 !== 0)
       return;
-    console.log(
-      `progress calls=${this.ledger.invocationAttempts} spend=${formatUsd(this.ledger.invocationMicroUsd)} USD`,
-    );
+    this.emitProgress();
   }
 
   private maybeWarn(): void {
@@ -878,6 +970,21 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
     ...limits,
     ...pace,
   });
+  const heartbeat = startProgressTicker(options.progressIntervalMs ?? PROGRESS_INTERVAL_MS, () =>
+    session.emitProgress(),
+  );
+  const onInterrupt =
+    options.handleSignals && options.reportPath
+      ? createInterruptHandler({
+          ledger,
+          reportPath: options.reportPath,
+          secrets,
+        })
+      : null;
+  if (onInterrupt) {
+    process.on("SIGINT", onInterrupt);
+    process.on("SIGTERM", onInterrupt);
+  }
   if (ledger.totalMicroUsd >= caps.warnMicroUsd) {
     ledger.warnCrossed = true;
     session.markWarned();
@@ -919,15 +1026,28 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
       if (ledger.stopReason || loop.failure) break;
     }
   } catch (error) {
-    failure = session.rateLimitExhausted
+    failure = session.waitLimitReached
       ? {
-          reason: "rate_limit",
-          message: session.lastError ?? "Rate limit persisted (HTTP 429).",
+          reason: "wait_limit",
+          message:
+            session.lastError ??
+            `Cumulative wait reached ${LIVE_ENV.maxTotalWait}. Stopping instead of waiting longer.`,
         }
-      : {
-          reason: "provider_error",
-          message: redactSecrets(errorText(error), secrets),
-        };
+      : session.rateLimitExhausted
+        ? {
+            reason: "rate_limit",
+            message: session.lastError ?? "Rate limit persisted (HTTP 429).",
+          }
+        : {
+            reason: "provider_error",
+            message: redactSecrets(errorText(error), secrets),
+          };
+  } finally {
+    heartbeat.stop();
+    if (onInterrupt) {
+      process.off("SIGINT", onInterrupt);
+      process.off("SIGTERM", onInterrupt);
+    }
   }
   if (!failure && ledger.stopReason) failure = stopView(ledger.stopReason);
   if (!failure && session.lastError)
@@ -981,7 +1101,13 @@ export function estimateFromEnv(env: NodeJS.ProcessEnv): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(apiVersion))
     throw new LiveGateError(`Invalid ${LIVE_ENV.apiVersion}.`);
   if (!deployment.trim()) throw new LiveGateError(`Invalid ${LIVE_ENV.deployment}.`);
-  return renderEstimate(prices, deployment, apiVersion, readRequestLimits(env));
+  return renderEstimate(
+    prices,
+    deployment,
+    apiVersion,
+    readRequestLimits(env),
+    readMaxTpm(env),
+  );
 }
 
 export function liveOptionsFromEnv(
@@ -1031,6 +1157,8 @@ export function liveOptionsFromEnv(
     maxTokensPerMinute: pace.maxTokensPerMinute,
     maxRetryWaitMs: pace.maxRetryWaitMs,
     max429Retries: pace.max429Retries,
+    requestTimeoutMs: pace.requestTimeoutMs,
+    maxTotalWaitMs: pace.maxTotalWaitMs,
   };
 }
 
@@ -1074,6 +1202,8 @@ interface PaceSettings {
   maxTokensPerMinute: number;
   maxRetryWaitMs: number;
   max429Retries: number;
+  requestTimeoutMs: number;
+  maxTotalWaitMs: number;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   random: () => number;
@@ -1089,10 +1219,18 @@ function paceSettings(options: LiveRunOptions): PaceSettings {
   requirePositiveInt(maxRetryWaitMs, LIVE_ENV.maxRetryWait);
   const max429Retries = options.max429Retries ?? DEFAULT_MAX_429_RETRIES;
   requirePositiveInt(max429Retries, LIVE_ENV.max429Retries);
+  const requestTimeoutMs =
+    options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_SECONDS * 1000;
+  requirePositiveInt(requestTimeoutMs, LIVE_ENV.requestTimeout);
+  const maxTotalWaitMs =
+    options.maxTotalWaitMs ?? DEFAULT_MAX_TOTAL_WAIT_SECONDS * 1000;
+  requirePositiveInt(maxTotalWaitMs, LIVE_ENV.maxTotalWait);
   return {
     maxTokensPerMinute,
     maxRetryWaitMs,
     max429Retries,
+    requestTimeoutMs,
+    maxTotalWaitMs,
     now: options.now ?? Date.now,
     sleep: options.sleep ?? delay,
     random: options.random ?? Math.random,
@@ -1101,12 +1239,20 @@ function paceSettings(options: LiveRunOptions): PaceSettings {
 
 function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
   PaceSettings,
-  "maxTokensPerMinute" | "maxRetryWaitMs" | "max429Retries"
+  | "maxTokensPerMinute"
+  | "maxRetryWaitMs"
+  | "max429Retries"
+  | "requestTimeoutMs"
+  | "maxTotalWaitMs"
 > {
   return {
     maxTokensPerMinute: readMaxTpm(env),
     maxRetryWaitMs: readOptionalIntOr(env, LIVE_ENV.maxRetryWait, DEFAULT_MAX_RETRY_WAIT_SECONDS) * 1000,
     max429Retries: readOptionalIntOr(env, LIVE_ENV.max429Retries, DEFAULT_MAX_429_RETRIES),
+    requestTimeoutMs:
+      readOptionalIntOr(env, LIVE_ENV.requestTimeout, DEFAULT_REQUEST_TIMEOUT_SECONDS) * 1000,
+    maxTotalWaitMs:
+      readOptionalIntOr(env, LIVE_ENV.maxTotalWait, DEFAULT_MAX_TOTAL_WAIT_SECONDS) * 1000,
   };
 }
 
@@ -1276,7 +1422,11 @@ function summarizePlan(
   };
 }
 
-function formatPlan(plan: PlanSummary, prices: LivePrices): string {
+function formatPlan(
+  plan: PlanSummary,
+  prices: LivePrices,
+  maxTokensPerMinute: number,
+): string {
   let projected = 0;
   let ceiling = 0;
   for (const call of plan.calls) {
@@ -1302,7 +1452,45 @@ function formatPlan(plan: PlanSummary, prices: LivePrices): string {
     `projected USD: ${formatUsd(projected)}`,
     `ceiling input tokens: ${plan.ceilingInputTokens}`,
     `ceiling USD: ${formatUsd(ceiling)}`,
+    `pace tokens: ${plan.inputTokens + plan.outputTokens}`,
+    `projected wall minutes: ${wallMinutes(plan.calls, maxTokensPerMinute)}`,
   ].join("\n");
+}
+
+function wallMinutes(
+  calls: readonly { inputTokens: number; outputTokens: number }[],
+  maxTokensPerMinute: number,
+): string {
+  if (maxTokensPerMinute <= 0) return "pacing off";
+  const ms = projectedWallMs(calls, maxTokensPerMinute);
+  return (ms / 60_000).toFixed(2);
+}
+
+/** Wall time of the TPM window using the realistic reservation, not the spend ceiling. */
+export function projectedWallMs(
+  calls: readonly { inputTokens: number; outputTokens: number }[],
+  maxTokensPerMinute: number,
+): number {
+  if (maxTokensPerMinute <= 0) return 0;
+  const stamps: { at: number; tokens: number }[] = [];
+  let now = 0;
+  for (const call of calls) {
+    const tokens = call.inputTokens + call.outputTokens;
+    for (;;) {
+      const active = stamps.filter((stamp) => now - stamp.at < 60_000);
+      stamps.length = 0;
+      stamps.push(...active);
+      const used = stamps.reduce((sum, stamp) => sum + stamp.tokens, 0);
+      if (used === 0 || used + tokens <= maxTokensPerMinute) {
+        stamps.push({ at: now, tokens });
+        break;
+      }
+      const oldest = stamps[0];
+      if (!oldest) break;
+      now += Math.max(1, 60_000 - (now - oldest.at));
+    }
+  }
+  return now;
 }
 
 const predictSchema = (): JsonObject => ({
@@ -1706,16 +1894,27 @@ async function runCandidate(
     }
     return {
       state: "failed",
-      reason: session.rateLimitExhausted ? "rate_limit" : "provider_error",
+      reason: session.waitLimitReached
+        ? "wait_limit"
+        : session.rateLimitExhausted
+          ? "rate_limit"
+          : "provider_error",
       servedFragment: null,
       servedVersion: baselineVersion,
       baselineVersion,
-      failure: session.rateLimitExhausted
-        ? rateLimitFailure(session)
-        : {
-            reason: "provider_error",
-            message: session.redact(errorText(error)),
-          },
+      failure: session.waitLimitReached
+        ? {
+            reason: "wait_limit",
+            message:
+              session.lastError ??
+              `Cumulative wait reached ${LIVE_ENV.maxTotalWait}. Stopping instead of waiting longer.`,
+          }
+        : session.rateLimitExhausted
+          ? rateLimitFailure(session)
+          : {
+              reason: "provider_error",
+              message: session.redact(errorText(error)),
+            },
     };
   } finally {
     await loop.close();
@@ -2012,6 +2211,85 @@ function usageOrNull(usage: ResponseUsage): TokenUse | null {
   if (usage.cachedInputTokens !== null && !Number.isInteger(cached)) return null;
   if (cached < 0 || cached > usage.inputTokens) return null;
   return { input: usage.inputTokens, output: usage.outputTokens, cached };
+}
+
+export function formatProgress(input: {
+  calls: number;
+  spendUsd: string;
+  state: string;
+}): string {
+  return `progress calls=${input.calls} spend=${input.spendUsd} USD state=${input.state}`;
+}
+
+export function startProgressTicker(intervalMs: number, emit: () => void): { stop: () => void } {
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return { stop: () => undefined };
+  const timer = setInterval(emit, intervalMs);
+  timer.unref?.();
+  return { stop: () => clearInterval(timer) };
+}
+
+export async function writeInterruptedReport(input: {
+  ledger: LiveLedger;
+  reportPath: string;
+  secrets?: readonly string[];
+}): Promise<void> {
+  await input.ledger.flush();
+  const report = {
+    schemaVersion: 1,
+    harness: "loopiter-live-kb-qa",
+    status: "partial",
+    interrupted: true,
+    stopped: {
+      reason: "interrupted",
+      message: "Interrupted. Partial report written and the spend ledger was flushed.",
+    },
+    spend: {
+      totalMicroUsd: input.ledger.totalMicroUsd,
+      invocationMicroUsd: input.ledger.invocationMicroUsd,
+      calls: input.ledger.calls,
+      attempts: input.ledger.attempts,
+    },
+  };
+  const json = `${JSON.stringify(report, null, 2)}\n`;
+  for (const secret of input.secrets ?? []) {
+    if (secret.length >= 4 && json.includes(secret))
+      throw new LiveGateError("Refusing to write a report that contains a credential.");
+  }
+  await mkdir(dirname(input.reportPath), { recursive: true });
+  await writeFile(input.reportPath, json);
+}
+
+/** SIGINT/SIGTERM handler. Flushes the ledger, writes a partial report, then exits. */
+export function createInterruptHandler(input: {
+  ledger: LiveLedger;
+  reportPath: string;
+  secrets?: readonly string[];
+  exit?: (code: number) => void;
+}): (signal: NodeJS.Signals) => void {
+  let started = false;
+  const exit = input.exit ?? process.exit;
+  return () => {
+    if (started) return;
+    started = true;
+    void writeInterruptedReport(input)
+      .then(() => exit(130))
+      .catch((error: unknown) => {
+        console.error(error instanceof Error ? error.message : "Interrupt handler failed.");
+        exit(1);
+      });
+  };
+}
+
+function timeoutError(message: string): Error {
+  const error = new Error(message);
+  error.name = "TimeoutError";
+  return error;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if ((error as { name?: string }).name === "TimeoutError") return true;
+  return isTimeoutError((error as { cause?: unknown }).cause);
 }
 
 function retryable(error: unknown): boolean {

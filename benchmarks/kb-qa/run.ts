@@ -108,7 +108,11 @@ async function runLiveCli(): Promise<void> {
       ledgerPath,
     });
     secret = live.apiKey;
-    const report = await runLiveBenchmark(live);
+    const report = await runLiveBenchmark({
+      ...live,
+      reportPath: out,
+      handleSignals: true,
+    });
     const json = `${JSON.stringify(report, null, 2)}\n`;
     if (secret && json.includes(secret))
       throw new LiveGateError("Refusing to write a report that contains a credential.");

@@ -20,13 +20,18 @@ import {
   PREDICT_MAX_OUTPUT_TOKENS,
   PROPOSE_MAX_OUTPUT_TOKENS,
   SMOKE_ROWS,
+  TokenMinuteWindow,
+  createInterruptHandler,
   estimateFromEnv,
+  formatProgress,
   liveCostMicroUsd,
   liveOptionsFromEnv,
   planLiveRun,
+  projectedWallMs,
   redactSecrets,
   renderEstimate,
   runLiveBenchmark,
+  startProgressTicker,
   type LivePrices,
 } from "../benchmarks/kb-qa/live.js";
 
@@ -643,6 +648,8 @@ test("pacing and HTTP 429 retries stay on the fake server", async () => {
     [LIVE_ENV.max429Retries, "NaN"],
     [LIVE_ENV.maxRetryWait, "0"],
     [LIVE_ENV.maxRetryWait, "-5"],
+    [LIVE_ENV.requestTimeout, "0"],
+    [LIVE_ENV.maxTotalWait, "0"],
   ] as const)
     assert.throws(
       () => liveOptionsFromEnv(scrubbed({ ...readyEnv(), [name]: value }), blankArgs()),
@@ -828,6 +835,173 @@ test("both retry headers prefer retry-after-ms and the retry is metered", async 
   } finally {
     await server.close();
   }
+});
+
+test("request timeout is retried, and the wait watchdog stops the run", async () => {
+  let hung = 0;
+  const fetchTimeout: typeof fetch = async (_url, init) => {
+    hung += 1;
+    await new Promise<void>((_resolve, reject) => {
+      const signal = init?.signal;
+      const fail = () =>
+        reject(Object.assign(new Error("The operation was aborted."), { name: "AbortError" }));
+      if (!signal) {
+        fail();
+        return;
+      }
+      if (signal.aborted) fail();
+      else signal.addEventListener("abort", fail, { once: true });
+    });
+    throw new Error("timed out request continued");
+  };
+  const report = await runLiveBenchmark({
+    ...liveShape(
+      { requests: [], fetch: fetchTimeout, close: async () => undefined },
+      await tempLedger(),
+    ),
+    prices: pricesOf(1, 1, 0),
+    totalCapUsd: 50,
+    invocationCapUsd: 50,
+    warnUsd: 40,
+    rowLimit: 1,
+    seeds: [1],
+    requestTimeoutMs: 40,
+  });
+  assert.equal(hung, 2);
+  assert.equal(report.attempts, 2);
+  assert.equal(report.liveCalls, 0);
+  assert.equal(report.passed, false);
+  assert.match(report.stopped?.message ?? "", /timed out|Timeout/i);
+
+  const clock = fakeClock();
+  let limited = 0;
+  const waiting = await fakeServer(async () => {
+    limited += 1;
+    return {
+      status: 429,
+      text: "{}",
+      headers: { "retry-after-ms": "2000" },
+    };
+  });
+  try {
+    const report = await runLiveBenchmark({
+      ...liveShape(waiting, await tempLedger()),
+      prices: pricesOf(1, 1, 0),
+      totalCapUsd: 50,
+      invocationCapUsd: 50,
+      warnUsd: 40,
+      rowLimit: 1,
+      seeds: [1],
+      max429Retries: 5,
+      maxRetryWaitMs: 60_000,
+      maxTotalWaitMs: 3_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      random: clock.random,
+    });
+    assert.equal(limited, 2);
+    assert.deepEqual(clock.sleeps, [2_000]);
+    assert.equal(report.stopped?.reason, "wait_limit");
+    assert.match(report.stopped?.message ?? "", /LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS/);
+    assert.equal(report.passed, false);
+  } finally {
+    await waiting.close();
+  }
+});
+
+test("pace reservation settles to actual tokens", async () => {
+  const clock = fakeClock();
+  const window = new TokenMinuteWindow(100, clock.now, clock.sleep);
+  const first = await window.acquire(80);
+  assert.equal(first.waited, 0);
+  window.settle(first.id, 30);
+  assert.equal(window.reservedTokens(), 30);
+  const second = await window.acquire(60);
+  assert.equal(second.waited, 0);
+  assert.equal(clock.sleeps.length, 0);
+  window.settle(second.id, 90);
+  assert.equal(window.reservedTokens(), 120);
+  const third = await window.acquire(1);
+  assert.equal(third.waited, 60_000);
+  assert.equal(clock.sleeps[0], 60_000);
+});
+
+test("progress ticker prints while waiting, and SIGINT writes a partial report", async () => {
+  const lines: string[] = [];
+  const ticker = startProgressTicker(20, () => {
+    lines.push(formatProgress({ calls: 4, spendUsd: "0.25", state: "waiting on retry" }));
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.match(lines[0] ?? "", /progress calls=4 spend=0.25 USD state=waiting on retry/);
+  } finally {
+    ticker.stop();
+  }
+
+  const directory = await mkdtemp(join(tmpdir(), "kb-qa-interrupt-"));
+  const ledgerPath = join(directory, "ledger.json");
+  const reportPath = join(directory, "report.json");
+  const prices = pricesOf(1, 2, 0);
+  const ledger = await LiveLedger.open(ledgerPath, {
+    totalMicroUsd: 1_000_000,
+    invocationMicroUsd: 1_000_000,
+    warnMicroUsd: 1_000_000,
+  }, prices);
+  await ledger.beginAttempt({ input: 10, output: 4, cached: 0 });
+  const exits: number[] = [];
+  let finished!: () => void;
+  const done = new Promise<void>((resolve) => {
+    finished = resolve;
+  });
+  const handler = createInterruptHandler({
+    ledger,
+    reportPath,
+    secrets: [KEY],
+    exit: (code) => {
+      exits.push(code);
+      finished();
+    },
+  });
+  handler("SIGINT");
+  await done;
+  assert.deepEqual(exits, [130]);
+  const report = JSON.parse(await readFile(reportPath, "utf8")) as {
+    status: string;
+    interrupted: boolean;
+    stopped: { reason: string };
+    spend: { attempts: number };
+  };
+  assert.equal(report.status, "partial");
+  assert.equal(report.interrupted, true);
+  assert.equal(report.stopped.reason, "interrupted");
+  assert.equal(report.spend.attempts, 1);
+  const stored = JSON.parse(await readFile(ledgerPath, "utf8")) as { attempts: number };
+  assert.equal(stored.attempts, 1);
+  assert.equal(JSON.stringify(report).includes(KEY), false);
+});
+
+test("estimate wall time uses the realistic pace, not the spend ceiling", () => {
+  const env = scrubbed({
+    [LIVE_ENV.priceInput]: "0.75",
+    [LIVE_ENV.priceOutput]: "4.5",
+    [LIVE_ENV.maxTpm]: "50000",
+  });
+  const text = estimateFromEnv(env);
+  const smoke = planLiveRun({
+    label: "smoke",
+    seeds: [1],
+    rowLimit: SMOKE_ROWS,
+  });
+  const realistic = smoke.inputTokens + smoke.outputTokens;
+  const ceiling = smoke.ceilingInputTokens + smoke.outputTokens;
+  assert.ok(realistic < ceiling);
+  const minutes = (projectedWallMs(smoke.calls, 50_000) / 60_000).toFixed(2);
+  assert.match(text, new RegExp(`pace tokens: ${realistic}`));
+  assert.match(text, new RegExp(`projected wall minutes: ${minutes}`));
+  assert.match(estimateFromEnv(scrubbed({
+    [LIVE_ENV.priceInput]: "0.75",
+    [LIVE_ENV.priceOutput]: "4.5",
+  })), /projected wall minutes: pacing off/);
 });
 
 function fakeClock() {
