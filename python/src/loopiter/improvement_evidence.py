@@ -369,3 +369,27 @@ def minimum_certifiable_audit_units(objective, gain=None):
         if n > 100_000_000:
             v.fail("invalid_policy", "Audit size needed to certify this gain is not usable.")
     return n
+
+
+def describe_audit_floor(objective):
+    """Explain that minimum_improvement is a floor, and size a few gains above it."""
+    floor = minimum_certifiable_audit_units(objective)
+    samples = []
+    for gain in (0.05, 0.1, 0.2):
+        label = f"{gain:.2f}"
+        try:
+            units = minimum_certifiable_audit_units(objective, gain)
+        except v.LoopiterError:
+            samples.append(
+                f"a gain of {label} does not exceed the minimum improvement, "
+                "so no sample size can certify it"
+            )
+        else:
+            samples.append(f"a gain of {label} needs {units} units")
+    minimum = objective["minimum_improvement"]
+    alpha = objective["alpha"]
+    return (
+        f"minimumImprovement {minimum} is the lower bound a certified gain must clear, "
+        f"not a gain {floor} units can certify. At least {floor} units are required before "
+        f"even a full-range effect can pass. At alpha {alpha}, {'; '.join(samples)}."
+    )

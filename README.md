@@ -50,11 +50,12 @@ and recovery. A fresh plan is schemaVersion 2 (`autonomous-default`): mode
 `autonomous` and self-improving on, and it still starts incomplete. `doctor`
 checks declared configuration; `verify` tests isolated simulated SDK mechanics.
 Your agent must still verify the real application. After both succeed, the
-emitted worker recipe is `--enable --mode autonomous`. `--enable` authorizes
-improvement work and provider spending inside the existing gates; it does not
-bypass audit, budgets, or rollback. `--mode recommend` stores proposals and
-does not apply. Omitting `--mode` on the worker, or constructing
-`ImprovementController` without a mode, still selects recommend. Existing
+emitted worker recipe is `--enable` without `--mode`, so `plan.mode` controls
+that command. `--enable` authorizes improvement work and provider spending
+inside the existing gates; it does not bypass audit, budgets, or rollback.
+`--mode recommend` stores proposals and does not apply. Omitting `--mode`
+follows `plan.mode`. Constructing `ImprovementController` without a mode still
+selects recommend. Existing
 schemaVersion 1 plans are left unchanged. No platform login or Loopiter project
 key is involved; you pay your own model/judge, database and hosting providers.
 

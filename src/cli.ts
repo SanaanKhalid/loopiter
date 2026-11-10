@@ -16,7 +16,6 @@ import {
   autonomousActivationCurrent,
   parseStepTimeout,
   readWorkerSettings,
-  recordAutonomousActivation,
   referenceFiles,
   runSelfHostedWorker,
   verifySelfHostedInstallation,
@@ -139,7 +138,8 @@ async function main() {
     const granted =
       args.includes("--yes") || args.includes("--confirm-activation");
     const alreadyConfirmed =
-      settings.mode === "autonomous" && autonomousActivationCurrent(module);
+      settings.mode === "autonomous" &&
+      autonomousActivationCurrent(module, settings.mode);
     if (args.includes("--enable") && settings.mode === "autonomous" && !alreadyConfirmed) {
       if (!granted) {
         if (!process.stdin.isTTY)
@@ -161,12 +161,6 @@ async function main() {
         }
       }
     }
-    if (
-      args.includes("--enable") &&
-      settings.mode === "autonomous" &&
-      (granted || !alreadyConfirmed)
-    )
-      recordAutonomousActivation(module);
     const shutdown = new AbortController();
     const stop = () => shutdown.abort();
     process.once("SIGINT", stop);
@@ -181,6 +175,10 @@ async function main() {
         selfImproving: args.includes("--enable"),
         once: args.includes("--once"),
         intervalMs: Number(flag("interval-ms") ?? 30000),
+        recordActivation:
+          args.includes("--enable") &&
+          settings.mode === "autonomous" &&
+          (granted || !alreadyConfirmed),
         signal: shutdown.signal,
         onTick: (result) => console.log(JSON.stringify(result)),
       });

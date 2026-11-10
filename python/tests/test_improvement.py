@@ -635,8 +635,11 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(LoopiterError):
             self.controller(step_timeout_ms=3_600_001)
 
+        audit_calls = {"n": 0}
+
         async def evaluate(data, context):
             if data["partition"] == "audit":
+                audit_calls["n"] += 1
                 try:
                     await asyncio.wait_for(context.cancellation.wait(), 2)
                 except TimeoutError:
@@ -660,7 +663,25 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reason"], "timed_out")
         run = await controller.get_run(result["run_id"])
         coordination = (await self.loop.list("coordination", limit=1000))["items"]
-        self.assertFalse(any(row["id"].startswith("audit:") for row in coordination))
+        self.assertTrue(any(row["id"].startswith("audit:") for row in coordination))
+        sent = audit_calls["n"]
+        self.data["version"] = "export-reuse"
+        self.data["optimization"] = [
+            {
+                **row,
+                "id": f"reuse-{row['id']}",
+                "episode_id": f"reuse-{row['episode_id']}",
+                "entity_id": f"reuse-{row['entity_id']}",
+            }
+            for row in self.data["optimization"]
+        ]
+        reused = await controller.tick("classification")
+        for _ in range(8):
+            if reused["reason"] == "audit_consumed":
+                break
+            reused = await controller.tick("classification")
+        self.assertEqual(reused["reason"], "audit_consumed")
+        self.assertEqual(audit_calls["n"], sent)
         target = next(row for row in coordination if row["id"].startswith("target:"))
         self.assertEqual(target["data"].get("consecutive_failures", 0), 0)
         self.assertEqual(target["data"]["consecutive_timeouts"], 1)
@@ -686,6 +707,15 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
                 }
                 for row in self.data["optimization"]
             ]
+            self.data["audit"] = [
+                {
+                    **row,
+                    "id": f"{cycle}-{row['id']}",
+                    "episode_id": f"{cycle}-{row['episode_id']}",
+                    "entity_id": f"{cycle}-{row['entity_id']}",
+                }
+                for row in self.data["audit"]
+            ]
             result = await controller.tick("classification")
             for _ in range(5):
                 if result["state"] == "timed_out":
@@ -701,6 +731,15 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
                 "entity_id": f"4-{row['entity_id']}",
             }
             for row in self.data["optimization"]
+        ]
+        self.data["audit"] = [
+            {
+                **row,
+                "id": f"4-{row['id']}",
+                "episode_id": f"4-{row['episode_id']}",
+                "entity_id": f"4-{row['entity_id']}",
+            }
+            for row in self.data["audit"]
         ]
         self.assertEqual(
             (await controller.tick("classification"))["reason"],

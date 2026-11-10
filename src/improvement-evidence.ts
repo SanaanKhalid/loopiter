@@ -458,3 +458,22 @@ export function minimumCertifiableAuditUnits(
   }
   return n;
 }
+
+/** `minimumImprovement` is the bound a gain must clear. The no-gain size is the full-range floor, not that gain. */
+export function describeAuditFloor(objective: {
+  minimumImprovement: number;
+  range: readonly [number, number];
+  alpha: number;
+}): string {
+  const floor = minimumCertifiableAuditUnits(objective);
+  const samples = [0.05, 0.1, 0.2].map((gain) => {
+    const label = gain.toFixed(2);
+    try {
+      const units = minimumCertifiableAuditUnits(objective, gain);
+      return `a gain of ${label} needs ${units} units`;
+    } catch {
+      return `a gain of ${label} does not exceed the minimum improvement, so no sample size can certify it`;
+    }
+  });
+  return `minimumImprovement ${objective.minimumImprovement} is the lower bound a certified gain must clear, not a gain ${floor} units can certify. At least ${floor} units are required before even a full-range effect can pass. At alpha ${objective.alpha}, ${samples.join("; ")}.`;
+}

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import FeedbackLoop, ImprovementController
 from ._validation import fingerprint
-from .improvement_evidence import minimum_certifiable_audit_units
+from .improvement_evidence import describe_audit_floor, minimum_certifiable_audit_units
 
 REFERENCES = {
     "workflows": "autonomous_workflows.py",
@@ -127,15 +127,34 @@ def activation_actor(environment=None):
     return "unknown"
 
 
-def autonomy_plan_hash(plan):
+def effective_namespace(plan, environment=None):
+    """LOOPITER_NAMESPACE when set, otherwise the plan namespace."""
+    environment = os.environ if environment is None else environment
+    provided = str(environment.get("LOOPITER_NAMESPACE", "")).strip()
+    if provided:
+        return provided
+    plan = plan or {}
+    namespace = plan.get("namespace")
+    return namespace if isinstance(namespace, str) else ""
+
+
+def autonomy_plan_hash(plan, mode=None, environment=None):
     plan = plan or {}
     step = plan["stepTimeoutMs"] if "stepTimeoutMs" in plan else 120000
+    resolved_mode = (
+        mode
+        if isinstance(mode, str)
+        else plan.get("mode")
+        if isinstance(plan.get("mode"), str)
+        else "recommend"
+    )
+    # --step-timeout-ms is intentionally absent; the plan's stepTimeoutMs is included.
     return fingerprint(
         {
             "schemaVersion": plan.get("schemaVersion"),
-            "mode": plan.get("mode") if isinstance(plan.get("mode"), str) else "recommend",
+            "mode": resolved_mode,
             "selfImproving": plan.get("selfImproving") is True,
-            "namespace": plan.get("namespace") if isinstance(plan.get("namespace"), str) else "",
+            "namespace": effective_namespace(plan, environment),
             "stepTimeoutMs": step if type(step) is int else None,
             "audit": plan.get("audit"),
             "policy": plan.get("policy"),
@@ -160,18 +179,26 @@ def _activation_entries(module_path):
         return {}
 
 
-def autonomous_activation_current(module_path):
+def autonomous_activation_current(module_path, mode=None):
     plan = _load_plan(module_path)
     if plan is None:
         return False
-    namespace = plan.get("namespace") if isinstance(plan.get("namespace"), str) else ""
+    effective_mode = (
+        mode
+        if isinstance(mode, str)
+        else plan.get("mode")
+        if isinstance(plan.get("mode"), str)
+        else "recommend"
+    )
+    namespace = effective_namespace(plan)
     stamp = _activation_entries(module_path).get(namespace)
     if not isinstance(stamp, dict):
         return False
     confirmed_by = stamp.get("confirmedBy")
     confirmed_at = stamp.get("confirmedAt")
     return (
-        stamp.get("planHash") == autonomy_plan_hash(plan)
+        stamp.get("mode") == effective_mode
+        and stamp.get("planHash") == autonomy_plan_hash(plan, effective_mode)
         and isinstance(confirmed_by, str)
         and confirmed_by.strip()
         and isinstance(confirmed_at, str)
@@ -179,12 +206,20 @@ def autonomous_activation_current(module_path):
     )
 
 
-def record_autonomous_activation(module_path, actor=None):
+def record_autonomous_activation(module_path, actor=None, mode=None):
     plan = _load_plan(module_path) or {}
-    namespace = plan.get("namespace") if isinstance(plan.get("namespace"), str) else ""
+    effective_mode = (
+        mode
+        if isinstance(mode, str)
+        else plan.get("mode")
+        if isinstance(plan.get("mode"), str)
+        else "recommend"
+    )
+    namespace = effective_namespace(plan)
     entries = _activation_entries(module_path)
     entries[namespace] = {
-        "planHash": autonomy_plan_hash(plan),
+        "planHash": autonomy_plan_hash(plan, effective_mode),
+        "mode": effective_mode,
         "confirmedBy": (actor or activation_actor()).strip() or "unknown",
         "confirmedAt": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
     }
@@ -204,13 +239,12 @@ def _audit_plan_messages(plan):
     if audit is None:
         if plan.get("mode") != "autonomous":
             return {}
-        needed = minimum_certifiable_audit_units(
-            {"minimum_improvement": 0.05, "range": [0, 1], "alpha": 0.05}
-        )
         return {
             "error": (
-                "Declare audit sizing. With minimum improvement 0.05, range 0 to 1 and "
-                f"alpha 0.05, the paired bound needs at least {needed} units."
+                "Declare audit sizing. "
+                + describe_audit_floor(
+                    {"minimum_improvement": 0.05, "range": [0, 1], "alpha": 0.05}
+                )
             )
         }
     if type(audit) is not dict:
@@ -234,9 +268,12 @@ def _audit_plan_messages(plan):
         raise ValueError(str(error) or "Invalid audit objective.") from error
     if units >= needed:
         return {}
-    message = (
-        f"Audit of {units} units cannot certify a gain of {objective['minimum_improvement']} "
-        f"at alpha {objective['alpha']}. At least {needed} units are required."
+    message = f"Audit of {units} units is too small for this objective. " + describe_audit_floor(
+        {
+            "minimum_improvement": objective["minimum_improvement"],
+            "range": objective["range"],
+            "alpha": objective["alpha"],
+        }
     )
     return {"error": message} if plan.get("mode") == "autonomous" else {"warning": message}
 
@@ -331,9 +368,9 @@ This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and
 
 After doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
 
-On a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it and when. The stamp is a consent record, not a security boundary: it is not signed and it is not bound to a machine. Its hash covers mode, self-improving, namespace, step timeout, audit sizing, and the plan's policy and budget. A later run reuses the stamp. A new namespace or a change to those settings asks again. The flag does not bypass audit, budget, or rollback gates. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
+On a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it and when. The stamp is a consent record, not a security boundary: it is not signed and it is not bound to a machine. Its hash covers the effective mode, self-improving, the effective namespace (LOOPITER_NAMESPACE when set, otherwise the plan namespace), the plan step timeout, audit sizing, and the plan's policy and budget. A one-off --step-timeout-ms is not part of the hash. The stamp records the effective mode that ran. A later run reuses the stamp. A new namespace or a change to those settings asks again. The flag does not bypass audit, budget, or rollback gates. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
 
-    python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --mode autonomous --once
+    python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --once
 
 --enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.
 
@@ -341,7 +378,7 @@ On a terminal the worker asks you to type activate. When stdin is not a terminal
 
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --mode recommend --once
 
-Omitting --mode uses plan.mode. The --mode flag overrides the plan. Set plan.mode to recommend to turn off autonomous. Constructing ImprovementController without a mode stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.
+The recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. Constructing ImprovementController without a mode stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.
 
 One tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your process manager. A worker does not remain running after its process exits.
 
@@ -478,6 +515,7 @@ async def run_self_hosted_worker(
     interval_ms=30000,
     cancellation=None,
     on_tick=None,
+    record_activation=False,
 ):
     if self_improving is not True:
         raise ValueError(
@@ -522,12 +560,14 @@ async def run_self_hosted_worker(
             if policy["minimum_audit_units"] >= needed:
                 continue
             message = (
-                f"Audit size {policy['minimum_audit_units']} cannot certify the configured gain "
-                f"at this confidence. At least {needed} units are required."
+                f"Audit size {policy['minimum_audit_units']} is too small for this objective. "
+                + describe_audit_floor(policy["objective"])
             )
             if settings["mode"] == "autonomous":
                 raise ValueError(message)
             print("warning: " + message, file=sys.stderr)
+        if record_activation:
+            record_autonomous_activation(module_path, mode=settings["mode"])
         controller = ImprovementController(
             integration["loop"],
             workflows=integration["workflows"],
@@ -629,7 +669,7 @@ def main(argv=None):
             )
             granted = bool(args.yes or args.confirm_activation)
             already = settings["mode"] == "autonomous" and autonomous_activation_current(
-                args.module
+                args.module, settings["mode"]
             )
             if args.enable and settings["mode"] == "autonomous" and not already and not granted:
                 if not sys.stdin.isatty():
@@ -645,8 +685,9 @@ def main(argv=None):
                 answer = input("Type activate to confirm: ")
                 if answer.strip() != "activate":
                     raise ValueError("Autonomous activation was not confirmed.")
-            if args.enable and settings["mode"] == "autonomous" and (granted or not already):
-                record_autonomous_activation(args.module)
+            record_activation = bool(
+                args.enable and settings["mode"] == "autonomous" and (granted or not already)
+            )
 
             async def run():
                 cancellation = asyncio.Event()
@@ -670,6 +711,7 @@ def main(argv=None):
                         interval_ms=args.interval_ms,
                         cancellation=cancellation,
                         on_tick=lambda result: print(json.dumps(result), flush=True),
+                        record_activation=record_activation,
                     )
                 finally:
                     for signum in installed:

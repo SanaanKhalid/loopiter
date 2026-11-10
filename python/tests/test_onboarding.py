@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import subprocess
 import sys
@@ -55,12 +56,19 @@ class OnboardingTests(unittest.TestCase):
                 },
             )
             readme = (destination / "README.md").read_text()
-            self.assertIn("--enable --mode autonomous --once", readme)
+            self.assertIn("--enable --once", readme)
             self.assertIn("--enable --mode recommend --once", readme)
+            recipe = next(
+                line.strip()
+                for line in readme.splitlines()
+                if "loopiter worker" in line and "--mode" not in line
+            )
+            self.assertIn("--enable --once", recipe)
+            self.assertNotIn("--mode", recipe)
             self.assertIn("--enable authorizes improvement work and provider spending", readme)
             self.assertIn("fails closed without an audit partition, a budget, or --enable", readme)
-            self.assertIn("Omitting --mode uses plan.mode", readme)
-            self.assertIn("The --mode flag overrides the plan", readme)
+            self.assertIn("The recipe above omits --mode, so plan.mode controls it", readme)
+            self.assertIn("The --mode flag still overrides the plan", readme)
             confirmation = (
                 "Before the first run with --enable --mode autonomous, stop and get explicit "
                 "confirmation from the human. That confirmation is one-time, for initial "
@@ -70,13 +78,8 @@ class OnboardingTests(unittest.TestCase):
             )
             self.assertIn(confirmation, readme)
             self.assertIn(confirmation, read_agent_guide())
-            self.assertLess(
-                readme.index(confirmation), readme.index("--enable --mode autonomous --once")
-            )
-            self.assertLess(
-                readme.index("--enable --mode autonomous --once"),
-                readme.index("--enable --mode recommend --once"),
-            )
+            self.assertLess(readme.index(confirmation), readme.index(recipe))
+            self.assertLess(readme.index(recipe), readme.index("--enable --mode recommend --once"))
             marker = destination / "user-owned.txt"
             marker.write_text("preserve me")
             with self.assertRaises(FileExistsError):
@@ -285,7 +288,12 @@ async def create_integration(*, cancellation):
             path.write_text(json.dumps(plan))
             blocked = inspect_self_hosted_setup(destination, {})
             self.assertFalse(blocked["configured"])
-            self.assertIn("At least 7 units are required", "\n".join(blocked["missing"]))
+            blocked_text = "\n".join(blocked["missing"])
+            self.assertIn("At least 7 units are required", blocked_text)
+            self.assertIn("not a gain 7 units can certify", blocked_text)
+            self.assertIn("a gain of 0.05 does not exceed", blocked_text)
+            self.assertIn("a gain of 0.10 needs 2397 units", blocked_text)
+            self.assertIn("a gain of 0.20 needs 267 units", blocked_text)
             plan["mode"] = "recommend"
             path.write_text(json.dumps(plan))
             warned = inspect_self_hosted_setup(destination, {})
@@ -313,6 +321,9 @@ async def create_integration(*, cancellation):
             guide = read_agent_guide()
             self.assertIn("stepTimeoutMs >= 1000", guide)
             self.assertIn("minimum_certifiable_audit_units", guide)
+            self.assertIn("not a gain that 7 units can certify", guide)
+            self.assertIn("A gain of 0.10 needs 2397 units", guide)
+            self.assertIn("a gain of 0.20 needs 267 units", guide)
             policy = json.loads((ROOT / "python/tests/fixtures/autonomy.json").read_text())[
                 "policy"
             ]
@@ -412,6 +423,52 @@ async def create_integration(*, cancellation):
             self.assertRegex(recorded["confirmedAt"], r"^\d{4}-\d{2}-\d{2}T")
             self.assertTrue(recorded["confirmedBy"].strip())
             self.assertEqual(len(recorded["planHash"]), 64)
+            self.assertEqual(recorded["mode"], "autonomous")
+            other_timeout = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                    "--step-timeout-ms",
+                    "60000",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(other_timeout.returncode, 0, other_timeout.stderr)
+            self.assertNotIn("one-time confirmation", other_timeout.stderr)
+            shifted = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+                env={**os.environ, "LOOPITER_NAMESPACE": "env/other"},
+            )
+            self.assertEqual(shifted.returncode, 1)
+            self.assertIn("one-time confirmation", shifted.stderr)
+            self.assertNotIn(
+                "env/other",
+                json.loads((Path(root) / ".state" / "activation.json").read_text())["entries"],
+            )
             plan_path = Path(root) / "integration-plan.json"
             stored = json.loads(plan_path.read_text())
             stored["budget"] = {"tokens": 1000}
@@ -479,6 +536,116 @@ async def create_integration(*, cancellation):
             )
             self.assertEqual(changed.returncode, 1)
             self.assertIn("one-time confirmation", changed.stderr)
+
+    def test_documented_recipe_follows_plan_mode_recommend(self):
+        with tempfile.TemporaryDirectory() as root:
+            destination = Path(root) / "setup"
+            initialize_self_hosted(destination)
+            readme = (destination / "README.md").read_text()
+            recipe = next(
+                line.strip()
+                for line in readme.splitlines()
+                if "loopiter worker" in line and "--mode" not in line
+            )
+            self.assertIn("--enable --once", recipe)
+            self.assertNotIn("--mode", recipe)
+            plan_path = destination / "integration-plan.json"
+            plan = json.loads(plan_path.read_text())
+            plan["mode"] = "recommend"
+            plan["namespace"] = "app/dev"
+            plan_path.write_text(json.dumps(plan))
+            module = destination / "application.py"
+            module.write_text("raise RuntimeError('unused')\n")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                ],
+                cwd=destination,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertIn("effective mode recommend (source: plan)", result.stderr)
+            self.assertNotIn("effective mode autonomous", result.stderr)
+
+    def test_failed_preflight_does_not_record_confirmation(self):
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            module = root_path / "application.py"
+            (root_path / "integration-plan.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 2,
+                        "language": "python",
+                        "mode": "autonomous",
+                        "selfImproving": True,
+                        "namespace": "app/dev",
+                        "stepTimeoutMs": 120000,
+                        "audit": {
+                            "method": "paired-hoeffding",
+                            "minimumImprovement": 0.05,
+                            "range": [0, 1],
+                            "alpha": 0.05,
+                            "minimumUnits": 50,
+                        },
+                    }
+                )
+            )
+            module.write_text(
+                "import os\n"
+                "from loopiter import FeedbackLoop, InMemoryStore\n"
+                "async def create_integration(*, cancellation):\n"
+                "    if not os.environ.get('DATABASE_URL'):\n"
+                "        raise RuntimeError('DATABASE_URL is required.')\n"
+                "    if os.environ['DATABASE_URL'] != 'postgres://reachable':\n"
+                "        raise RuntimeError('registry unreachable')\n"
+                "    loop = FeedbackLoop(store=InMemoryStore(), namespace='app/dev')\n"
+                "    return {'loop': loop, 'workflows': [], 'close': loop.close}\n"
+            )
+
+            base_env = {key: value for key, value in os.environ.items() if key != "DATABASE_URL"}
+
+            def run(env):
+                return subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "loopiter",
+                        "worker",
+                        "--module",
+                        str(module),
+                        "--enable",
+                        "--confirm-activation",
+                        "--once",
+                    ],
+                    cwd=root,
+                    input="",
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env={**base_env, **env},
+                )
+
+            missing = run({})
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("DATABASE_URL is required", missing.stderr)
+            self.assertFalse((root_path / ".state" / "activation.json").exists())
+            unreachable = run({"DATABASE_URL": "postgres://down"})
+            self.assertNotEqual(unreachable.returncode, 0)
+            self.assertIn("registry unreachable", unreachable.stderr)
+            self.assertFalse((root_path / ".state" / "activation.json").exists())
+            ready = run({"DATABASE_URL": "postgres://reachable"})
+            self.assertNotEqual(ready.returncode, 0, ready.stderr)
+            stamp = json.loads((root_path / ".state" / "activation.json").read_text())
+            self.assertEqual(stamp["entries"]["app/dev"]["mode"], "autonomous")
 
     def test_step_timeout_rejects_non_decimal_integers(self):
         with tempfile.TemporaryDirectory() as root:

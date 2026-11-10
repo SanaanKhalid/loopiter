@@ -592,11 +592,11 @@ class ImprovementController:
         await self._retire_undecided(saved["data"]["candidate_ids"], "timed_out")
         return True
 
-    async def _consume_audit(self, run, owner):
+    async def _consume_audit(self, run, owner, rows=None):
         rid = run["id"]
         async with self._tx() as tx:
             await self._owned(tx, rid, owner)
-            for row in run["data"]["dataset"]["audit"]:
+            for row in run["data"]["dataset"]["audit"] if rows is None else rows:
                 for identity in (
                     "id:" + row["id"],
                     "episode:" + row["episode_id"],
@@ -1022,6 +1022,9 @@ class ImprovementController:
         elif d["state"] == "selected":
             cid = d["selected_id"]
             candidate = await self.loop.get_candidate(cid)
+            audit_rows = deepcopy(d["dataset"]["audit"])
+            # Reserve before the model sees the rows. A timeout must not free them for a later run.
+            await self._consume_audit(run, owner, audit_rows)
             audit = await self._operation(
                 run,
                 owner,
@@ -1030,14 +1033,12 @@ class ImprovementController:
                     {
                         "baseline": deepcopy(d["baseline"]),
                         "change": candidate["proposed_change"],
-                        "examples": deepcopy(d["dataset"]["audit"]),
+                        "examples": audit_rows,
                         "partition": "audit",
                     },
                     c,
                 ),
             )
-            # Consume only after a finished audit. A timeout leaves the rows available.
-            await self._consume_audit(run, owner)
             gates = compare(audit, d["dataset"]["audit"], p, True)
             audit_metrics = {
                 **audit["metrics"],

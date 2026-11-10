@@ -825,7 +825,7 @@ test("batch configuration is pinned and invalid batch sizes are rejected", () =>
   x.workflow.evaluationBatchSize = 33;
   assert.throws(() => x.controller(), { code: "invalid_input" });
 });
-test("step timeout can be raised and a pure timeout does not consume audit or failure strikes", async () => {
+test("step timeout can be raised and a timed-out audit is not reused", async () => {
   const objective = {
     minimumImprovement: 0.05,
     range: [0, 1] as [number, number],
@@ -883,8 +883,10 @@ test("step timeout can be raised and a pure timeout does not consume audit or fa
     code: "invalid_input",
   });
   const original = x.workflow.evaluate;
+  let auditCalls = 0;
   x.workflow.evaluate = async (input, context) => {
-    if (input.partition === "audit")
+    if (input.partition === "audit") {
+      auditCalls += 1;
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 1000);
         context.signal.addEventListener("abort", () => {
@@ -892,6 +894,7 @@ test("step timeout can be raised and a pure timeout does not consume audit or fa
           resolve();
         });
       });
+    }
     return original(input, context);
   };
   const controller = x.controller({ callbackTimeoutMs: 40 });
@@ -904,8 +907,21 @@ test("step timeout can be raised and a pure timeout does not consume audit or fa
   const coordination = await x.loop.list("coordination", { limit: 1000 });
   assert.equal(
     coordination.items.some((row) => row.id.startsWith("audit:")),
-    false,
+    true,
   );
+  const sent = auditCalls;
+  x.data.version = "export-reuse";
+  x.data.optimization = x.data.optimization.map((row) => ({
+    ...row,
+    id: `reuse-${row.id}`,
+    episodeId: `reuse-${row.episodeId}`,
+    entityId: `reuse-${row.entityId}`,
+  }));
+  let reused = await controller.tick("classification");
+  for (let i = 0; i < 8 && reused.reason !== "audit_consumed"; i++)
+    reused = await controller.tick("classification");
+  assert.equal(reused.reason, "audit_consumed");
+  assert.equal(auditCalls, sent);
   const target = coordination.items.find((row) => row.id.startsWith("target:"));
   assert.equal(target?.data.consecutiveFailures ?? 0, 0);
   assert.equal(target?.data.consecutiveTimeouts, 1);
@@ -928,6 +944,12 @@ test("step timeout can be raised and a pure timeout does not consume audit or fa
       episodeId: `${cycle}-${row.episodeId}`,
       entityId: `${cycle}-${row.entityId}`,
     }));
+    x.data.audit = x.data.audit.map((row) => ({
+      ...row,
+      id: `${cycle}-${row.id}`,
+      episodeId: `${cycle}-${row.episodeId}`,
+      entityId: `${cycle}-${row.entityId}`,
+    }));
     result = await controller.tick("classification");
     for (let i = 0; i < 5 && result.state !== "timed_out"; i++)
       result = await controller.tick("classification");
@@ -935,6 +957,12 @@ test("step timeout can be raised and a pure timeout does not consume audit or fa
   }
   x.data.version = "export-4";
   x.data.optimization = x.data.optimization.map((row) => ({
+    ...row,
+    id: `4-${row.id}`,
+    episodeId: `4-${row.episodeId}`,
+    entityId: `4-${row.entityId}`,
+  }));
+  x.data.audit = x.data.audit.map((row) => ({
     ...row,
     id: `4-${row.id}`,
     episodeId: `4-${row.episodeId}`,

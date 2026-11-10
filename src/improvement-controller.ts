@@ -740,10 +740,14 @@ export class ImprovementController {
     await this.retireUndecided(saved.data.candidateIds, "timed_out");
     return true;
   }
-  private async consumeAudit(run: ImprovementRun, owner: string) {
+  private async consumeAudit(
+    run: ImprovementRun,
+    owner: string,
+    rows: ImprovementRun["data"]["dataset"]["audit"] = run.data.dataset.audit,
+  ) {
     await this.loop.store.transaction(this.loop.namespace, async (tx) => {
       await this.owned(tx, run.id, owner);
-      for (const row of run.data.dataset.audit) {
+      for (const row of rows) {
         for (const identity of [
           `id:${row.id}`,
           `episode:${row.episodeId}`,
@@ -1179,8 +1183,6 @@ export class ImprovementController {
             candidateIds: d.candidateIds,
             budget: await this.budget(w),
           };
-        // Consume only after a finished audit. A timeout leaves the rows available.
-        await this.consumeAudit(run, owner);
         const gates = compare(audit, d.dataset.audit, w.policy, true);
         const auditMetrics = {
           ...audit.metrics,
@@ -1712,7 +1714,8 @@ export class ImprovementController {
       examples: clone(run.data.dataset[partition]),
       partition,
     };
-    if (!w.evaluateBatch)
+    if (!w.evaluateBatch) {
+      if (partition === "audit") await this.consumeAudit(run, owner, input.examples);
       return this.operation(
         run,
         owner,
@@ -1720,10 +1723,13 @@ export class ImprovementController {
         (c) => w.evaluate(input, c),
         signal,
       );
+    }
     const batches = run.data.evaluationBatches?.[key] ?? [];
     const size = w.evaluationBatchSize ?? 4;
     const offset = batches.length * size;
     if (offset < input.examples.length) {
+      const slice = input.examples.slice(offset, offset + size);
+      if (partition === "audit") await this.consumeAudit(run, owner, slice);
       const result = await this.operation(
         run,
         owner,
@@ -1733,7 +1739,7 @@ export class ImprovementController {
             {
               ...input,
               offset,
-              examples: input.examples.slice(offset, offset + size),
+              examples: slice,
             },
             c,
           ),
@@ -1749,6 +1755,7 @@ export class ImprovementController {
       });
       return undefined;
     }
+    if (partition === "audit") await this.consumeAudit(run, owner, input.examples);
     return this.operation(
       run,
       owner,

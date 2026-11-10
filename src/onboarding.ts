@@ -12,7 +12,7 @@ import type {
   ImprovementWorkflow,
   TickResult,
 } from "./improvement-contracts.js";
-import { minimumCertifiableAuditUnits } from "./improvement-evidence.js";
+import { describeAuditFloor, minimumCertifiableAuditUnits } from "./improvement-evidence.js";
 import { hash } from "./utils.js";
 import { runDemo } from "../examples/autonomous/demo.js";
 
@@ -90,6 +90,7 @@ type ActivationStamp = {
   planHash: string;
   confirmedBy: string;
   confirmedAt: string;
+  mode: string;
 };
 
 function activationFile(modulePath: string): string {
@@ -108,15 +109,31 @@ export function activationActor(env: NodeJS.ProcessEnv = process.env): string {
   return "unknown";
 }
 
+/** LOOPITER_NAMESPACE when set, otherwise the plan namespace. A one-off flag is not a namespace. */
+export function effectiveNamespace(
+  plan: Record<string, unknown> | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const provided = env.LOOPITER_NAMESPACE?.trim();
+  if (provided) return provided;
+  return typeof plan?.namespace === "string" ? plan.namespace : "";
+}
+
 /** Hash of the plan fields that decide autonomous activation. The stamp is not included.
- * This is a consent record, not a signed or machine-bound check. */
-export function autonomyPlanHash(plan: Record<string, unknown> | undefined): string {
+ * This is a consent record, not a signed or machine-bound check.
+ * `--step-timeout-ms` is intentionally absent; the plan's stepTimeoutMs is included. */
+export function autonomyPlanHash(
+  plan: Record<string, unknown> | undefined,
+  effective: { namespace?: string; mode?: string } = {},
+): string {
   const step = plan && Object.hasOwn(plan, "stepTimeoutMs") ? plan.stepTimeoutMs : 120000;
+  const mode =
+    effective.mode ?? (typeof plan?.mode === "string" ? plan.mode : "recommend");
   return hash({
     schemaVersion: plan?.schemaVersion ?? null,
-    mode: typeof plan?.mode === "string" ? plan.mode : "recommend",
+    mode,
     selfImproving: plan?.selfImproving === true,
-    namespace: typeof plan?.namespace === "string" ? plan.namespace : "",
+    namespace: effective.namespace ?? effectiveNamespace(plan),
     stepTimeoutMs: typeof step === "number" ? step : null,
     audit: plan?.audit ?? null,
     policy: plan?.policy ?? null,
@@ -139,14 +156,19 @@ function readActivationEntries(modulePath: string): Record<string, ActivationSta
   }
 }
 
-export function autonomousActivationCurrent(modulePath: string): boolean {
+export function autonomousActivationCurrent(
+  modulePath: string,
+  mode?: ImprovementMode,
+): boolean {
   const plan = loadIntegrationPlan(modulePath);
   if (!plan) return false;
-  const namespace = typeof plan.namespace === "string" ? plan.namespace : "";
+  const effectiveMode = mode ?? (typeof plan.mode === "string" ? plan.mode : "recommend");
+  const namespace = effectiveNamespace(plan);
   const stamp = readActivationEntries(modulePath)[namespace];
   return (
     !!stamp &&
-    stamp.planHash === autonomyPlanHash(plan) &&
+    stamp.mode === effectiveMode &&
+    stamp.planHash === autonomyPlanHash(plan, { namespace, mode: effectiveMode }) &&
     typeof stamp.confirmedBy === "string" &&
     stamp.confirmedBy.trim().length > 0 &&
     typeof stamp.confirmedAt === "string" &&
@@ -157,12 +179,16 @@ export function autonomousActivationCurrent(modulePath: string): boolean {
 export function recordAutonomousActivation(
   modulePath: string,
   actor = activationActor(),
+  mode?: ImprovementMode,
 ): void {
   const plan = loadIntegrationPlan(modulePath);
-  const namespace = typeof plan?.namespace === "string" ? plan.namespace : "";
+  const effectiveMode =
+    mode ?? (typeof plan?.mode === "string" ? (plan.mode as ImprovementMode) : "recommend");
+  const namespace = effectiveNamespace(plan);
   const entries = readActivationEntries(modulePath);
   entries[namespace] = {
-    planHash: autonomyPlanHash(plan),
+    planHash: autonomyPlanHash(plan, { namespace, mode: effectiveMode }),
+    mode: effectiveMode,
     confirmedBy: actor.trim() || "unknown",
     confirmedAt: new Date().toISOString(),
   };
@@ -227,13 +253,12 @@ function auditPlanMessages(plan: Record<string, unknown>): {
   const audit = plan.audit;
   if (audit === undefined) {
     if (plan.mode !== "autonomous") return {};
-    const needed = minimumCertifiableAuditUnits({
-      minimumImprovement: 0.05,
-      range: [0, 1],
-      alpha: 0.05,
-    });
     return {
-      error: `Declare audit sizing. With minimum improvement 0.05, range 0 to 1 and alpha 0.05, the paired bound needs at least ${needed} units.`,
+      error: `Declare audit sizing. ${describeAuditFloor({
+        minimumImprovement: 0.05,
+        range: [0, 1],
+        alpha: 0.05,
+      })}`,
     };
   }
   if (!audit || typeof audit !== "object" || Array.isArray(audit))
@@ -274,7 +299,11 @@ function auditPlanMessages(plan: Record<string, unknown>): {
     );
   }
   if (row.minimumUnits >= needed) return {};
-  const message = `Audit of ${row.minimumUnits} units cannot certify a gain of ${row.minimumImprovement} at alpha ${row.alpha}. At least ${needed} units are required.`;
+  const message = `Audit of ${row.minimumUnits} units is too small for this objective. ${describeAuditFloor({
+    minimumImprovement: row.minimumImprovement,
+    range: [row.range[0], row.range[1]],
+    alpha: row.alpha,
+  })}`;
   return plan.mode === "autonomous" ? { error: message } : { warning: message };
 }
 const STATE_IGNORE_LINE = ".state/";
@@ -360,7 +389,7 @@ export async function initializeSelfHosted(directory: string) {
     "integration-plan.json": JSON.stringify(plan, null, 2) + "\n",
     "verify.mjs":
       'import { verifySelfHostedInstallation } from "loopiter/onboarding";\nconsole.log(JSON.stringify(await verifySelfHostedInstallation(), null, 2));\n',
-    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.\n\nOn a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it and when. The stamp is a consent record, not a security boundary: it is not signed and it is not bound to a machine. Its hash covers mode, self-improving, namespace, step timeout, audit sizing, and the plan's policy and budget. A later run reuses the stamp. A new namespace or a change to those settings asks again. The flag does not bypass audit, budget, or rollback gates. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode autonomous --once\n\n--enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode recommend --once\n\nOmitting --mode uses plan.mode. The --mode flag overrides the plan. Set plan.mode to recommend to turn off autonomous. Constructing ImprovementController without a mode stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
+    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.\n\nOn a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it and when. The stamp is a consent record, not a security boundary: it is not signed and it is not bound to a machine. Its hash covers the effective mode, self-improving, the effective namespace (LOOPITER_NAMESPACE when set, otherwise the plan namespace), the plan step timeout, audit sizing, and the plan's policy and budget. A one-off --step-timeout-ms is not part of the hash. The stamp records the effective mode that ran. A later run reuses the stamp. A new namespace or a change to those settings asks again. The flag does not bypass audit, budget, or rollback gates. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --once\n\n--enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode recommend --once\n\nThe recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. Constructing ImprovementController without a mode stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
   };
   for (const [name, contents] of Object.entries(files)) {
     await writeFile(resolve(destination, name), contents, {
@@ -503,6 +532,8 @@ export interface SelfHostedWorkerOptions {
   intervalMs?: number;
   signal?: AbortSignal;
   onTick?: (result: TickResult) => void;
+  /** Persist confirmation only after integration preflight succeeds. */
+  recordActivation?: boolean;
 }
 export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
   if (options.selfImproving !== true)
@@ -556,10 +587,12 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
       if (workflow.policy.auditMethod) continue;
       const needed = minimumCertifiableAuditUnits(workflow.policy.objective);
       if (workflow.policy.minimumAuditUnits >= needed) continue;
-      const message = `Audit size ${workflow.policy.minimumAuditUnits} cannot certify the configured gain at this confidence. At least ${needed} units are required.`;
+      const message = `Audit size ${workflow.policy.minimumAuditUnits} is too small for this objective. ${describeAuditFloor(workflow.policy.objective)}`;
       if (settings.mode === "autonomous") throw Error(message);
       console.error(`warning: ${message}`);
     }
+    if (options.recordActivation)
+      recordAutonomousActivation(options.module, activationActor(), settings.mode);
     const controller = new ImprovementController(integration.loop, {
       workflows: integration.workflows,
       mode: settings.mode,
