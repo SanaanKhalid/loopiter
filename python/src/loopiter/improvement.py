@@ -23,6 +23,10 @@ from .improvement_evidence import (
     validate_policy,
 )
 
+DEFAULT_STEP_MS = 120_000
+DEFAULT_TICK_MS = 600_000
+MAX_STEP_MS = 3_600_000
+MAX_TICK_MS = 3_660_000
 TERMINAL = {"completed", "no_improvement", "failed", "rolled_back"}
 STATES = (
     "waiting_for_evidence proposing evaluating selected deploying observing completed "
@@ -66,8 +70,8 @@ class ImprovementController:
         workflows,
         self_improving=False,
         mode="recommend",
-        callback_timeout_ms=120000,
-        tick_timeout_ms=600000,
+        callback_timeout_ms=None,
+        tick_timeout_ms=None,
         **obsolete,
     ):
         if obsolete:
@@ -78,10 +82,16 @@ class ImprovementController:
         if type(self_improving) is not bool:
             v.fail("invalid_input", "self_improving must be boolean.")
         v.enum(mode, ["observe", "recommend", "experiment", "autonomous"], "mode")
+        if callback_timeout_ms is None:
+            callback_timeout_ms = DEFAULT_STEP_MS
+        if tick_timeout_ms is None:
+            tick_timeout_ms = max(DEFAULT_TICK_MS, callback_timeout_ms + 1000)
         v.integer(callback_timeout_ms, "callback timeout")
         v.integer(tick_timeout_ms, "tick timeout")
-        if callback_timeout_ms > 120000 or tick_timeout_ms > 600000:
-            v.fail("invalid_input", "Deadlines may be shortened, not extended beyond 2/10 minutes.")
+        if callback_timeout_ms > MAX_STEP_MS or tick_timeout_ms > MAX_TICK_MS:
+            v.fail("invalid_input", "Step timeout cannot exceed 1 hour.")
+        if tick_timeout_ms < callback_timeout_ms:
+            v.fail("invalid_input", "Tick timeout must cover the step timeout.")
         self.loop, self.self_improving, self.mode = loop, self_improving, mode
         self.callback_ms, self.tick_ms = callback_timeout_ms, tick_timeout_ms
         self.workflows, self.definitions = {}, {}

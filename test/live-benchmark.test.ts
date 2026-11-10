@@ -17,10 +17,14 @@ import {
   FULL_SEEDS,
   LIVE_ENV,
   LiveLedger,
+  LiveSession,
+  MAX_ATTEMPTS,
   PREDICT_MAX_OUTPUT_TOKENS,
   PROPOSE_MAX_OUTPUT_TOKENS,
   SMOKE_ROWS,
   TokenMinuteWindow,
+  liveCallbackTimeoutMs,
+  maxModelCallsPerStep,
   createInterruptHandler,
   estimateFromEnv,
   formatProgress,
@@ -909,6 +913,146 @@ test("request timeout is retried, and the wait watchdog stops the run", async ()
   }
 });
 
+test("step deadline covers a retried evaluate call, and pace waits in one acquire share the cap", async () => {
+  const callsPerStep = maxModelCallsPerStep();
+  const requestTimeoutMs = 120_000;
+  const maxTotalWaitMs = 900_000;
+  const deadline = liveCallbackTimeoutMs({
+    callsPerStep,
+    requestTimeoutMs,
+    max429Retries: 6,
+    maxRetryWaitMs: 60_000,
+    maxTotalWaitMs,
+  });
+  assert.equal(callsPerStep, 2);
+  assert.ok(deadline >= callsPerStep * MAX_ATTEMPTS * requestTimeoutMs);
+  assert.ok(deadline > requestTimeoutMs);
+  assert.ok(deadline <= callsPerStep * MAX_ATTEMPTS * requestTimeoutMs + maxTotalWaitMs);
+
+  const clock = fakeClock();
+  const directory = await tempLedger();
+  const ledger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "ledger.json"),
+  );
+  let fetches = 0;
+  const session = new LiveSession(ledger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => {
+      fetches += 1;
+      const input_tokens = fetches === 1 ? 55 : 35;
+      return completedResponse({ label: "yes" }, { input_tokens, output_tokens: 5 });
+    },
+    maxTokensPerMinute: 100,
+    maxRetryWaitMs: 1_000,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 50_000,
+    now: clock.now,
+    sleep: clock.sleep,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  const meter = async <T>(
+    _maximum: number,
+    call: () => Promise<{ value: T; tokens: number | null }>,
+  ) => (await call()).value;
+  const signal = new AbortController().signal;
+  const ask = (bytes: number, output: number) =>
+    session.generate(
+      {
+        instructions: "label",
+        input: "{}",
+        name: "classification",
+        schema: { type: "object" },
+      },
+      "x".repeat(bytes),
+      output,
+      meter,
+      signal,
+    );
+  await ask(200, 10);
+  await clock.sleep(20_000);
+  await ask(120, 10);
+  await assert.rejects(ask(204, 10), /Cumulative wait reached/);
+  assert.equal(fetches, 2);
+  assert.equal(session.waitMs, 40_000);
+  assert.equal(session.waitLimitReached, true);
+  assert.deepEqual(clock.sleeps, [20_000, 40_000]);
+
+  let classification = 0;
+  let retriedWhileLive = false;
+  const retryFetch: typeof fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      text?: { format?: { name?: string } };
+      input?: string;
+    };
+    if (body.text?.format?.name === "classification") {
+      classification += 1;
+      if (classification === 2) {
+        await new Promise<void>((_resolve, reject) => {
+          const fail = () =>
+            reject(Object.assign(new Error("The operation was aborted."), { name: "AbortError" }));
+          if (!init?.signal || init.signal.aborted) fail();
+          else init.signal.addEventListener("abort", fail, { once: true });
+        });
+      }
+      if (classification === 3) retriedWhileLive = init?.signal?.aborted === false;
+    }
+    const inner = JSON.parse(body.input ?? "{}") as {
+      guidance?: string;
+      text?: string;
+      fragment?: string;
+      examples?: { question: string; label: string }[];
+    };
+    const payload =
+      body.text?.format?.name === "bounded_prompt_revision"
+        ? {
+            fragment: improveFragment(inner.fragment ?? baselineFragment(), inner.examples ?? []),
+          }
+        : {
+            label:
+              inner.guidance === baselineFragment() ? "incomplete" : gold(inner.text ?? ""),
+          };
+    return completedResponse(payload);
+  };
+  const report = await runLiveBenchmark({
+    ...liveShape(
+      { requests: [], fetch: retryFetch, close: async () => undefined },
+      await tempLedger(),
+    ),
+    prices: pricesOf(1, 1, 0),
+    totalCapUsd: 50,
+    invocationCapUsd: 50,
+    warnUsd: 40,
+    rowLimit: 1,
+    seeds: [1],
+    requestTimeoutMs: 40,
+    max429Retries: 1,
+    maxRetryWaitMs: 1_000,
+    maxTotalWaitMs: 5_000,
+  });
+  const expected = liveCallbackTimeoutMs({
+    callsPerStep,
+    requestTimeoutMs: 40,
+    max429Retries: 1,
+    maxRetryWaitMs: 1_000,
+    maxTotalWaitMs: 5_000,
+  });
+  assert.equal(report.pacing.callbackTimeoutMs, expected);
+  assert.equal(report.pacing.tickTimeoutMs, expected + 1_000);
+  assert.ok(report.pacing.callbackTimeoutMs > 40 * MAX_ATTEMPTS);
+  assert.equal(retriedWhileLive, true);
+  assert.ok(classification >= 3);
+  assert.equal((report.stopped?.message ?? "").includes("Callback deadline exceeded"), false);
+});
+
 test("pace reservation settles to actual tokens", async () => {
   const clock = fakeClock();
   const window = new TokenMinuteWindow(100, clock.now, clock.sleep);
@@ -1003,6 +1147,32 @@ test("estimate wall time uses the realistic pace, not the spend ceiling", () => 
     [LIVE_ENV.priceOutput]: "4.5",
   })), /projected wall minutes: pacing off/);
 });
+
+function completedResponse(
+  payload: { label?: string; fragment?: string },
+  usage = { input_tokens: 20, output_tokens: 5 },
+): Response {
+  return new Response(
+    JSON.stringify({
+      status: "completed",
+      model: "gpt-5.4-mini",
+      output: [
+        {
+          type: "message",
+          content: [{ type: "output_text", text: JSON.stringify(payload) }],
+        },
+      ],
+      usage: {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        total_tokens: usage.input_tokens + usage.output_tokens,
+        input_tokens_details: { cached_tokens: 0 },
+        output_tokens_details: { reasoning_tokens: 0 },
+      },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
 
 function fakeClock() {
   let now = 1_000;

@@ -65,6 +65,31 @@ export const FULL_SEEDS = [1, 2, 3, 4, 5] as const;
 export const LIVE_OUTPUT_DIR = "reports/kb-qa-live";
 export const EVAL_BATCH_SIZE = 1;
 export const OBSERVE_CHUNK = 2;
+const NON_RATE_RETRY_WAIT_MS = 200;
+
+/** Model calls inside one controller callback. evaluateBatch scores both arms; observe scores a chunk. */
+export function maxModelCallsPerStep(
+  batchSize = EVAL_BATCH_SIZE,
+  observeChunk = OBSERVE_CHUNK,
+): number {
+  return Math.max(1, batchSize * 2, observeChunk);
+}
+
+/** Step deadline covering every call's attempts plus retry and pace waits, bounded by the total-wait cap. */
+export function liveCallbackTimeoutMs(input: {
+  callsPerStep: number;
+  requestTimeoutMs: number;
+  max429Retries: number;
+  maxRetryWaitMs: number;
+  maxTotalWaitMs: number;
+}): number {
+  const requestBudget = input.callsPerStep * MAX_ATTEMPTS * input.requestTimeoutMs;
+  const perCallWaits =
+    NON_RATE_RETRY_WAIT_MS * Math.max(0, MAX_ATTEMPTS - 1) +
+    input.max429Retries * input.maxRetryWaitMs;
+  const waitBudget = Math.min(input.maxTotalWaitMs, input.callsPerStep * perCallWaits);
+  return requestBudget + waitBudget;
+}
 const CLOCK_START = "2026-04-15T12:00:00.000Z";
 const BOOTSTRAP_SAMPLES = 2000;
 const BOOTSTRAP_SEED = 17;
@@ -580,6 +605,8 @@ export interface LiveReport {
     maxTokensPerMinute: number;
     rateLimitResponses: number;
     waitMs: number;
+    callbackTimeoutMs: number;
+    tickTimeoutMs: number;
   };
   perSeed: LiveSeed[];
   arms: {
@@ -703,8 +730,11 @@ export class LiveSession {
   readonly limits: RequestLimits;
   readonly maxTokensPerMinute: number;
   readonly max429Retries: number;
+  readonly maxRetryWaitMs: number;
   readonly requestTimeoutMs: number;
   readonly maxTotalWaitMs: number;
+  readonly callbackTimeoutMs: number;
+  readonly tickTimeoutMs: number;
   activity = "running";
   lastError: string | null = null;
   rateLimitResponses = 0;
@@ -712,7 +742,6 @@ export class LiveSession {
   rateLimitExhausted = false;
   waitLimitReached = false;
   private warned = false;
-  private readonly maxRetryWaitMs: number;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly random: () => number;
@@ -745,9 +774,17 @@ export class LiveSession {
     };
     this.maxTokensPerMinute = options.maxTokensPerMinute;
     this.max429Retries = options.max429Retries;
+    this.maxRetryWaitMs = options.maxRetryWaitMs;
     this.requestTimeoutMs = options.requestTimeoutMs;
     this.maxTotalWaitMs = options.maxTotalWaitMs;
-    this.maxRetryWaitMs = options.maxRetryWaitMs;
+    this.callbackTimeoutMs = liveCallbackTimeoutMs({
+      callsPerStep: maxModelCallsPerStep(),
+      requestTimeoutMs: options.requestTimeoutMs,
+      max429Retries: options.max429Retries,
+      maxRetryWaitMs: options.maxRetryWaitMs,
+      maxTotalWaitMs: options.maxTotalWaitMs,
+    });
+    this.tickTimeoutMs = this.callbackTimeoutMs + 1000;
     this.now = options.now;
     this.sleep = options.sleep;
     this.random = options.random;
@@ -827,7 +864,7 @@ export class LiveSession {
           throw new Error(message);
         }
         otherRetries += 1;
-        const wait = 200 * otherRetries;
+        const wait = NON_RATE_RETRY_WAIT_MS * otherRetries;
         this.activity = "waiting on retry";
         this.guardWait(wait);
         this.waitMs += wait;
@@ -850,9 +887,11 @@ export class LiveSession {
       throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
     const reserved = projectedInputTokens(body) + maxOutput;
     this.activity = "waiting on pace";
-    const paced = await this.pacer.acquire(reserved, (ms) => this.guardWait(ms));
+    const paced = await this.pacer.acquire(reserved, (ms) => {
+      this.guardWait(ms);
+      this.waitMs += ms;
+    });
     this.activity = "running";
-    this.waitMs += paced.waited;
     const held = await this.ledger.beginAttempt(worst);
     const timeout = new AbortController();
     const timer = setTimeout(() => {
@@ -1056,6 +1095,8 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
     maxTokensPerMinute: session.maxTokensPerMinute,
     rateLimitResponses: session.rateLimitResponses,
     waitMs: session.waitMs,
+    callbackTimeoutMs: session.callbackTimeoutMs,
+    tickTimeoutMs: session.tickTimeoutMs,
   });
   assertNoSecrets(report, secrets);
   return report;
@@ -1672,7 +1713,7 @@ async function runCandidate(
     namespace: `benchmark/kb-qa/live/${seed}`,
     clock: () => clock.now,
     maximumPayloadBytes: 1_048_576,
-    callbackTimeoutMs: 120_000,
+    callbackTimeoutMs: session.callbackTimeoutMs,
   });
   const registry = new MemoryRegistry({ fragment: baselineFragment() });
   const baselineVersion = registry.version;
@@ -1842,8 +1883,8 @@ async function runCandidate(
       workflows: [batched],
       mode: "autonomous",
       selfImproving: true,
-      callbackTimeoutMs: 120_000,
-      tickTimeoutMs: 600_000,
+      callbackTimeoutMs: session.callbackTimeoutMs,
+      tickTimeoutMs: session.tickTimeoutMs,
     });
     let result: TickResult | undefined;
     let sawObserving = false;

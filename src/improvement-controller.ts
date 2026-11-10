@@ -92,14 +92,14 @@ export class ImprovementController {
     );
     this.options = { ...options };
     this.callbackMs = options.callbackTimeoutMs ?? 120000;
-    this.tickMs = options.tickTimeoutMs ?? 600000;
+    this.tickMs =
+      options.tickTimeoutMs ?? Math.max(600000, this.callbackMs + 1000);
     integer(this.callbackMs, "callbackTimeoutMs");
     integer(this.tickMs, "tickTimeoutMs");
-    if (this.callbackMs > 120000 || this.tickMs > 600000)
-      fail(
-        "invalid_input",
-        "Deadlines may be shortened, not extended beyond 2/10 minutes.",
-      );
+    if (this.callbackMs > 3_600_000 || this.tickMs > 3_660_000)
+      fail("invalid_input", "Step timeout cannot exceed 1 hour.");
+    if (this.tickMs < this.callbackMs)
+      fail("invalid_input", "Tick timeout must cover the step timeout.");
     if (!Array.isArray(options.workflows) || !options.workflows.length)
       fail("invalid_input", "Workflows required.");
     for (const raw of options.workflows) {

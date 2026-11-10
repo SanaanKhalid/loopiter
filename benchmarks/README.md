@@ -259,7 +259,12 @@ and return status `incomplete` with `incomplete_details.reason` of
 that reason. It does not include headers or the API key. Use `minimal` when
 the deployment accepts it, or raise the answer bound, if that happens. Each
 request is aborted after `LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS` (default 120).
-A timeout counts as a retryable attempt. Transport errors, timeouts, and HTTP
+A timeout counts as a retryable attempt. The controller step that runs
+`evaluateBatch` or `observe` is long enough for every model call in that step
+to use all of its attempts: calls × attempts × request timeout, plus the retry
+and pace waits those calls can spend. Those waits are bounded by the total-wait
+cap. The tick deadline covers that step, so a retry is not aborted when the
+first request times out. Transport errors, timeouts, and HTTP
 408, 409, 500, 502, 503, and 504 are retried once. HTTP 429 is retried up to
 `LOOPITER_BENCH_MAX_429_RETRIES` times. The wait uses `retry-after-ms` or
 `Retry-After` when the response has one, otherwise exponential backoff with
