@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import getpass
 import importlib
 import importlib.resources
 import importlib.util
@@ -11,9 +12,11 @@ import re
 import shlex
 import signal
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import FeedbackLoop, ImprovementController
+from ._validation import fingerprint
 from .improvement_evidence import minimum_certifiable_audit_units
 
 REFERENCES = {
@@ -107,6 +110,90 @@ def read_worker_settings(
         "step_timeout_ms": resolved_timeout,
         "step_timeout_source": resolved_timeout_source,
     }
+
+
+def activation_actor(environment=None):
+    environment = os.environ if environment is None else environment
+    provided = str(environment.get("LOOPITER_ACTIVATION_ACTOR", "")).strip()
+    if provided:
+        return provided
+    try:
+        name = getpass.getuser().strip()
+        if name:
+            return name
+    except Exception:
+        pass
+    return "unknown"
+
+
+def autonomy_plan_hash(plan):
+    plan = plan or {}
+    step = plan["stepTimeoutMs"] if "stepTimeoutMs" in plan else 120000
+    return fingerprint(
+        {
+            "schemaVersion": plan.get("schemaVersion"),
+            "mode": plan.get("mode") if isinstance(plan.get("mode"), str) else "recommend",
+            "selfImproving": plan.get("selfImproving") is True,
+            "namespace": plan.get("namespace") if isinstance(plan.get("namespace"), str) else "",
+            "stepTimeoutMs": step if type(step) is int else None,
+            "audit": plan.get("audit"),
+        }
+    )
+
+
+def _activation_path(module_path):
+    return Path(module_path).resolve().parent / ".state" / "activation.json"
+
+
+def _activation_entries(module_path):
+    path = _activation_path(module_path)
+    if not path.is_file():
+        return {}
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+        entries = parsed.get("entries") if isinstance(parsed, dict) else None
+        return entries if isinstance(entries, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def autonomous_activation_current(module_path):
+    plan = _load_plan(module_path)
+    if plan is None:
+        return False
+    namespace = plan.get("namespace") if isinstance(plan.get("namespace"), str) else ""
+    stamp = _activation_entries(module_path).get(namespace)
+    if not isinstance(stamp, dict):
+        return False
+    confirmed_by = stamp.get("confirmedBy")
+    confirmed_at = stamp.get("confirmedAt")
+    return (
+        stamp.get("planHash") == autonomy_plan_hash(plan)
+        and isinstance(confirmed_by, str)
+        and confirmed_by.strip()
+        and isinstance(confirmed_at, str)
+        and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z", confirmed_at)
+    )
+
+
+def record_autonomous_activation(module_path, actor=None):
+    plan = _load_plan(module_path) or {}
+    namespace = plan.get("namespace") if isinstance(plan.get("namespace"), str) else ""
+    entries = _activation_entries(module_path)
+    entries[namespace] = {
+        "planHash": autonomy_plan_hash(plan),
+        "confirmedBy": (actor or activation_actor()).strip() or "unknown",
+        "confirmedAt": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+    }
+    path = _activation_path(module_path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps({"schemaVersion": 1, "entries": entries}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
 
 
 def _audit_plan_messages(plan):
@@ -203,7 +290,7 @@ This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and
 
 After doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
 
-On a terminal the worker asks you to type activate. When stdin is not a terminal, pass --confirm-activation or --yes. That flag records the one-time confirmation and does not bypass audit, budget, or rollback gates.
+On a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it, when, and a hash of the plan's autonomy settings. A later run reuses the stamp. A new namespace or a change to mode, self-improving, step timeout, or audit sizing asks again. The flag does not bypass audit, budget, or rollback gates.
 
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --mode autonomous --once
 
@@ -466,7 +553,7 @@ def main(argv=None):
     worker.add_argument(
         "--confirm-activation",
         action="store_true",
-        help="Record the one-time confirmation required for autonomous mode when stdin is not a terminal.",
+        help="Record the one-time autonomous confirmation for this namespace and plan. Later runs reuse it until autonomy settings change.",
     )
     worker.add_argument(
         "--yes",
@@ -495,14 +582,14 @@ def main(argv=None):
                 step_timeout_ms=args.step_timeout_ms,
                 step_timeout_source="flag" if args.step_timeout_ms is not None else None,
             )
-            if (
-                args.enable
-                and settings["mode"] == "autonomous"
-                and not (args.yes or args.confirm_activation)
-            ):
+            granted = bool(args.yes or args.confirm_activation)
+            already = settings["mode"] == "autonomous" and autonomous_activation_current(
+                args.module
+            )
+            if args.enable and settings["mode"] == "autonomous" and not already and not granted:
                 if not sys.stdin.isatty():
                     raise ValueError(
-                        "Autonomous activation needs a one-time confirmation. "
+                        "Autonomous activation needs a one-time confirmation for this namespace and plan. "
                         "Pass --confirm-activation or --yes when stdin is not a terminal."
                     )
                 print(
@@ -513,6 +600,8 @@ def main(argv=None):
                 answer = input("Type activate to confirm: ")
                 if answer.strip() != "activate":
                     raise ValueError("Autonomous activation was not confirmed.")
+            if args.enable and settings["mode"] == "autonomous" and (granted or not already):
+                record_autonomous_activation(args.module)
 
             async def run():
                 cancellation = asyncio.Event()

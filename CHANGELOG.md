@@ -9,7 +9,8 @@
 - The worker uses `plan.mode` when `--mode` is omitted. The flag overrides the plan, and the effective mode and step timeout are logged with their source.
 - The starter Postgres registry can update a setup's configuration hash without replacing the artifact version.
 - Candidates left proposed by a timed-out or cancelled run are rejected when the run ends, and stale ones are rejected on startup.
-- The first `--enable` run in autonomous mode asks for the one-time activation confirmation. Non-interactive runs must pass `--confirm-activation` or `--yes`.
+- The first `--enable` run in autonomous mode asks for the one-time activation confirmation. `--confirm-activation` or `--yes` records it in `.state/activation.json` for that namespace and plan, with who confirmed it, when, and a hash of the autonomy settings. Later runs reuse the stamp. A new namespace or a change to those settings asks again.
+- Node `--step-timeout-ms` and `stepTimeoutMs` in the plan accept only decimal integers. Scientific notation, hex, and trailing `.0` are rejected, matching Python.
 
 - Fresh self-hosted `init` writes onboarding plan schemaVersion 2, preset `autonomous-default`, in Node and Python: `mode` autonomous and self-improving on. Doctor still accepts schemaVersion 1 plans and does not rewrite them.
 - `ImprovementController` constructed without a mode still recommends and does not apply. The worker still requires `--enable` before spending. New setup recipes pass `--enable --mode autonomous` after doctor and verify. `--mode recommend` remains one flag away. Omitting `--mode` follows `plan.mode`.

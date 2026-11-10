@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import {
   initializeSelfHosted,
   inspectSelfHostedSetup,
+  parseStepTimeout,
   readAgentGuide,
   readReference,
   readWorkerSettings,
@@ -423,6 +424,69 @@ export async function createIntegration() {
     assert.match(allowed.stderr, /effective mode autonomous \(source: plan\)/);
     assert.match(allowed.stderr, /effective step timeout 180000ms \(source: flag\)/);
     assert.match(allowed.stdout, /"state":"evaluating"/);
+    const again = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(again.status, 0, again.stderr);
+    assert.doesNotMatch(again.stderr, /one-time confirmation/);
+    const stamp = JSON.parse(
+      await readFile(join(root, ".state", "activation.json"), "utf8"),
+    ) as {
+      entries: Record<string, { planHash: string; confirmedBy: string; confirmedAt: string }>;
+    };
+    assert.match(stamp.entries["app/dev"]!.confirmedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.ok(stamp.entries["app/dev"]!.confirmedBy.trim());
+    assert.equal(stamp.entries["app/dev"]!.planHash.length, 64);
+    const planPath = join(root, "integration-plan.json");
+    const storedPlan = JSON.parse(await readFile(planPath, "utf8"));
+    storedPlan.namespace = "app/other";
+    await writeFile(planPath, JSON.stringify(storedPlan));
+    const freshNamespace = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(freshNamespace.status, 1);
+    assert.match(freshNamespace.stderr, /one-time confirmation/);
+    storedPlan.namespace = "app/dev";
+    storedPlan.audit.minimumUnits = 60;
+    await writeFile(planPath, JSON.stringify(storedPlan));
+    const changedAudit = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(changedAudit.status, 1);
+    assert.match(changedAudit.stderr, /one-time confirmation/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("step timeout accepts only decimal integers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-timeout-"));
+  const cli = new URL("../src/cli.js", import.meta.url);
+  const run = (args: string[]) =>
+    spawnSync(process.execPath, [cli.pathname, ...args], {
+      cwd: root,
+      encoding: "utf8",
+      input: "",
+    });
+  try {
+    for (const value of ["1e5", "120000.0", "0x1e240"]) {
+      const result = run([
+        "worker",
+        "--module",
+        "missing.mjs",
+        "--enable",
+        "--step-timeout-ms",
+        value,
+        "--once",
+      ]);
+      assert.equal(result.status, 1, value);
+      assert.match(result.stderr, /decimal integer/);
+      assert.throws(() => parseStepTimeout(value), /decimal integer/);
+    }
+    assert.equal(parseStepTimeout("120000"), 120000);
+    const module = join(root, "application.mjs");
+    await writeFile(module, "export {};\n");
+    for (const literal of ["1e5", "120000.0"]) {
+      await writeFile(
+        join(root, "integration-plan.json"),
+        `{"schemaVersion":2,"language":"node","mode":"recommend","selfImproving":false,"namespace":"app/dev","stepTimeoutMs":${literal}}\n`,
+      );
+      assert.throws(() => readWorkerSettings(module), /decimal integer/);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

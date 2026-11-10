@@ -356,6 +356,106 @@ async def create_integration(*, cancellation):
             self.assertIn("effective mode autonomous (source: plan)", allowed.stderr)
             self.assertIn("effective step timeout 180000ms (source: flag)", allowed.stderr)
             self.assertIn('"state": "evaluating"', allowed.stdout)
+            again = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertNotIn("one-time confirmation", again.stderr)
+            stamp = json.loads((Path(root) / ".state" / "activation.json").read_text())
+            recorded = stamp["entries"]["app/dev"]
+            self.assertRegex(recorded["confirmedAt"], r"^\d{4}-\d{2}-\d{2}T")
+            self.assertTrue(recorded["confirmedBy"].strip())
+            self.assertEqual(len(recorded["planHash"]), 64)
+            plan_path = Path(root) / "integration-plan.json"
+            stored = json.loads(plan_path.read_text())
+            stored["namespace"] = "app/other"
+            plan_path.write_text(json.dumps(stored))
+            fresh = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(fresh.returncode, 1)
+            self.assertIn("one-time confirmation", fresh.stderr)
+            stored["namespace"] = "app/dev"
+            stored["audit"]["minimumUnits"] = 60
+            plan_path.write_text(json.dumps(stored))
+            changed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(changed.returncode, 1)
+            self.assertIn("one-time confirmation", changed.stderr)
+
+    def test_step_timeout_rejects_non_decimal_integers(self):
+        with tempfile.TemporaryDirectory() as root:
+            for value in ("1e5", "120000.0", "0x1e240"):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "loopiter",
+                        "worker",
+                        "--module",
+                        "missing.py",
+                        "--step-timeout-ms",
+                        value,
+                    ],
+                    cwd=root,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertNotEqual(result.returncode, 0, value)
+                self.assertIn("invalid int value", result.stderr)
+            module = Path(root) / "application.py"
+            module.write_text("raise RuntimeError('unused')\n")
+            for literal in ("1e5", "120000.0"):
+                (Path(root) / "integration-plan.json").write_text(
+                    '{"schemaVersion":2,"language":"python","mode":"recommend","selfImproving":false,'
+                    f'"namespace":"app/dev","stepTimeoutMs":{literal}}}\n'
+                )
+                with self.assertRaises(ValueError):
+                    read_worker_settings(module)
 
 
 def snake_policy(value):
