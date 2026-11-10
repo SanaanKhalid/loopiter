@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -961,15 +961,17 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
       }),
     /Refusing to start/,
   );
-  const shrunkWaits = liveDeadlinePlan({
-    callsPerStep,
-    requestTimeoutMs: 300_000,
-    max429Retries: 6,
-    maxRetryWaitMs: 60_000,
-    maxTotalWaitMs,
-  });
-  assert.equal(shrunkWaits.attemptDeadlineMs, 435_000);
-  assert.equal(shrunkWaits.callbackTimeoutMs, MAX_STEP_MS);
+  assert.throws(
+    () =>
+      liveDeadlinePlan({
+        callsPerStep,
+        requestTimeoutMs: 300_000,
+        max429Retries: 6,
+        maxRetryWaitMs: 60_000,
+        maxTotalWaitMs,
+      }),
+    /retry sleep/,
+  );
 
   const clock = fakeClock();
   const directory = await tempLedger();
@@ -1496,17 +1498,17 @@ test("a stopping run aborts new attempts and does not publish a second report", 
   forceExit(1, {
     delayMs: 20,
     exit: () => forced.push("exit"),
-    reallyExit: () => forced.push("really"),
+    kill: () => forced.push("kill"),
   });
   await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.deepEqual(forced, ["exit", "really"]);
+  assert.deepEqual(forced, ["exit", "kill"]);
 
   const minimum = minimumStallTimeoutMs(255_000);
   assert.equal(minimum, 2 * PACE_WINDOW_MS + 255_000);
   assert.throws(
     () =>
       liveOptionsFromEnv(scrubbed({ ...readyEnv(), [LIVE_ENV.stallMinutes]: "1" }), blankArgs()),
-    /pace window/,
+    /6\.25 minutes/,
   );
   const allowed = liveOptionsFromEnv(scrubbed(readyEnv()), blankArgs());
   assert.ok((allowed.stallTimeoutMs ?? 0) >= minimum);
@@ -1540,6 +1542,48 @@ test("a stopping run aborts new attempts and does not publish a second report", 
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(longTimers(), before);
+});
+
+test("a fifo temp report cannot keep the process alive", async () => {
+  const directory = await tempLedger();
+  const reportPath = join(directory, "report.json");
+  const ledgerPath = join(directory, "ledger.json");
+  const liveUrl = new URL("../benchmarks/kb-qa/live.js", import.meta.url).href;
+  const source = `
+    import { existsSync } from "node:fs";
+    import { setTimeout as delay } from "node:timers/promises";
+    import { LiveLedger, createExitGuard, writeInterruptedReport } from ${JSON.stringify(liveUrl)};
+    const reportPath = ${JSON.stringify(reportPath)};
+    const fifo = reportPath + "." + process.pid + ".partial.tmp";
+    const started = Date.now();
+    while (!existsSync(fifo)) {
+      if (Date.now() - started > 2000) process.exit(2);
+      await delay(10);
+    }
+    const ledger = new LiveLedger(
+      { totalMicroUsd: 1000, invocationMicroUsd: 1000, warnMicroUsd: 100 },
+      { inputUsdPerMillion: 1, outputUsdPerMillion: 1, cachedInputUsdPerMillion: 0 },
+      ${JSON.stringify(ledgerPath)},
+    );
+    createExitGuard().arm(1, () => writeInterruptedReport({ ledger, reportPath, message: "stopped" }), 200);
+    setInterval(() => undefined, 1000);
+  `;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", source], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  execFileSync("mkfifo", [`${reportPath}.${child.pid}.partial.tmp`]);
+  const started = Date.now();
+  const outcome = await Promise.race([
+    new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+    }),
+    new Promise<{ code: null; signal: null }>((resolve) => {
+      setTimeout(() => resolve({ code: null, signal: null }), 3000);
+    }),
+  ]);
+  if (outcome.signal === null && outcome.code === null) child.kill("SIGKILL");
+  assert.ok(Date.now() - started < 3000);
+  assert.ok(outcome.signal === "SIGKILL" || outcome.code === 1);
 });
 
 test("user abort, unauthorized, server, and lookup errors stay bounded", async () => {
@@ -1910,6 +1954,15 @@ test("cause codes, one timeout sentence, and a retry wait that does not look sta
     .catch((error: unknown) => error);
   assert.match(String((lookupError as Error).message), /\[redacted\]/);
   assert.equal(String((lookupError as Error).message).includes(KEY), false);
+  assert.equal(String((lookupError as Error).message).includes("example.openai.azure.com"), false);
+  assert.equal(
+    liveCostMicroUsd({ input: 1, output: 0, cached: 0 }, pricesOf(0.4, 1, 0)),
+    1,
+  );
+  assert.equal(
+    liveCostMicroUsd({ input: 0, output: 0, cached: 0 }, pricesOf(0.4, 1, 0)),
+    0,
+  );
 
   const timed = new LiveSession(
     new LiveLedger(

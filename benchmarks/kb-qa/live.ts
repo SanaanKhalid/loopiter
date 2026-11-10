@@ -3,6 +3,7 @@
  * Live calls require --live and LOOPITER_BENCH_ALLOW_LIVE=1.
  * Tests inject a fetch implementation. This module does not read cloud credentials.
  */
+import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
@@ -81,26 +82,32 @@ function boundAbort(ms: number): { signal: AbortSignal; done: () => void } {
   };
 }
 
-/** process.exit does not return while a FIFO open is blocked. Follow it with a hard stop. */
+/** Arm SIGKILL before process.exit. A blocked FIFO open can keep process.exit from returning. */
 export function forceExit(
   code: number,
   hooks?: {
     exit?: (code: number) => void;
-    reallyExit?: (code: number) => void;
+    kill?: (pid: number, signal: NodeJS.Signals) => void;
     delayMs?: number;
   },
 ): void {
-  (hooks?.exit ?? process.exit)(code);
+  const delay = hooks?.delayMs ?? 250;
   const timer = setTimeout(() => {
-    if (hooks?.reallyExit) {
-      hooks.reallyExit(code);
-      return;
-    }
-    const really = (process as NodeJS.Process & { reallyExit?: (status: number) => void }).reallyExit;
-    if (typeof really === "function") really.call(process, code);
-    else process.kill(process.pid, "SIGKILL");
-  }, hooks?.delayMs ?? 250);
+    (hooks?.kill ?? process.kill)(process.pid, "SIGKILL");
+  }, delay);
   timer.unref();
+  if (!hooks) {
+    const killer = spawn(
+      process.execPath,
+      [
+        "-e",
+        `setTimeout(() => { try { process.kill(${process.pid}, "SIGKILL"); } catch {} }, ${delay})`,
+      ],
+      { detached: true, stdio: "ignore" },
+    );
+    killer.unref();
+  }
+  (hooks?.exit ?? process.exit)(code);
 }
 
 export class LiveExitError extends Error {
@@ -175,21 +182,15 @@ export function liveDeadlinePlan(input: {
   const slots = Math.max(1, input.callsPerStep * attempts);
   const explicit = input.attemptDeadlineMs !== undefined;
   const floor = attemptDeadlineFloorMs(input.requestTimeoutMs);
-  let attempt = explicit ? input.attemptDeadlineMs! : defaultAttemptDeadlineMs(input);
-  if (!explicit) attempt = Math.max(attempt, floor);
-  let waits = input.callsPerStep * perCallRetryWaitMs(input);
-  if (!explicit && slots * attempt + waits > MAX_STEP_MS) {
-    const room = MAX_STEP_MS - slots * attempt;
-    if (room >= 0) waits = Math.min(waits, room);
-    else if (slots * floor <= MAX_STEP_MS) {
-      attempt = Math.max(floor, Math.floor(MAX_STEP_MS / slots));
-      waits = Math.min(waits, Math.max(0, MAX_STEP_MS - slots * attempt));
-    }
-  }
+  const attempt = Math.max(
+    1,
+    explicit ? input.attemptDeadlineMs! : Math.max(defaultAttemptDeadlineMs(input), floor),
+  );
+  const waits = input.callsPerStep * perCallRetryWaitMs(input);
   const budget = slots * attempt + waits;
   if (budget > MAX_STEP_MS)
     throw new LiveGateError(
-      `Live step budget is ${budget} ms, above the ${MAX_STEP_MS} ms controller cap. Lower the request timeout or the retry limits. Refusing to start.`,
+      `Live step budget is ${budget} ms, above the ${MAX_STEP_MS} ms controller cap. That includes every reserved attempt and the retry sleep a call can still spend. Lower the request timeout or the retry limits. Refusing to start.`,
     );
   return { callbackTimeoutMs: Math.max(1, budget), attemptDeadlineMs: Math.max(1, attempt) };
 }
@@ -586,7 +587,8 @@ export function inputTokenCeiling(payload: string): number {
 
 export function redactSecrets(text: string, secrets: readonly string[]): string {
   let redacted = text;
-  for (const secret of secrets) {
+  const ordered = [...secrets].sort((left, right) => right.length - left.length);
+  for (const secret of ordered) {
     if (secret.length < 4) continue;
     redacted = redacted.split(secret).join("[redacted]");
   }
@@ -952,10 +954,11 @@ export class LiveSession {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly random: () => number;
   private readonly pacer: TokenMinuteWindow;
+  private readonly secrets: readonly string[];
 
   constructor(
     readonly ledger: LiveLedger,
-    private readonly secrets: readonly string[],
+    secrets: readonly string[],
     private readonly stopAtWarn: boolean,
     options: {
       endpoint: string;
@@ -974,6 +977,9 @@ export class LiveSession {
       random: () => number;
     } & RequestLimits,
   ) {
+    this.secrets = [
+      ...new Set([...secrets, ...redactionSecrets(options.apiKey, options.endpoint)]),
+    ];
     this.limits = {
       predictMaxOutputTokens: options.predictMaxOutputTokens,
       proposeMaxOutputTokens: options.proposeMaxOutputTokens,
@@ -1332,7 +1338,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
   const limits = requestLimits(options);
   const pace = paceSettings(options);
   assertLiveSpendGuards(options);
-  const secrets = [options.apiKey];
+  const secrets = redactionSecrets(options.apiKey, options.endpoint);
   const caps = {
     totalMicroUsd: usdToMicro(options.totalCapUsd),
     invocationMicroUsd: usdToMicro(options.invocationCapUsd),
@@ -1468,7 +1474,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
     callbackTimeoutMs: session.callbackTimeoutMs,
     tickTimeoutMs: session.tickTimeoutMs,
   });
-  assertNoSecrets(report, secrets);
+  assertNoSecrets(report, [options.apiKey]);
   return report;
 }
 
@@ -1683,7 +1689,7 @@ function stallTimeoutFromEnv(
   const minimum = minimumStallTimeoutMs(attempt);
   if (requested < minimum)
     throw new LiveGateError(
-      `${LIVE_ENV.stallMinutes} of ${requested / 1000} seconds is below the minimum of ${minimum / 1000} seconds (2 × the 60 second pace window plus the ${attempt / 1000} second attempt deadline). Refusing to start.`,
+      `${LIVE_ENV.stallMinutes} of ${minutesLabel(requested)} is below the minimum of ${minutesLabel(minimum)} (2 × the 60 second pace window plus the ${attempt / 1000} second attempt deadline). Refusing to start.`,
     );
   return requested;
 }
@@ -2887,7 +2893,24 @@ function readContext(): CallbackContext {
 
 function roundedMicro(value: number): number {
   if (!Number.isFinite(value)) throw new Error("Non-finite spend.");
-  return Math.round(value);
+  return Math.ceil(value);
+}
+
+function minutesLabel(ms: number): string {
+  const minutes = Math.round((ms / 60_000) * 100) / 100;
+  const text = Number.isInteger(minutes) ? String(minutes) : String(minutes);
+  return `${text} ${text === "1" ? "minute" : "minutes"}`;
+}
+
+function redactionSecrets(apiKey: string, endpoint: string): string[] {
+  const secrets = [apiKey, endpoint.trim()];
+  try {
+    const url = new URL(endpoint);
+    secrets.push(url.origin, url.host);
+  } catch {
+    // The raw endpoint string is already on the list.
+  }
+  return secrets;
 }
 
 function sum(values: number[]): number {
