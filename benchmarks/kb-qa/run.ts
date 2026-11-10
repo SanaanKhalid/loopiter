@@ -116,10 +116,9 @@ async function runLiveCli(): Promise<void> {
     const json = `${JSON.stringify(report, null, 2)}\n`;
     if (secret && json.includes(secret))
       throw new LiveGateError("Refusing to write a report that contains a credential.");
-    await mkdir(dirname(out), { recursive: true });
-    await writeFile(out, json);
+    await boundedWrite(out, json);
     const markdownPath = out.endsWith(".json") ? out.replace(/\.json$/, ".md") : `${out}.md`;
-    await writeFile(markdownPath, renderLiveMarkdown(report));
+    await boundedWrite(markdownPath, renderLiveMarkdown(report));
     console.log(`${report.passed ? "PASS" : "FAIL"} ${out}`);
     if (report.stopped) console.error(report.stopped.message);
     if (!report.passed) process.exitCode = 1;
@@ -130,6 +129,19 @@ async function runLiveCli(): Promise<void> {
     }
     console.error(redactSecrets(errorText(error), secret ? [secret] : secretValues()));
     process.exit(error instanceof LiveGateError ? 2 : 1);
+  }
+}
+
+async function boundedWrite(path: string, body: string): Promise<void> {
+  const signal = AbortSignal.timeout(10_000);
+  const timer = setTimeout(() => process.exit(1), 10_000);
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    signal.throwIfAborted();
+    await writeFile(path, body, { signal });
+  } finally {
+    clearTimeout(timer);
+    if (signal.aborted) process.exit(1);
   }
 }
 

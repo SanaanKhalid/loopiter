@@ -136,12 +136,12 @@ class ResponsesProvider implements GenerationProvider {
     );
     if (!response.ok) {
       const retryAfterMs = retryAfterMsFrom(response);
-      const usage = await usageFromBody(response);
+      const usage = await usageFromBody(response, signal);
       throw new ProviderRequestError(response.status, usage, retryAfterMs);
     }
-    input.signal.throwIfAborted();
-    const body: unknown = await response.json();
-    input.signal.throwIfAborted();
+    signal.throwIfAborted();
+    const body = await readJsonBody(response, signal);
+    signal.throwIfAborted();
     object(body, "OpenAI response");
     if (body.status !== "completed" || !Array.isArray(body.output))
       throw new Error(incompleteMessage(body));
@@ -278,12 +278,40 @@ export function readUsage(body: unknown): ResponseUsage {
   };
 }
 
-async function usageFromBody(response: Response): Promise<ResponseUsage | null> {
+async function usageFromBody(
+  response: Response,
+  signal: AbortSignal,
+): Promise<ResponseUsage | null> {
   try {
-    const text = await response.text();
+    const text = await readResponseText(response, signal);
     if (!text) return null;
     return readUsage(JSON.parse(text) as unknown);
-  } catch {
+  } catch (error) {
+    if (signal.aborted) throw error;
     return null;
   }
+}
+
+function readJsonBody(response: Response, signal: AbortSignal): Promise<unknown> {
+  return readResponseText(response, signal).then((text) => (text ? JSON.parse(text) : null));
+}
+
+function readResponseText(response: Response, signal: AbortSignal): Promise<string> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () =>
+      reject(signal.reason instanceof Error ? signal.reason : new Error("Cancelled."));
+    signal.addEventListener("abort", onAbort, { once: true });
+    response.text().then(
+      (text) => {
+        signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) onAbort();
+        else resolve(text);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }

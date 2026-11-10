@@ -62,6 +62,7 @@ export function reservedAttemptsPerCall(max429Retries: number): number {
   return MAX_ATTEMPTS + max429Retries;
 }
 export const DEFAULT_STALL_MINUTES = 10;
+const REPORT_IO_MS = 10_000;
 export const DEFAULT_MAX_429_RETRIES = 6;
 export const DEFAULT_MAX_RETRY_WAIT_SECONDS = 60;
 export const DEFAULT_MAX_TOTAL_WAIT_SECONDS = 900;
@@ -88,20 +89,44 @@ export function maxModelCallsPerStep(
   return Math.max(1, batchSize * 2, observeChunk);
 }
 
-/** Step deadline covering every call's attempts plus retry and pace waits, bounded by the total-wait cap. */
-export function liveCallbackTimeoutMs(input: {
+const MAX_CALLBACK_MS = 3_600_000;
+
+export function defaultAttemptDeadlineMs(input: {
+  requestTimeoutMs: number;
+  maxRetryWaitMs: number;
+}): number {
+  return input.requestTimeoutMs + 60_000 + input.maxRetryWaitMs + 15_000;
+}
+
+/** Step budget: every reserved attempt's deadline, plus each call's retry-wait cap. Clamped to the controller's one-hour step. */
+export function liveDeadlinePlan(input: {
   callsPerStep: number;
   requestTimeoutMs: number;
   max429Retries: number;
   maxRetryWaitMs: number;
   maxTotalWaitMs: number;
-}): number {
-  const requestBudget = input.callsPerStep * MAX_ATTEMPTS * input.requestTimeoutMs;
-  const perCallWaits =
-    input.maxRetryWaitMs * Math.max(0, MAX_ATTEMPTS - 1) +
-    input.max429Retries * input.maxRetryWaitMs;
-  const waitBudget = Math.min(input.maxTotalWaitMs, input.callsPerStep * perCallWaits);
-  return requestBudget + waitBudget;
+  attemptDeadlineMs?: number;
+}): { callbackTimeoutMs: number; attemptDeadlineMs: number } {
+  const attempts = reservedAttemptsPerCall(input.max429Retries);
+  const slots = Math.max(1, input.callsPerStep * attempts);
+  let attempt = input.attemptDeadlineMs ?? defaultAttemptDeadlineMs(input);
+  const waits = input.callsPerStep * input.maxTotalWaitMs;
+  if (slots * attempt + waits > MAX_CALLBACK_MS) {
+    const room = MAX_CALLBACK_MS - waits;
+    attempt =
+      room >= slots
+        ? Math.min(attempt, Math.floor(room / slots))
+        : Math.min(attempt, Math.max(input.requestTimeoutMs, Math.floor(MAX_CALLBACK_MS / slots)));
+  }
+  attempt = Math.max(1, attempt);
+  const budget = Math.min(MAX_CALLBACK_MS, Math.max(1, slots * attempt + Math.min(waits, MAX_CALLBACK_MS)));
+  return { callbackTimeoutMs: budget, attemptDeadlineMs: attempt };
+}
+
+export function liveCallbackTimeoutMs(
+  input: Parameters<typeof liveDeadlinePlan>[0],
+): number {
+  return liveDeadlinePlan(input).callbackTimeoutMs;
 }
 const CLOCK_START = "2026-04-15T12:00:00.000Z";
 const BOOTSTRAP_SAMPLES = 2000;
@@ -273,11 +298,14 @@ export class LiveLedger {
     prices: LivePrices,
   ): Promise<LiveLedger> {
     const ledger = new LiveLedger(caps, prices, path);
+    const signal = AbortSignal.timeout(REPORT_IO_MS);
     try {
-      ledger.restore(await readFile(path, "utf8"));
+      ledger.restore(await readFile(path, { encoding: "utf8", signal }));
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") return ledger;
+      if (signal.aborted)
+        throw new LiveGateError("Spend ledger read timed out. Refusing to start.");
       throw new LiveGateError(
         "Spend ledger is unreadable. Refusing to start so cumulative spend is not reset.",
       );
@@ -312,19 +340,43 @@ export class LiveLedger {
   }
 
   /** Persist the worst-case hold before the request leaves the process. */
-  async beginAttempt(tokens: TokenUse): Promise<{ micro: number; tokens: TokenUse }> {
+  async beginAttempt(
+    tokens: TokenUse,
+    signal?: AbortSignal,
+  ): Promise<{ micro: number; tokens: TokenUse }> {
+    signal?.throwIfAborted();
     const micro = this.worstMicro(tokens);
     this.apply(micro, tokens, 1);
     this.attempts += 1;
     this.invocationAttempts += 1;
-    await this.persist();
+    try {
+      await this.persist(signal);
+    } catch (error) {
+      this.undoHold(micro, tokens);
+      throw error;
+    }
+    if (signal?.aborted) {
+      this.undoHold(micro, tokens);
+      await this.persist().catch(() => undefined);
+      throw abortReason(signal);
+    }
     return { micro, tokens };
+  }
+
+  /** Drop a hold that never sent a request, so an aborted attempt is not billed. */
+  async releaseAttempt(
+    held: { micro: number; tokens: TokenUse },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    this.undoHold(held.micro, held.tokens);
+    await this.persist(signal).catch(() => undefined);
   }
 
   async finishAttempt(
     held: { micro: number; tokens: TokenUse },
     actual: TokenUse,
     completed: boolean,
+    signal?: AbortSignal,
   ): Promise<void> {
     this.apply(held.micro, held.tokens, -1);
     this.apply(liveCostMicroUsd(actual, this.prices), actual, 1);
@@ -336,7 +388,13 @@ export class LiveLedger {
     if (this.invocationMicroUsd > this.caps.invocationMicroUsd)
       this.stopReason = "invocation_cap";
     if (this.totalMicroUsd >= this.caps.warnMicroUsd) this.warnCrossed = true;
-    await this.persist();
+    await this.persist(signal);
+  }
+
+  private undoHold(micro: number, tokens: TokenUse): void {
+    this.apply(micro, tokens, -1);
+    this.attempts = Math.max(0, this.attempts - 1);
+    this.invocationAttempts = Math.max(0, this.invocationAttempts - 1);
   }
 
   private restore(raw: string): void {
@@ -388,11 +446,12 @@ export class LiveLedger {
       throw new Error("Spend ledger underflow.");
   }
 
-  async flush(): Promise<void> {
-    await this.persist();
+  async flush(signal?: AbortSignal): Promise<void> {
+    await this.persist(signal);
   }
 
-  private async persist(): Promise<void> {
+  private async persist(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const file: LedgerFile = {
       schemaVersion: 1,
       currency: "USD",
@@ -405,9 +464,13 @@ export class LiveLedger {
       warnCrossed: this.warnCrossed,
       updatedAt: new Date().toISOString(),
     };
+    const json = `${JSON.stringify(file)}\n`;
+    signal?.throwIfAborted();
     await mkdir(dirname(this.path), { recursive: true });
-    const temporary = `${this.path}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(file)}\n`, { mode: 0o600 });
+    signal?.throwIfAborted();
+    const temporary = `${this.path}.${process.pid}.tmp`;
+    await writeFile(temporary, json, { mode: 0o600, signal });
+    signal?.throwIfAborted();
     await rename(temporary, this.path);
   }
 }
@@ -731,15 +794,18 @@ export class TokenMinuteWindow {
     private readonly sleep: (ms: number) => Promise<void>,
   ) {}
 
-  /** Reserve `tokens`. `beforeWait` may throw to refuse a stall. */
+  /** Reserve `tokens`. `beforeWait` may throw to refuse a stall. `signal` aborts a pace sleep. */
   async acquire(
     tokens: number,
     beforeWait?: (ms: number) => void,
+    signal?: AbortSignal,
   ): Promise<{ waited: number; id: number }> {
     if (!Number.isFinite(tokens) || tokens < 0) throw new Error("Invalid paced token count.");
+    signal?.throwIfAborted();
     if (this.limit <= 0) return { waited: 0, id: this.nextId++ };
     let waited = 0;
     for (;;) {
+      signal?.throwIfAborted();
       const now = this.now();
       this.stamps = this.stamps.filter((stamp) => now - stamp.at < 60_000);
       const used = this.stamps.reduce((sum, stamp) => sum + stamp.tokens, 0);
@@ -752,7 +818,8 @@ export class TokenMinuteWindow {
       const wait = Math.max(1, 60_000 - (now - oldest.at));
       beforeWait?.(wait);
       const before = this.now();
-      await this.sleep(wait);
+      await abortableSleep(this.sleep, wait, signal);
+      signal?.throwIfAborted();
       const after = this.now();
       if (after <= before) throw new Error("Pacer clock did not advance.");
       waited += after - before;
@@ -786,6 +853,8 @@ export class LiveSession {
   readonly tickTimeoutMs: number;
   readonly attemptDeadlineMs: number;
   lastActivityMs = Date.now();
+  private inflight = 0;
+  private readonly idle: (() => void)[] = [];
   activity = "running";
   lastError: string | null = null;
   rateLimitResponses = 0;
@@ -829,17 +898,19 @@ export class LiveSession {
     this.maxRetryWaitMs = options.maxRetryWaitMs;
     this.requestTimeoutMs = options.requestTimeoutMs;
     this.maxTotalWaitMs = options.maxTotalWaitMs;
-    this.callbackTimeoutMs = liveCallbackTimeoutMs({
+    const deadline = liveDeadlinePlan({
       callsPerStep: maxModelCallsPerStep(),
       requestTimeoutMs: options.requestTimeoutMs,
       max429Retries: options.max429Retries,
       maxRetryWaitMs: options.maxRetryWaitMs,
       maxTotalWaitMs: options.maxTotalWaitMs,
+      ...(options.attemptDeadlineMs === undefined
+        ? {}
+        : { attemptDeadlineMs: options.attemptDeadlineMs }),
     });
-    this.tickTimeoutMs = this.callbackTimeoutMs + 1000;
-    this.attemptDeadlineMs =
-      options.attemptDeadlineMs ??
-      options.requestTimeoutMs + 60_000 + options.maxRetryWaitMs + 15_000;
+    this.callbackTimeoutMs = deadline.callbackTimeoutMs;
+    this.tickTimeoutMs = Math.min(3_660_000, deadline.callbackTimeoutMs + 1000);
+    this.attemptDeadlineMs = deadline.attemptDeadlineMs;
     this.now = options.now;
     this.sleep = options.sleep;
     this.random = options.random;
@@ -852,16 +923,8 @@ export class LiveSession {
     const baseFetch = options.fetch ?? fetch;
     const fetchImpl: typeof fetch = async (url, init) => {
       try {
-        const response = await baseFetch(url, init);
-        const signal = init?.signal;
-        if (signal && response.body) {
-          const cancelBody = () => {
-            void response.body?.cancel(signal.reason).catch(() => undefined);
-          };
-          if (signal.aborted) cancelBody();
-          else signal.addEventListener("abort", cancelBody, { once: true });
-        }
-        return response;
+        init?.signal?.throwIfAborted();
+        return await baseFetch(url, init);
       } catch (error) {
         const text = redactSecrets(errorText(error), hidden);
         const klass =
@@ -892,6 +955,15 @@ export class LiveSession {
     this.lastActivityMs = Date.now();
   }
 
+  get inFlight(): number {
+    return this.inflight;
+  }
+
+  waitUntilSettled(): Promise<void> {
+    if (this.inflight === 0) return Promise.resolve();
+    return new Promise((resolve) => this.idle.push(resolve));
+  }
+
   async generate(
     input: Omit<GenerateInput, "signal" | "maximumOutputTokens">,
     body: string,
@@ -903,11 +975,12 @@ export class LiveSession {
     let rateRetries = 0;
     let retryWaited = 0;
     for (;;) {
-      this.touch();
       try {
-        return await this.withDeadline(signal, (deadline) =>
+        const value = await this.withDeadline(signal, (deadline) =>
           this.once(input, body, maxOutput, meter, AbortSignal.any([signal, deadline])),
         );
+        this.touch();
+        return value;
       } catch (error) {
         if (isAttemptDeadline(error)) throw error;
         if (signal.aborted && !isTimeoutError(signal.reason)) throw error;
@@ -945,6 +1018,7 @@ export class LiveSession {
         if ((!networkClass && httpStatus === null) || otherRetries >= MAX_ATTEMPTS - 1) {
           const message = redactSecrets(errorText(error), this.secrets);
           this.lastError = message;
+          this.touch();
           throw new Error(message);
         }
         const worst: TokenUse = {
@@ -967,27 +1041,30 @@ export class LiveSession {
     this.chargeRetryWait(already, wait);
     this.activity = "waiting on retry";
     this.waitMs += wait;
-    this.touch();
-    await this.withDeadline(signal, async (deadline) => {
-      if (deadline.aborted) throw deadline.reason;
-      await this.sleep(wait);
-      if (deadline.aborted) throw deadline.reason;
-    });
+    await this.withDeadline(signal, (deadline) => abortableSleep(this.sleep, wait, deadline));
+    signal.throwIfAborted();
     this.activity = "running";
-    this.touch();
   }
 
   private async withDeadline<T>(
     parent: AbortSignal,
     run: (deadline: AbortSignal) => Promise<T>,
   ): Promise<T> {
-    const ms = this.attemptDeadlineMs;
+    this.inflight += 1;
     const controller = new AbortController();
-    const reason = attemptDeadlineError(ms);
-    const timer = setTimeout(() => controller.abort(reason), ms);
+    const reason = attemptDeadlineError(this.attemptDeadlineMs);
+    const timer = setTimeout(() => controller.abort(reason), this.attemptDeadlineMs);
     const onParent = () => controller.abort(parent.reason ?? new Error("Cancelled."));
     if (parent.aborted) onParent();
     else parent.addEventListener("abort", onParent, { once: true });
+    const finish = () => {
+      this.inflight -= 1;
+      if (this.inflight === 0) {
+        for (const resolve of this.idle.splice(0)) resolve();
+      }
+    };
+    const task = run(controller.signal).finally(finish);
+    task.catch(() => undefined);
     const aborted = new Promise<never>((_, reject) => {
       if (controller.signal.aborted) {
         reject(controller.signal.reason);
@@ -998,7 +1075,7 @@ export class LiveSession {
       });
     });
     try {
-      return await Promise.race([run(controller.signal), aborted]);
+      return await Promise.race([task, aborted]);
     } finally {
       clearTimeout(timer);
       parent.removeEventListener("abort", onParent);
@@ -1012,26 +1089,38 @@ export class LiveSession {
     meter: Meter,
     signal: AbortSignal,
   ): Promise<Generation> {
+    signal.throwIfAborted();
     const ceiling = inputTokenCeiling(body);
     const worst: TokenUse = { input: ceiling, output: maxOutput, cached: 0 };
     if (!this.ledger.allow(worst, this.stopAtWarn))
       throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
     const reserved = projectedInputTokens(body) + maxOutput;
     this.activity = "waiting on pace";
-    this.touch();
-    const paced = await this.pacer.acquire(reserved, (ms) => {
-      this.waitMs += ms;
-      this.touch();
-    });
+    const paced = await this.pacer.acquire(
+      reserved,
+      (ms) => {
+        this.waitMs += ms;
+      },
+      signal,
+    );
+    signal.throwIfAborted();
     this.activity = "running";
-    const held = await this.ledger.beginAttempt(worst);
+    const held = await this.ledger.beginAttempt(worst, signal);
+    if (signal.aborted) {
+      await this.ledger.releaseAttempt(held);
+      throw abortReason(signal);
+    }
     const timeout = new AbortController();
     const timer = setTimeout(() => {
       timeout.abort(timeoutError(`Request timed out after ${this.requestTimeoutMs} ms.`));
     }, this.requestTimeoutMs);
     const requestSignal = AbortSignal.any([signal, timeout.signal]);
+    let sent = false;
     try {
+      signal.throwIfAborted();
+      sent = true;
       const generated = await meter(ceiling + maxOutput + 64, async () => {
+        requestSignal.throwIfAborted();
         const result = await this.provider.generate({
           ...input,
           ...(this.limits.reasoningEffort
@@ -1040,18 +1129,24 @@ export class LiveSession {
           maximumOutputTokens: maxOutput,
           signal: requestSignal,
         });
+        requestSignal.throwIfAborted();
         const usage = billedUsage(result);
         return {
           value: { result, usage },
           tokens: usage.input + usage.output,
         };
       });
+      signal.throwIfAborted();
       this.pacer.settle(paced.id, generated.usage.input + generated.usage.output);
-      await this.ledger.finishAttempt(held, generated.usage, true);
+      await this.ledger.finishAttempt(held, generated.usage, true, signal);
       this.maybeWarn();
       this.noteProgress();
       return generated.result;
     } catch (error) {
+      if (!sent) {
+        await this.ledger.releaseAttempt(held);
+        throw error;
+      }
       const timedOut = timeout.signal.aborted && isTimeoutError(timeout.signal.reason);
       const normalized = timedOut
         ? timeoutError(
@@ -1061,7 +1156,7 @@ export class LiveSession {
       if (!(normalized instanceof LoopiterError && normalized.code === "spend_cap")) {
         const usage = extractUsage(normalized);
         if (usage) this.pacer.settle(paced.id, usage.input + usage.output);
-        await this.ledger.finishAttempt(held, usage ?? worst, false);
+        await this.ledger.finishAttempt(held, usage ?? worst, false, signal);
         this.maybeWarn();
         this.noteProgress();
       }
@@ -1145,6 +1240,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
     session.emitProgress(),
   );
   const perSeed: LiveSeed[] = [];
+  const guard = createExitGuard();
   const onInterrupt =
     options.handleSignals && options.reportPath
       ? createInterruptHandler({
@@ -1152,6 +1248,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
           reportPath: options.reportPath,
           secrets,
           perSeed,
+          guard,
         })
       : null;
   const stallMs = options.stallTimeoutMs ?? DEFAULT_STALL_MINUTES * 60_000;
@@ -1162,14 +1259,16 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
           stallMs,
           lastActivity: () => session.lastActivityMs,
           onStall: () => {
-            void writeInterruptedReport({
-              ledger,
-              reportPath: options.reportPath!,
-              secrets,
-              perSeed,
-              reason: "stalled",
-              message: `No live-run progress for ${Math.round(stallMs / 1000)} seconds. Stopping instead of hanging.`,
-            }).then(() => process.exit(1));
+            guard.arm(1, () =>
+              writeInterruptedReport({
+                ledger,
+                reportPath: options.reportPath!,
+                secrets,
+                perSeed,
+                reason: "stalled",
+                message: `No live-run progress for ${Math.round(stallMs / 1000)} seconds. Stopping instead of hanging.`,
+              }),
+            );
           },
         })
       : null;
@@ -1234,6 +1333,10 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
           };
   } finally {
     heartbeat.stop();
+    await Promise.race([
+      session.waitUntilSettled(),
+      new Promise((resolve) => setTimeout(resolve, REPORT_IO_MS)),
+    ]);
     watchdog?.stop();
     if (onInterrupt) {
       process.off("SIGINT", onInterrupt);
@@ -2454,7 +2557,8 @@ export async function writeInterruptedReport(input: {
   reason?: string;
   message?: string;
 }): Promise<void> {
-  await input.ledger.flush();
+  const signal = AbortSignal.timeout(REPORT_IO_MS);
+  await input.ledger.flush(signal);
   const report = {
     schemaVersion: 1,
     harness: "loopiter-live-kb-qa",
@@ -2479,29 +2583,46 @@ export async function writeInterruptedReport(input: {
     if (secret.length >= 4 && json.includes(secret))
       throw new LiveGateError("Refusing to write a report that contains a credential.");
   }
+  signal.throwIfAborted();
   await mkdir(dirname(input.reportPath), { recursive: true });
-  await writeFile(input.reportPath, json);
+  await writeFile(input.reportPath, json, { signal });
 }
 
 /** SIGINT/SIGTERM handler. Flushes the ledger, writes a partial report, then exits. */
+export function createExitGuard(exit: (code: number) => void = process.exit): {
+  arm: (code: number, write: () => Promise<void>, timeoutMs?: number) => void;
+} {
+  let used = false;
+  let left = false;
+  const once = (code: number) => {
+    if (left) return;
+    left = true;
+    exit(code);
+  };
+  return {
+    arm(code, write, timeoutMs = REPORT_IO_MS) {
+      if (used) return;
+      used = true;
+      const timer = setTimeout(() => once(1), timeoutMs);
+      void write()
+        .catch(() => undefined)
+        .finally(() => {
+          clearTimeout(timer);
+          once(code);
+        });
+    },
+  };
+}
+
 export function createInterruptHandler(input: {
   ledger: LiveLedger;
   reportPath: string;
   secrets?: readonly string[];
   perSeed?: LiveReport["perSeed"];
-  exit?: (code: number) => void;
+  guard: ReturnType<typeof createExitGuard>;
 }): (signal: NodeJS.Signals) => void {
-  let started = false;
-  const exit = input.exit ?? process.exit;
   return () => {
-    if (started) return;
-    started = true;
-    void writeInterruptedReport(input)
-      .then(() => exit(130))
-      .catch((error: unknown) => {
-        console.error(error instanceof Error ? error.message : "Interrupt handler failed.");
-        exit(1);
-      });
+    input.guard.arm(130, () => writeInterruptedReport(input));
   };
 }
 
@@ -2509,6 +2630,33 @@ function timeoutError(message: string): Error {
   const error = new Error(message);
   error.name = "TimeoutError";
   return error;
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new Error("Cancelled.");
+}
+
+function abortableSleep(
+  sleep: (ms: number) => Promise<void>,
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortReason(signal));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal!));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    sleep(ms).then(
+      () => {
+        signal?.removeEventListener("abort", onAbort);
+        if (signal?.aborted) reject(abortReason(signal));
+        else resolve();
+      },
+      (error: unknown) => {
+        signal?.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function attemptDeadlineError(ms: number): Error {

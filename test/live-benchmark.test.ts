@@ -23,7 +23,9 @@ import {
   PROPOSE_MAX_OUTPUT_TOKENS,
   SMOKE_ROWS,
   TokenMinuteWindow,
+  createExitGuard,
   liveCallbackTimeoutMs,
+  liveDeadlinePlan,
   maxModelCallsPerStep,
   createInterruptHandler,
   createStallWatchdog,
@@ -929,9 +931,16 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
     maxTotalWaitMs,
   });
   assert.equal(callsPerStep, 2);
-  assert.ok(deadline >= callsPerStep * MAX_ATTEMPTS * requestTimeoutMs);
-  assert.ok(deadline > requestTimeoutMs);
-  assert.ok(deadline <= callsPerStep * MAX_ATTEMPTS * requestTimeoutMs + maxTotalWaitMs);
+  const plan = liveDeadlinePlan({
+    callsPerStep,
+    requestTimeoutMs,
+    max429Retries: 6,
+    maxRetryWaitMs: 60_000,
+    maxTotalWaitMs,
+  });
+  assert.equal(deadline, plan.callbackTimeoutMs);
+  assert.ok(deadline <= 3_600_000);
+  assert.ok(plan.attemptDeadlineMs >= requestTimeoutMs || deadline === 3_600_000);
 
   const clock = fakeClock();
   const directory = await tempLedger();
@@ -1509,6 +1518,186 @@ test("user abort, unauthorized, server, and lookup errors stay bounded", async (
   }
 });
 
+test("exit guard, late abort, hung body, and pacing stall", async () => {
+  const exits: number[] = [];
+  const guard = createExitGuard((code) => exits.push(code));
+  guard.arm(1, () => new Promise(() => undefined), 30);
+  guard.arm(130, async () => undefined, 1_000);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.deepEqual(exits, [1]);
+
+  const together: number[] = [];
+  const shared = createExitGuard((code) => together.push(code));
+  let releaseWrite!: () => void;
+  const writing = new Promise<void>((resolve) => {
+    releaseWrite = resolve;
+  });
+  shared.arm(1, () => writing, 1_000);
+  shared.arm(130, async () => undefined, 1_000);
+  releaseWrite();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(together, [1]);
+
+  const directory = await tempLedger();
+  const ledger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "late.json"),
+  );
+  let fetches = 0;
+  const session = new LiveSession(ledger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => {
+      fetches += 1;
+      return completedResponse({ label: "yes" });
+    },
+    maxTokensPerMinute: 0,
+    maxRetryWaitMs: 1_000,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 5_000,
+    attemptDeadlineMs: 5_000,
+    now: () => Date.now(),
+    sleep: async () => undefined,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  const realBegin = ledger.beginAttempt.bind(ledger);
+  const parent = new AbortController();
+  ledger.beginAttempt = async (tokens) => {
+    const held = await realBegin(tokens);
+    parent.abort();
+    return held;
+  };
+  const meter = async <T>(
+    _maximum: number,
+    call: () => Promise<{ value: T; tokens: number | null }>,
+  ) => (await call()).value;
+  await assert.rejects(
+    session.generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      parent.signal,
+    ),
+    /aborted|Cancelled/,
+  );
+  assert.equal(fetches, 0);
+  assert.equal(ledger.attempts, 0);
+  assert.equal(ledger.totalMicroUsd, 0);
+
+  const server = createServer((req, res) => {
+    req.resume();
+    res.writeHead(200, { "content-type": "application/json" });
+    res.write('{"status":"completed","output":[');
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = address && typeof address === "object" ? address.port : 0;
+  try {
+    const bodyLedger = new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, "body.json"),
+    );
+    const bodySession = new LiveSession(bodyLedger, [], false, {
+      endpoint: "https://example.openai.azure.com/",
+      apiKey: KEY,
+      deployment: "gpt-5.4-mini",
+      apiVersion: "v1",
+      fetch: (_url, init) =>
+        fetch(`http://127.0.0.1:${port}/`, {
+          method: "POST",
+          body: "{}",
+          ...(init?.signal ? { signal: init.signal } : {}),
+        }),
+      maxTokensPerMinute: 0,
+      maxRetryWaitMs: 1_000,
+      max429Retries: 1,
+      requestTimeoutMs: 5_000,
+      maxTotalWaitMs: 5_000,
+      attemptDeadlineMs: 80,
+      now: () => Date.now(),
+      sleep: async () => undefined,
+      random: () => 0,
+      predictMaxOutputTokens: 10,
+      proposeMaxOutputTokens: 10,
+      reasoningEffort: null,
+    });
+    await assert.rejects(
+      bodySession.generate(
+        { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+        "xxxx",
+        10,
+        meter,
+        new AbortController().signal,
+      ),
+      /Attempt deadline exceeded|aborted|timeout/i,
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+
+  const paceLedger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "pace.json"),
+  );
+  const paceSession = new LiveSession(paceLedger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => completedResponse({ label: "yes" }, { input_tokens: 80, output_tokens: 10 }),
+    maxTokensPerMinute: 112,
+    maxRetryWaitMs: 1_000,
+    max429Retries: 1,
+    requestTimeoutMs: 5_000,
+    maxTotalWaitMs: 60_000,
+    attemptDeadlineMs: 200,
+    now: () => 1_000,
+    sleep: () => new Promise(() => undefined),
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  await paceSession.generate(
+    { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+    "x".repeat(200),
+    10,
+    meter,
+    new AbortController().signal,
+  );
+  let pacedOut = false;
+  const paceWatch = createStallWatchdog({
+    intervalMs: 15,
+    stallMs: 40,
+    lastActivity: () => paceSession.lastActivityMs,
+    onStall: () => {
+      pacedOut = true;
+    },
+  });
+  const second = paceSession.generate(
+    { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+    "x".repeat(200),
+    10,
+    meter,
+    new AbortController().signal,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  paceWatch.stop();
+  assert.equal(pacedOut, true);
+  assert.equal(paceSession.inFlight > 0, true);
+  void second.catch(() => undefined);
+});
+
 test("pace reservation settles to actual tokens", async () => {
   const clock = fakeClock();
   const window = new TokenMinuteWindow(100, clock.now, clock.sleep);
@@ -1564,10 +1753,10 @@ test("progress ticker prints while waiting, and SIGINT writes a partial report",
         candidate: null,
       },
     ],
-    exit: (code) => {
+    guard: createExitGuard((code) => {
       exits.push(code);
       finished();
-    },
+    }),
   });
   handler("SIGINT");
   await done;
