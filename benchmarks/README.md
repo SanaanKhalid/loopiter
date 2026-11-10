@@ -183,7 +183,7 @@ There are no baked-in prices or caps.
 | `LOOPITER_BENCH_REASONING_EFFORT` | no | `reasoning.effort` on each request. Default `low`. Accepted values: `none`, `minimal`, `low`, `medium`, `high`. `minimal` is for deployments that accept it. `omit` leaves the field off. Anything else refuses to start |
 | `LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS` | no | `max_output_tokens` for an answer. Default `256`. A finite integer greater than zero |
 | `LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS` | no | `max_output_tokens` for a proposal. Default `1024`. A finite integer greater than zero |
-| `LOOPITER_BENCH_MAX_TPM` | no | Tokens per rolling minute, using the realistic reservation (bytes/4 plus the output bound). Unset or `0` turns pacing off. Any other value must be a finite integer greater than zero |
+| `LOOPITER_BENCH_MAX_TPM` | no | Tokens per rolling minute, using the realistic reservation (bytes/4 plus the output bound). The pacer uses 90% of this value so a full window is less likely to return HTTP 429. Unset or `0` turns pacing off. Any other value must be a finite integer greater than zero |
 | `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS` | no | Cap on each 429 wait. Default `60`. A finite integer greater than zero |
 | `LOOPITER_BENCH_MAX_429_RETRIES` | no | Extra attempts after HTTP 429. Default `6`. A finite integer greater than zero |
 | `LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS` | no | Per-request abort. Default `120`. A timed-out request is retried within the existing attempt limit |
@@ -205,7 +205,8 @@ proposal, unless the output-bound variables override them). `--estimate` uses
 those same bounds for the dollar projection and for the wall-time line.
 `pace tokens` is that input estimate plus the output bound. `projected wall
 minutes` is how long the TPM window needs for those pace tokens when
-`LOOPITER_BENCH_MAX_TPM` is set, and `pacing off` when it is not. The spend
+`LOOPITER_BENCH_MAX_TPM` is set. The projection uses 90% of that cap, matching
+the pacer, and `pacing off` when it is not set. The spend
 ceiling is still one input token per request byte plus the output bound, and
 it is not the wall-time rate. The candidate side of the plan is
 about 12× the baseline call count on the full split: one proposal, a paired
@@ -264,8 +265,13 @@ A timeout counts as a retryable attempt. The controller step that runs
 to use all of its attempts: calls × attempts × request timeout, plus the retry
 and pace waits those calls can spend. Those waits are bounded by the total-wait
 cap. The tick deadline covers that step, so a retry is not aborted when the
-first request times out. Transport errors, timeouts, and HTTP
-408, 409, 500, 502, 503, and 504 are retried once. HTTP 429 is retried up to
+first request times out. A per-request timeout, HTTP 500, 502, 503, and 504,
+and transient network failures (`fetch failed` and cause codes `ECONNRESET`,
+`ETIMEDOUT`, `ECONNREFUSED`, `EAI_AGAIN`, and `UND_ERR_SOCKET` or a socket hang
+up) are retried once. Each of those retries logs the error class, waits with
+the same exponential backoff and jitter as a 429 that has no `Retry-After`,
+and is still checked against the spend cap before it is sent. HTTP 4xx other
+than 429, and any other error, stop the run. HTTP 429 is retried up to
 `LOOPITER_BENCH_MAX_429_RETRIES` times. The wait uses `retry-after-ms` or
 `Retry-After` when the response has one, otherwise exponential backoff with
 jitter, and each wait is capped by `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS`.
@@ -278,7 +284,7 @@ ceiling (one input token per request byte plus the output bound). If the
 retries run out, the process stops with a partial report that counts the 429
 responses and the total wait. When `LOOPITER_BENCH_MAX_TPM` is set, requests
 are delayed so the rolling minute of the realistic reservation (bytes/4 plus
-the output bound) stays under that limit. After the response, the reservation
+the output bound) stays under 90% of that limit. After the response, the reservation
 is settled to the actual input plus output tokens. If actual usage is higher,
 the difference is debited in the same window. A single request larger than the
 limit is sent only while nothing else is in the window. Progress lines print

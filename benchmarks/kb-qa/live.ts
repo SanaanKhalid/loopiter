@@ -65,7 +65,15 @@ export const FULL_SEEDS = [1, 2, 3, 4, 5] as const;
 export const LIVE_OUTPUT_DIR = "reports/kb-qa-live";
 export const EVAL_BATCH_SIZE = 1;
 export const OBSERVE_CHUNK = 2;
-const NON_RATE_RETRY_WAIT_MS = 200;
+/** Pace at this fraction of LOOPITER_BENCH_MAX_TPM so a full window is less likely to 429. */
+export const PACE_HEADROOM = 0.9;
+const TRANSIENT_CODES = new Set([
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "EAI_AGAIN",
+  "UND_ERR_SOCKET",
+]);
 
 /** Model calls inside one controller callback. evaluateBatch scores both arms; observe scores a chunk. */
 export function maxModelCallsPerStep(
@@ -85,7 +93,7 @@ export function liveCallbackTimeoutMs(input: {
 }): number {
   const requestBudget = input.callsPerStep * MAX_ATTEMPTS * input.requestTimeoutMs;
   const perCallWaits =
-    NON_RATE_RETRY_WAIT_MS * Math.max(0, MAX_ATTEMPTS - 1) +
+    input.maxRetryWaitMs * Math.max(0, MAX_ATTEMPTS - 1) +
     input.max429Retries * input.maxRetryWaitMs;
   const waitBudget = Math.min(input.maxTotalWaitMs, input.callsPerStep * perCallWaits);
   return requestBudget + waitBudget;
@@ -93,7 +101,39 @@ export function liveCallbackTimeoutMs(input: {
 const CLOCK_START = "2026-04-15T12:00:00.000Z";
 const BOOTSTRAP_SAMPLES = 2000;
 const BOOTSTRAP_SEED = 17;
-const RETRY_STATUSES = new Set([408, 409, 429, 500, 502, 503, 504]);
+const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+/** Tokens reserved in the rolling minute. Zero stays off. A positive cap keeps at least one token. */
+export function pacedTokenLimit(configured: number): number {
+  if (!Number.isFinite(configured) || configured <= 0) return 0;
+  return Math.max(1, Math.floor(configured * PACE_HEADROOM));
+}
+
+/** Class of a transient network failure, or null when the error should stop the run. */
+export function transientErrorClass(error: unknown): string | null {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  let fallback: string | null = null;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && TRANSIENT_CODES.has(code)) return code;
+    const message = current instanceof Error ? current.message : "";
+    if (/socket hang up/i.test(message)) return "UND_ERR_SOCKET";
+    const name = (current as { name?: string }).name;
+    if (name === "TimeoutError") fallback ??= "TimeoutError";
+    if (name === "TypeError" && /fetch failed/i.test(message)) fallback ??= "TypeError";
+    current = (current as { cause?: unknown }).cause;
+  }
+  return fallback;
+}
+
+function transientError(klass: string, message: string): Error {
+  const error = new Error(message);
+  error.name = klass;
+  if (TRANSIENT_CODES.has(klass)) (error as Error & { code?: string }).code = klass;
+  return error;
+}
 
 export const LIVE_ENV = {
   allow: "LOOPITER_BENCH_ALLOW_LIVE",
@@ -522,7 +562,7 @@ export function renderEstimate(
     `Reasoning effort: ${limits.reasoningEffort ?? "omitted"}`,
     `Predict max output tokens: ${limits.predictMaxOutputTokens}`,
     `Propose max output tokens: ${limits.proposeMaxOutputTokens}`,
-    `Projection: input tokens are ceil(UTF-8 bytes / 4) of each request body. Output tokens are the max_output_tokens bound (${limits.predictMaxOutputTokens} for predict, ${limits.proposeMaxOutputTokens} for propose). Each call is rounded to micro-USD and summed. Cache discounts are not included. The pre-call spend ceiling still counts one input token per request byte plus that same output bound. TPM pacing reserves the smaller estimate (bytes/4 plus the output bound) and the wall-time line uses that reservation, not the spend ceiling.`,
+    `Projection: input tokens are ceil(UTF-8 bytes / 4) of each request body. Output tokens are the max_output_tokens bound (${limits.predictMaxOutputTokens} for predict, ${limits.proposeMaxOutputTokens} for propose). Each call is rounded to micro-USD and summed. Cache discounts are not included. The pre-call spend ceiling still counts one input token per request byte plus that same output bound. TPM pacing reserves the smaller estimate (bytes/4 plus the output bound) against ${Math.round(PACE_HEADROOM * 100)}% of LOOPITER_BENCH_MAX_TPM, and the wall-time line uses that reservation and that pace, not the spend ceiling.`,
     "Candidate prompt sizes use a same-shape replacement fragment because the live proposal is not known ahead of time.",
     "",
     formatPlan(smoke, priced, maxTokensPerMinute),
@@ -788,7 +828,11 @@ export class LiveSession {
     this.now = options.now;
     this.sleep = options.sleep;
     this.random = options.random;
-    this.pacer = new TokenMinuteWindow(options.maxTokensPerMinute, options.now, options.sleep);
+    this.pacer = new TokenMinuteWindow(
+      pacedTokenLimit(options.maxTokensPerMinute),
+      options.now,
+      options.sleep,
+    );
     const hidden = this.secrets;
     const baseFetch = options.fetch ?? fetch;
     const fetchImpl: typeof fetch = async (url, init) => {
@@ -796,8 +840,11 @@ export class LiveSession {
         return await baseFetch(url, init);
       } catch (error) {
         const text = redactSecrets(errorText(error), hidden);
-        if (isTimeoutError(error) || isTimeoutError(init?.signal?.reason))
-          throw timeoutError(`Request timed out. ${text}`);
+        const klass =
+          isTimeoutError(error) || isTimeoutError(init?.signal?.reason)
+            ? "TimeoutError"
+            : transientErrorClass(error);
+        if (klass) throw transientError(klass, text);
         throw new Error(text);
       }
     };
@@ -851,6 +898,7 @@ export class LiveSession {
             throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
           rateRetries += 1;
           const wait = retryWaitMs(rateRetries, error.retryAfterMs, this.maxRetryWaitMs, this.random);
+          console.error("retrying HTTP 429");
           this.activity = "waiting on retry";
           this.guardWait(wait);
           this.waitMs += wait;
@@ -858,13 +906,26 @@ export class LiveSession {
           this.activity = "running";
           continue;
         }
-        if (!retryable(error) || otherRetries >= MAX_ATTEMPTS - 1) {
+        const networkClass = transientErrorClass(error);
+        const httpStatus =
+          error instanceof ProviderRequestError && RETRY_STATUSES.has(error.status)
+            ? error.status
+            : null;
+        if ((!networkClass && httpStatus === null) || otherRetries >= MAX_ATTEMPTS - 1) {
           const message = redactSecrets(errorText(error), this.secrets);
           this.lastError = message;
           throw new Error(message);
         }
+        const worst: TokenUse = {
+          input: inputTokenCeiling(body),
+          output: maxOutput,
+          cached: 0,
+        };
+        if (!this.ledger.allow(worst, this.stopAtWarn))
+          throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
         otherRetries += 1;
-        const wait = NON_RATE_RETRY_WAIT_MS * otherRetries;
+        const wait = retryWaitMs(otherRetries, null, this.maxRetryWaitMs, this.random);
+        console.error(`retrying ${networkClass ?? `HTTP ${httpStatus}`}`);
         this.activity = "waiting on retry";
         this.guardWait(wait);
         this.waitMs += wait;
@@ -1502,8 +1563,9 @@ function wallMinutes(
   calls: readonly { inputTokens: number; outputTokens: number }[],
   maxTokensPerMinute: number,
 ): string {
-  if (maxTokensPerMinute <= 0) return "pacing off";
-  const ms = projectedWallMs(calls, maxTokensPerMinute);
+  const limit = pacedTokenLimit(maxTokensPerMinute);
+  if (limit <= 0) return "pacing off";
+  const ms = projectedWallMs(calls, limit);
   return (ms / 60_000).toFixed(2);
 }
 
@@ -2331,14 +2393,6 @@ function isTimeoutError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   if ((error as { name?: string }).name === "TimeoutError") return true;
   return isTimeoutError((error as { cause?: unknown }).cause);
-}
-
-function retryable(error: unknown): boolean {
-  if (error instanceof ProviderRequestError) return RETRY_STATUSES.has(error.status);
-  if (error instanceof LoopiterError) return false;
-  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "TypeError"))
-    return true;
-  return false;
 }
 
 function errorText(error: unknown): string {

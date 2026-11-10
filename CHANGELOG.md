@@ -4,6 +4,7 @@
 
 ### Minor
 
+- The live KB-QA harness retries a transient `fetch failed` network error once, with the same backoff and spend checks as other retries, and paces at 90% of `LOOPITER_BENCH_MAX_TPM`.
 - Controller step and tick deadlines can be raised up to one hour. The tick deadline covers the step. The live KB-QA harness sets that step from the calls in one callback, the request attempts, and the retry waits, bounded by the total-wait cap.
 - Fresh self-hosted `init` writes onboarding plan schemaVersion 2, preset `autonomous-default`, in Node and Python: `mode` autonomous and self-improving on. Doctor still accepts schemaVersion 1 plans and does not rewrite them.
 - `ImprovementController` constructed without a mode still recommends and does not apply. The worker still requires `--enable` before spending. New setup recipes pass `--enable --mode autonomous` after doctor and verify. `--mode recommend` remains one flag away, and omitting `--mode` still selects recommend.

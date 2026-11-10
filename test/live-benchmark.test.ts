@@ -30,6 +30,8 @@ import {
   formatProgress,
   liveCostMicroUsd,
   liveOptionsFromEnv,
+  PACE_HEADROOM,
+  pacedTokenLimit,
   planLiveRun,
   projectedWallMs,
   redactSecrets,
@@ -947,7 +949,7 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
       const input_tokens = fetches === 1 ? 55 : 35;
       return completedResponse({ label: "yes" }, { input_tokens, output_tokens: 5 });
     },
-    maxTokensPerMinute: 100,
+    maxTokensPerMinute: 112,
     maxRetryWaitMs: 1_000,
     max429Retries: 1,
     requestTimeoutMs: 1_000,
@@ -1053,6 +1055,255 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
   assert.equal((report.stopped?.message ?? "").includes("Callback deadline exceeded"), false);
 });
 
+test("transient fetch failures retry within the attempt and wait caps", async () => {
+  const clock = fakeClock();
+  const directory = await tempLedger();
+  const logs: string[] = [];
+  const original = console.error;
+  console.error = (message?: unknown) => {
+    logs.push(String(message));
+  };
+  const networkError = () => {
+    const cause = new Error("socket reset");
+    (cause as Error & { code: string }).code = "ECONNRESET";
+    const error = new TypeError("fetch failed");
+    (error as TypeError & { cause?: unknown }).cause = cause;
+    return error;
+  };
+  try {
+    let fetches = 0;
+    const ledger = new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, "recovered.json"),
+    );
+    const session = new LiveSession(ledger, [KEY], false, {
+      endpoint: "https://example.openai.azure.com/",
+      apiKey: KEY,
+      deployment: "gpt-5.4-mini",
+      apiVersion: "v1",
+      fetch: async () => {
+        fetches += 1;
+        if (fetches === 1) throw networkError();
+        return completedResponse({ label: "yes" });
+      },
+      maxTokensPerMinute: 0,
+      maxRetryWaitMs: 60_000,
+      max429Retries: 1,
+      requestTimeoutMs: 1_000,
+      maxTotalWaitMs: 60_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      random: () => 0,
+      predictMaxOutputTokens: 10,
+      proposeMaxOutputTokens: 10,
+      reasoningEffort: null,
+    });
+    const meter = async <T>(
+      _maximum: number,
+      call: () => Promise<{ value: T; tokens: number | null }>,
+    ) => (await call()).value;
+    await session.generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      new AbortController().signal,
+    );
+    assert.equal(fetches, 2);
+    assert.equal(ledger.attempts, 2);
+    assert.equal(ledger.calls, 1);
+    assert.ok(ledger.totalMicroUsd > 0);
+    assert.deepEqual(clock.sleeps, [1_000]);
+    assert.match(logs.join("\n"), /retrying ECONNRESET/);
+    assert.equal(logs.join("\n").includes(KEY), false);
+
+    let refused = 0;
+    const limited = new LiveLedger(
+      { totalMicroUsd: 20, invocationMicroUsd: 100, warnMicroUsd: 10 },
+      pricesOf(1, 1, 0),
+      join(directory, "capped.json"),
+    );
+    const capped = new LiveSession(limited, [], false, {
+      endpoint: "https://example.openai.azure.com/",
+      apiKey: KEY,
+      deployment: "gpt-5.4-mini",
+      apiVersion: "v1",
+      fetch: async () => {
+        refused += 1;
+        throw networkError();
+      },
+      maxTokensPerMinute: 0,
+      maxRetryWaitMs: 60_000,
+      max429Retries: 1,
+      requestTimeoutMs: 1_000,
+      maxTotalWaitMs: 60_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      random: () => 0,
+      predictMaxOutputTokens: 10,
+      proposeMaxOutputTokens: 10,
+      reasoningEffort: null,
+    });
+    await assert.rejects(
+      capped.generate(
+        { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+        "xxxx",
+        10,
+        meter,
+        new AbortController().signal,
+      ),
+      /LOOPITER_BENCH_TOTAL_CAP/,
+    );
+    assert.equal(refused, 1);
+    assert.equal(limited.attempts, 1);
+    assert.ok(limited.totalMicroUsd > 0);
+    assert.equal(limited.stopReason, "total_cap");
+
+    let exhausted = 0;
+    const open = new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, "exhausted.json"),
+    );
+    const givingUp = new LiveSession(open, [], false, {
+      endpoint: "https://example.openai.azure.com/",
+      apiKey: KEY,
+      deployment: "gpt-5.4-mini",
+      apiVersion: "v1",
+      fetch: async () => {
+        exhausted += 1;
+        throw networkError();
+      },
+      maxTokensPerMinute: 0,
+      maxRetryWaitMs: 60_000,
+      max429Retries: 1,
+      requestTimeoutMs: 1_000,
+      maxTotalWaitMs: 60_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      random: () => 0,
+      predictMaxOutputTokens: 10,
+      proposeMaxOutputTokens: 10,
+      reasoningEffort: null,
+    });
+    await assert.rejects(
+      givingUp.generate(
+        { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+        "xxxx",
+        10,
+        meter,
+        new AbortController().signal,
+      ),
+      /fetch failed|ECONNRESET|socket reset/i,
+    );
+    assert.equal(exhausted, MAX_ATTEMPTS);
+    assert.equal(open.attempts, MAX_ATTEMPTS);
+
+    const waitingClock = fakeClock();
+    let waitedFetches = 0;
+    const waitingLedger = new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, "waiting.json"),
+    );
+    const waiting = new LiveSession(waitingLedger, [], false, {
+      endpoint: "https://example.openai.azure.com/",
+      apiKey: KEY,
+      deployment: "gpt-5.4-mini",
+      apiVersion: "v1",
+      fetch: async () => {
+        waitedFetches += 1;
+        throw networkError();
+      },
+      maxTokensPerMinute: 0,
+      maxRetryWaitMs: 60_000,
+      max429Retries: 1,
+      requestTimeoutMs: 1_000,
+      maxTotalWaitMs: 100,
+      now: waitingClock.now,
+      sleep: waitingClock.sleep,
+      random: () => 0,
+      predictMaxOutputTokens: 10,
+      proposeMaxOutputTokens: 10,
+      reasoningEffort: null,
+    });
+    await assert.rejects(
+      waiting.generate(
+        { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+        "xxxx",
+        10,
+        meter,
+        new AbortController().signal,
+      ),
+      /Cumulative wait reached/,
+    );
+    assert.equal(waitedFetches, 1);
+    assert.equal(waitingLedger.attempts, 1);
+    assert.equal(waiting.waitLimitReached, true);
+    assert.deepEqual(waitingClock.sleeps, []);
+
+    let fatalFetches = 0;
+    const fatalLedger = new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, "fatal.json"),
+    );
+    const fatal = new LiveSession(fatalLedger, [], false, {
+      endpoint: "https://example.openai.azure.com/",
+      apiKey: KEY,
+      deployment: "gpt-5.4-mini",
+      apiVersion: "v1",
+      fetch: async () => {
+        fatalFetches += 1;
+        if (fatalFetches === 1) throw new TypeError("Invalid URL");
+        return new Response("{}", { status: 400, headers: { "content-type": "application/json" } });
+      },
+      maxTokensPerMinute: 1000,
+      maxRetryWaitMs: 60_000,
+      max429Retries: 1,
+      requestTimeoutMs: 1_000,
+      maxTotalWaitMs: 60_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      random: () => 0,
+      predictMaxOutputTokens: 10,
+      proposeMaxOutputTokens: 10,
+      reasoningEffort: null,
+    });
+    await assert.rejects(
+      fatal.generate(
+        { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+        "xxxx",
+        10,
+        meter,
+        new AbortController().signal,
+      ),
+      /Invalid URL/,
+    );
+    assert.equal(fatalFetches, 1);
+    await assert.rejects(
+      fatal.generate(
+        { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+        "xxxx",
+        10,
+        meter,
+        new AbortController().signal,
+      ),
+      /HTTP 400/,
+    );
+    assert.equal(fatalFetches, 2);
+    assert.equal(fatalLedger.attempts, 2);
+    const paced = new TokenMinuteWindow(pacedTokenLimit(1000), clock.now, clock.sleep);
+    const first = await paced.acquire(500);
+    assert.equal(first.waited, 0);
+    const second = await paced.acquire(500);
+    assert.equal(second.waited, 60_000);
+  } finally {
+    console.error = original;
+  }
+});
+
 test("pace reservation settles to actual tokens", async () => {
   const clock = fakeClock();
   const window = new TokenMinuteWindow(100, clock.now, clock.sleep);
@@ -1139,7 +1390,11 @@ test("estimate wall time uses the realistic pace, not the spend ceiling", () => 
   const realistic = smoke.inputTokens + smoke.outputTokens;
   const ceiling = smoke.ceilingInputTokens + smoke.outputTokens;
   assert.ok(realistic < ceiling);
-  const minutes = (projectedWallMs(smoke.calls, 50_000) / 60_000).toFixed(2);
+  const minutes = (projectedWallMs(smoke.calls, pacedTokenLimit(50_000)) / 60_000).toFixed(2);
+  assert.equal(PACE_HEADROOM, 0.9);
+  assert.equal(pacedTokenLimit(50_000), 45_000);
+  assert.equal(pacedTokenLimit(1), 1);
+  assert.equal(pacedTokenLimit(0), 0);
   assert.match(text, new RegExp(`pace tokens: ${realistic}`));
   assert.match(text, new RegExp(`projected wall minutes: ${minutes}`));
   assert.match(estimateFromEnv(scrubbed({
