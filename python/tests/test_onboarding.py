@@ -93,6 +93,38 @@ class OnboardingTests(unittest.TestCase):
                 initialize_self_hosted(dangling)
             self.assertFalse(absent.exists())
 
+    def test_init_appends_state_gitignore_once(self):
+        root_ignore = (ROOT / ".gitignore").read_text()
+        self.assertRegex(root_ignore, r"(?m)^\.state/$")
+        with tempfile.TemporaryDirectory() as root:
+            destination = Path(root) / "existing"
+            destination.mkdir()
+            (destination / ".gitignore").write_text("dist")
+            (destination / "user-owned.txt").write_text("keep")
+            with self.assertRaises(FileExistsError):
+                initialize_self_hosted(destination)
+            once = (destination / ".gitignore").read_text()
+            self.assertEqual(once, "dist\n.state/\n")
+            with self.assertRaises(FileExistsError):
+                initialize_self_hosted(destination)
+            self.assertEqual((destination / ".gitignore").read_text(), once)
+            self.assertEqual((destination / "user-owned.txt").read_text(), "keep")
+            already = Path(root) / "already"
+            already.mkdir()
+            (already / ".gitignore").write_text("# .state/\n!.state/\n/.state/\n")
+            with self.assertRaises(FileExistsError):
+                initialize_self_hosted(already)
+            self.assertEqual(
+                (already / ".gitignore").read_text(),
+                "# .state/\n!.state/\n/.state/\n",
+            )
+            commented = Path(root) / "commented"
+            commented.mkdir()
+            (commented / ".gitignore").write_text("# .state/\n")
+            with self.assertRaises(FileExistsError):
+                initialize_self_hosted(commented)
+            self.assertEqual((commented / ".gitignore").read_text(), "# .state/\n.state/\n")
+
     def test_doctor_never_imports_application_or_prints_credentials(self):
         with tempfile.TemporaryDirectory() as root:
             destination = Path(root) / "setup"
@@ -382,6 +414,28 @@ async def create_integration(*, cancellation):
             self.assertEqual(len(recorded["planHash"]), 64)
             plan_path = Path(root) / "integration-plan.json"
             stored = json.loads(plan_path.read_text())
+            stored["budget"] = {"tokens": 1000}
+            plan_path.write_text(json.dumps(stored))
+            changed_budget = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(changed_budget.returncode, 1)
+            self.assertIn("one-time confirmation", changed_budget.stderr)
+            del stored["budget"]
             stored["namespace"] = "app/other"
             plan_path.write_text(json.dumps(stored))
             fresh = subprocess.run(

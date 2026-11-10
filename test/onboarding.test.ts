@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -86,6 +86,39 @@ test("self-hosted init never overwrites user files or follows an existing destin
     const dangling = join(root, "dangling");
     await symlink(join(root, "must-not-be-created"), dangling, "dir");
     await assert.rejects(initializeSelfHosted(dangling), { code: "EEXIST" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("init appends .state/ to an existing gitignore once", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-gitignore-"));
+  try {
+    const repoIgnore = await readFile(new URL("../../.gitignore", import.meta.url), "utf8");
+    assert.match(repoIgnore, /^\.state\/$/m);
+    const destination = join(root, "existing");
+    await mkdir(destination);
+    await writeFile(join(destination, ".gitignore"), "dist");
+    await writeFile(join(destination, "user-owned.txt"), "keep");
+    await assert.rejects(initializeSelfHosted(destination), { code: "EEXIST" });
+    const once = await readFile(join(destination, ".gitignore"), "utf8");
+    assert.equal(once, "dist\n.state/\n");
+    await assert.rejects(initializeSelfHosted(destination), { code: "EEXIST" });
+    assert.equal(await readFile(join(destination, ".gitignore"), "utf8"), once);
+    assert.equal(await readFile(join(destination, "user-owned.txt"), "utf8"), "keep");
+    const already = join(root, "already");
+    await mkdir(already);
+    await writeFile(join(already, ".gitignore"), "# .state/\n!.state/\n/.state/\n");
+    await assert.rejects(initializeSelfHosted(already), { code: "EEXIST" });
+    assert.equal(
+      await readFile(join(already, ".gitignore"), "utf8"),
+      "# .state/\n!.state/\n/.state/\n",
+    );
+    const commented = join(root, "commented");
+    await mkdir(commented);
+    await writeFile(join(commented, ".gitignore"), "# .state/\n");
+    await assert.rejects(initializeSelfHosted(commented), { code: "EEXIST" });
+    assert.equal(await readFile(join(commented, ".gitignore"), "utf8"), "# .state/\n.state/\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -437,6 +470,12 @@ export async function createIntegration() {
     assert.equal(stamp.entries["app/dev"]!.planHash.length, 64);
     const planPath = join(root, "integration-plan.json");
     const storedPlan = JSON.parse(await readFile(planPath, "utf8"));
+    storedPlan.budget = { tokens: 1000 };
+    await writeFile(planPath, JSON.stringify(storedPlan));
+    const changedBudget = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(changedBudget.status, 1);
+    assert.match(changedBudget.stderr, /one-time confirmation/);
+    delete storedPlan.budget;
     storedPlan.namespace = "app/other";
     await writeFile(planPath, JSON.stringify(storedPlan));
     const freshNamespace = run(["worker", "--module", module, "--enable", "--once"]);

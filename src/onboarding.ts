@@ -1,6 +1,6 @@
 /** Node-only self-hosted onboarding. No platform account or external service is used. */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -108,7 +108,8 @@ export function activationActor(env: NodeJS.ProcessEnv = process.env): string {
   return "unknown";
 }
 
-/** Hash of the plan fields that decide autonomous activation. The stamp is not included. */
+/** Hash of the plan fields that decide autonomous activation. The stamp is not included.
+ * This is a consent record, not a signed or machine-bound check. */
 export function autonomyPlanHash(plan: Record<string, unknown> | undefined): string {
   const step = plan && Object.hasOwn(plan, "stepTimeoutMs") ? plan.stepTimeoutMs : 120000;
   return hash({
@@ -118,6 +119,8 @@ export function autonomyPlanHash(plan: Record<string, unknown> | undefined): str
     namespace: typeof plan?.namespace === "string" ? plan.namespace : "",
     stepTimeoutMs: typeof step === "number" ? step : null,
     audit: plan?.audit ?? null,
+    policy: plan?.policy ?? null,
+    budget: plan?.budget ?? null,
   });
 }
 
@@ -274,12 +277,57 @@ function auditPlanMessages(plan: Record<string, unknown>): {
   const message = `Audit of ${row.minimumUnits} units cannot certify a gain of ${row.minimumImprovement} at alpha ${row.alpha}. At least ${needed} units are required.`;
   return plan.mode === "autonomous" ? { error: message } : { warning: message };
 }
+const STATE_IGNORE_LINE = ".state/";
+
+function gitignoreLineCoversState(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("!")) return false;
+  return (
+    trimmed === ".state" ||
+    trimmed === ".state/" ||
+    trimmed === "/.state" ||
+    trimmed === "/.state/" ||
+    trimmed === "**/.state" ||
+    trimmed === "**/.state/"
+  );
+}
+
+/** Append `.state/` to an existing setup .gitignore. A second call does not duplicate it. */
+export async function ensureStateGitignored(directory: string): Promise<void> {
+  const destination = resolve(directory);
+  let info;
+  try {
+    info = await lstat(destination);
+  } catch {
+    return;
+  }
+  if (!info.isDirectory()) return;
+  const path = resolve(destination, ".gitignore");
+  let gitignore;
+  try {
+    gitignore = await lstat(path);
+  } catch {
+    return;
+  }
+  if (!gitignore.isFile()) return;
+  const text = await readFile(path, "utf8");
+  if (text.split(/\r?\n/).some(gitignoreLineCoversState)) return;
+  const separator = text.length === 0 || text.endsWith("\n") ? "" : "\n";
+  await appendFile(path, `${separator}${STATE_IGNORE_LINE}\n`);
+}
+
 export async function initializeSelfHosted(directory: string) {
   const destination = resolve(directory);
   const guide = await readAgentGuide();
   await mkdir(dirname(destination), { recursive: true });
   // Existing directories (including symlinks) are deliberately never merged or replaced.
-  await mkdir(destination, { mode: 0o700 });
+  try {
+    await mkdir(destination, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST")
+      await ensureStateGitignored(destination);
+    throw error;
+  }
   const plan = {
     schemaVersion: 2,
     language: "node",
@@ -312,7 +360,7 @@ export async function initializeSelfHosted(directory: string) {
     "integration-plan.json": JSON.stringify(plan, null, 2) + "\n",
     "verify.mjs":
       'import { verifySelfHostedInstallation } from "loopiter/onboarding";\nconsole.log(JSON.stringify(await verifySelfHostedInstallation(), null, 2));\n',
-    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.\n\nOn a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it, when, and a hash of the plan's autonomy settings. A later run reuses the stamp. A new namespace or a change to mode, self-improving, step timeout, or audit sizing asks again. The flag does not bypass audit, budget, or rollback gates.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode autonomous --once\n\n--enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode recommend --once\n\nOmitting --mode uses plan.mode. The --mode flag overrides the plan. Set plan.mode to recommend to turn off autonomous. Constructing ImprovementController without a mode stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
+    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.\n\nOn a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it and when. The stamp is a consent record, not a security boundary: it is not signed and it is not bound to a machine. Its hash covers mode, self-improving, namespace, step timeout, audit sizing, and the plan's policy and budget. A later run reuses the stamp. A new namespace or a change to those settings asks again. The flag does not bypass audit, budget, or rollback gates. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode autonomous --once\n\n--enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode recommend --once\n\nOmitting --mode uses plan.mode. The --mode flag overrides the plan. Set plan.mode to recommend to turn off autonomous. Constructing ImprovementController without a mode stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
   };
   for (const [name, contents] of Object.entries(files)) {
     await writeFile(resolve(destination, name), contents, {

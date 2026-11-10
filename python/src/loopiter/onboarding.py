@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import signal
+import stat
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -137,6 +138,8 @@ def autonomy_plan_hash(plan):
             "namespace": plan.get("namespace") if isinstance(plan.get("namespace"), str) else "",
             "stepTimeoutMs": step if type(step) is int else None,
             "audit": plan.get("audit"),
+            "policy": plan.get("policy"),
+            "budget": plan.get("budget"),
         }
     )
 
@@ -238,13 +241,51 @@ def _audit_plan_messages(plan):
     return {"error": message} if plan.get("mode") == "autonomous" else {"warning": message}
 
 
+_STATE_IGNORE_LINES = {".state", ".state/", "/.state", "/.state/", "**/.state", "**/.state/"}
+
+
+def _gitignore_line_covers_state(line):
+    trimmed = line.strip()
+    if not trimmed or trimmed.startswith("#") or trimmed.startswith("!"):
+        return False
+    return trimmed in _STATE_IGNORE_LINES
+
+
+def ensure_state_gitignored(directory):
+    """Append `.state/` to an existing setup .gitignore. A second call does not duplicate it."""
+    destination = Path(directory)
+    try:
+        info = destination.lstat()
+    except OSError:
+        return
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        return
+    path = destination / ".gitignore"
+    try:
+        git_info = path.lstat()
+    except OSError:
+        return
+    if not stat.S_ISREG(git_info.st_mode) or stat.S_ISLNK(git_info.st_mode):
+        return
+    text = path.read_text(encoding="utf-8")
+    if any(_gitignore_line_covers_state(line) for line in text.splitlines()):
+        return
+    prefix = "" if text.endswith("\n") or text == "" else "\n"
+    with path.open("a", encoding="utf-8") as output:
+        output.write(f"{prefix}.state/\n")
+
+
 def initialize_self_hosted(directory):
     # Keep the final component lexical so even a dangling symlink is rejected by mkdir.
     destination = Path(directory).absolute()
     guide = read_agent_guide()
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Never merge with or follow an existing destination/symlink.
-    destination.mkdir(mode=0o700)
+    try:
+        destination.mkdir(mode=0o700)
+    except FileExistsError:
+        ensure_state_gitignored(destination)
+        raise
     plan = {
         "schemaVersion": 2,
         "language": "python",
@@ -290,7 +331,7 @@ This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and
 
 After doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
 
-On a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it, when, and a hash of the plan's autonomy settings. A later run reuses the stamp. A new namespace or a change to mode, self-improving, step timeout, or audit sizing asks again. The flag does not bypass audit, budget, or rollback gates.
+On a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it and when. The stamp is a consent record, not a security boundary: it is not signed and it is not bound to a machine. Its hash covers mode, self-improving, namespace, step timeout, audit sizing, and the plan's policy and budget. A later run reuses the stamp. A new namespace or a change to those settings asks again. The flag does not bypass audit, budget, or rollback gates. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
 
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --mode autonomous --once
 
@@ -553,7 +594,11 @@ def main(argv=None):
     worker.add_argument(
         "--confirm-activation",
         action="store_true",
-        help="Record the one-time autonomous confirmation for this namespace and plan. Later runs reuse it until autonomy settings change.",
+        help=(
+            "Record the one-time autonomous confirmation for this namespace and plan. "
+            "Later runs reuse it until mode, namespace, audit, policy, or budget changes. "
+            "The stamp is a consent record, not a signed or machine-bound check."
+        ),
     )
     worker.add_argument(
         "--yes",
