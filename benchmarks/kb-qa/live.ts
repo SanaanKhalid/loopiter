@@ -167,7 +167,18 @@ export class LiveLedger {
     },
     readonly prices: LivePrices,
     readonly path: string,
-  ) {}
+  ) {
+    requireFinite(prices.inputUsdPerMillion, LIVE_ENV.priceInput, false);
+    requireFinite(prices.outputUsdPerMillion, LIVE_ENV.priceOutput, false);
+    requireFinite(prices.cachedInputUsdPerMillion, LIVE_ENV.priceCached, true);
+    requireFinite(caps.totalMicroUsd, LIVE_ENV.totalCap, false);
+    requireFinite(caps.invocationMicroUsd, LIVE_ENV.invocationCap, false);
+    requireFinite(caps.warnMicroUsd, LIVE_ENV.warn, false);
+    if (caps.warnMicroUsd > caps.totalMicroUsd)
+      throw new LiveGateError(
+        `${LIVE_ENV.warn} must be less than or equal to ${LIVE_ENV.totalCap}. Refusing to start.`,
+      );
+  }
 
   static async open(
     path: string,
@@ -679,6 +690,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
   if (options.seeds.length < 1) throw new LiveGateError("At least one seed is required.");
   if (new Set(options.seeds).size !== options.seeds.length)
     throw new LiveGateError("Seeds must be unique.");
+  assertLiveSpendGuards(options);
   const secrets = [options.apiKey];
   const caps = {
     totalMicroUsd: usdToMicro(options.totalCapUsd),
@@ -801,6 +813,7 @@ export function liveOptionsFromEnv(
   const totalCapUsd = readDecimal(env, LIVE_ENV.totalCap, false);
   const warnUsd = readDecimal(env, LIVE_ENV.warn, false);
   const invocationCapUsd = readDecimal(env, LIVE_ENV.invocationCap, false);
+  assertLiveSpendGuards({ prices, totalCapUsd, warnUsd, invocationCapUsd });
   const endpoint = requiredEnv(env, LIVE_ENV.endpoint);
   const apiKey = requiredEnv(env, LIVE_ENV.apiKey);
   const deployment = env[LIVE_ENV.deployment]?.trim() || DEFAULT_DEPLOYMENT;
@@ -836,9 +849,37 @@ function readEstimatePrices(env: NodeJS.ProcessEnv): {
 
 function readLivePrices(env: NodeJS.ProcessEnv): LivePrices {
   return {
-    ...readEstimatePrices(env),
+    inputUsdPerMillion: readDecimal(env, LIVE_ENV.priceInput, false),
+    outputUsdPerMillion: readDecimal(env, LIVE_ENV.priceOutput, false),
     cachedInputUsdPerMillion: readDecimal(env, LIVE_ENV.priceCached, true),
   };
+}
+
+function assertLiveSpendGuards(input: {
+  prices: LivePrices;
+  totalCapUsd: number;
+  warnUsd: number;
+  invocationCapUsd: number;
+}): void {
+  requireFinite(input.prices.inputUsdPerMillion, LIVE_ENV.priceInput, false);
+  requireFinite(input.prices.outputUsdPerMillion, LIVE_ENV.priceOutput, false);
+  requireFinite(input.prices.cachedInputUsdPerMillion, LIVE_ENV.priceCached, true);
+  requireFinite(input.totalCapUsd, LIVE_ENV.totalCap, false);
+  requireFinite(input.warnUsd, LIVE_ENV.warn, false);
+  requireFinite(input.invocationCapUsd, LIVE_ENV.invocationCap, false);
+  if (input.warnUsd > input.totalCapUsd)
+    throw new LiveGateError(
+      `${LIVE_ENV.warn} must be less than or equal to ${LIVE_ENV.totalCap}. Refusing to start.`,
+    );
+}
+
+function requireFinite(value: number, name: string, allowZero: boolean): void {
+  if (!Number.isFinite(value) || value < 0 || (!allowZero && !(value > 0)))
+    throw new LiveGateError(
+      allowZero
+        ? `${name} must be a finite number greater than or equal to zero. Refusing to start.`
+        : `${name} must be a finite number greater than zero. Refusing to start.`,
+    );
 }
 
 function readDecimal(env: NodeJS.ProcessEnv, name: string, allowZero: boolean): number {
@@ -846,12 +887,13 @@ function readDecimal(env: NodeJS.ProcessEnv, name: string, allowZero: boolean): 
   if (raw === undefined || raw.trim() === "")
     throw new LiveGateError(`Missing ${name}. Refusing to start.`);
   if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(raw.trim()))
-    throw new LiveGateError(`${name} must be a non-negative decimal with no exponent.`);
-  const value = Number(raw.trim());
-  if (!Number.isFinite(value) || value < 0 || (!allowZero && value <= 0))
     throw new LiveGateError(
-      allowZero ? `${name} must be a non-negative number.` : `${name} must be greater than zero.`,
+      allowZero
+        ? `${name} must be a finite number greater than or equal to zero. Refusing to start.`
+        : `${name} must be a finite number greater than zero. Refusing to start.`,
     );
+  const value = Number(raw.trim());
+  requireFinite(value, name, allowZero);
   return value;
 }
 

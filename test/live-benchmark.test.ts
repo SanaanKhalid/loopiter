@@ -139,6 +139,97 @@ test("gating refuses a live run without the allow flag, prices, or caps", () => 
   assert.equal(options.apiKey, KEY);
 });
 
+test("live gating rejects zero, negative, and non-numeric prices and invalid caps", async () => {
+  const base = readyEnv();
+  const refused = ["0", "0.0", "-1", "NaN", "Infinity", "abc", ""];
+  for (const name of [LIVE_ENV.priceInput, LIVE_ENV.priceOutput])
+    for (const value of refused)
+      assert.throws(
+        () => liveOptionsFromEnv(scrubbed({ ...base, [name]: value }), blankArgs()),
+        new RegExp(name),
+      );
+  for (const name of [LIVE_ENV.totalCap, LIVE_ENV.warn, LIVE_ENV.invocationCap])
+    for (const value of refused)
+      assert.throws(
+        () => liveOptionsFromEnv(scrubbed({ ...base, [name]: value }), blankArgs()),
+        new RegExp(name),
+      );
+  assert.throws(
+    () =>
+      liveOptionsFromEnv(
+        scrubbed({ ...base, [LIVE_ENV.warn]: "200", [LIVE_ENV.totalCap]: "150" }),
+        blankArgs(),
+      ),
+    /less than or equal/,
+  );
+  const cachedZero = liveOptionsFromEnv(
+    scrubbed({ ...base, [LIVE_ENV.priceCached]: "0" }),
+    blankArgs(),
+  );
+  assert.equal(cachedZero.prices.cachedInputUsdPerMillion, 0);
+  const directory = await tempLedger();
+  let called = false;
+  await assert.rejects(
+    () =>
+      runLiveBenchmark({
+        seeds: [1],
+        smoke: false,
+        deployment: "gpt-5.4-mini",
+        apiVersion: "v1",
+        endpoint: "https://127.0.0.1/",
+        apiKey: KEY,
+        prices: { inputUsdPerMillion: 0, outputUsdPerMillion: 4.5, cachedInputUsdPerMillion: 0 },
+        totalCapUsd: 10,
+        warnUsd: 1,
+        invocationCapUsd: 1,
+        stopAtWarn: false,
+        ledgerPath: join(directory, "ledger.json"),
+        fetch: async () => {
+          called = true;
+          throw new Error("network");
+        },
+      }),
+    /LOOPITER_BENCH_PRICE_INPUT_PER_1M/,
+  );
+  assert.equal(called, false);
+  await assert.rejects(
+    () =>
+      runLiveBenchmark({
+        seeds: [1],
+        smoke: false,
+        deployment: "gpt-5.4-mini",
+        apiVersion: "v1",
+        endpoint: "https://127.0.0.1/",
+        apiKey: KEY,
+        prices: pricesOf(1, Number.NaN, 0),
+        totalCapUsd: 10,
+        warnUsd: 1,
+        invocationCapUsd: 1,
+        stopAtWarn: false,
+        ledgerPath: join(directory, "other.json"),
+      }),
+    /LOOPITER_BENCH_PRICE_OUTPUT_PER_1M/,
+  );
+  await assert.rejects(
+    () =>
+      runLiveBenchmark({
+        seeds: [1],
+        smoke: false,
+        deployment: "gpt-5.4-mini",
+        apiVersion: "v1",
+        endpoint: "https://127.0.0.1/",
+        apiKey: KEY,
+        prices: pricesOf(1, 1, 0),
+        totalCapUsd: 10,
+        warnUsd: 11,
+        invocationCapUsd: 1,
+        stopAtWarn: false,
+        ledgerPath: join(directory, "caps.json"),
+      }),
+    /less than or equal/,
+  );
+});
+
 test("CLI refuses live without both gates and does not echo the key", () => {
   const missing = spawnCli(["--live"], scrubbed({ [LIVE_ENV.apiKey]: KEY }));
   assert.equal(missing.status, 2);
@@ -246,7 +337,7 @@ test("pre-call cap stops before the next request and keeps a partial report", as
       prices,
       totalCapUsd: Number(formatUsd(worst)),
       invocationCapUsd: 100,
-      warnUsd: 100,
+      warnUsd: Number(formatUsd(worst)),
       rowLimit: 2,
       seeds: [1],
     });
