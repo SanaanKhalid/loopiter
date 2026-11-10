@@ -180,6 +180,9 @@ There are no baked-in prices or caps.
 | `LOOPITER_BENCH_TOTAL_CAP_USD` | live run | Cumulative cap across invocations. A Phase 1 ceiling of 150 USD is the planned budget |
 | `LOOPITER_BENCH_WARN_USD` | live run | Warn once when cumulative spend crosses it. A Phase 1 warning of 100 USD is the planned mark |
 | `LOOPITER_BENCH_INVOCATION_CAP_USD` | live run | Cap for this process only |
+| `LOOPITER_BENCH_REASONING_EFFORT` | no | `reasoning.effort` on each request. Default `low`. Accepted values: `none`, `minimal`, `low`, `medium`, `high`. `minimal` is for deployments that accept it. `omit` leaves the field off. Anything else refuses to start |
+| `LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS` | no | `max_output_tokens` for an answer. Default `256`. A finite integer greater than zero |
+| `LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS` | no | `max_output_tokens` for a proposal. Default `1024`. A finite integer greater than zero |
 
 Do not put the key in the shell history if that is a problem for you, and do
 not echo it. The process redacts the key and `api-key` / `Authorization` header
@@ -191,8 +194,10 @@ values from errors. It does not log request headers.
 not need a key, an endpoint, or the allow flag. It still needs the input and
 output prices. It prints the smoke plan (1 seed, 14 rows in each split) and the
 full plan (seeds 1–5, every row). Input tokens are `ceil(UTF-8 bytes / 4)` of
-each request body. Output tokens are the `max_output_tokens` bound sent on that
-call (64 for an answer, 512 for a proposal). The candidate side of the plan is
+each request body, including `reasoning` when it is sent. Output tokens are the
+`max_output_tokens` bound sent on that call (256 for an answer, 1024 for a
+proposal, unless the output-bound variables override them). `--estimate` uses
+those same bounds. The candidate side of the plan is
 about 12× the baseline call count on the full split: one proposal, a paired
 validation pass, a paired audit pass, production observation, and held-out
 scoring.
@@ -236,9 +241,15 @@ attempt, including a retry, is added to the ledger. The ledger is
 `reports/kb-qa-live/ledger.json`. A hold for the worst case is written before
 the request and replaced with the usage from the response when the response
 includes it. Failed attempts without usage keep the worst-case amount so a
-retry cannot be free. Each request sets `max_output_tokens`, times out after
-20 seconds, and retries at most once on 408, 409, 429, 500, 502, 503, 504, or
-a transport timeout.
+retry cannot be free. Each request sets `max_output_tokens` and, unless
+`LOOPITER_BENCH_REASONING_EFFORT=omit`, `reasoning.effort` (default `low`).
+A reasoning model can spend the whole output bound before it emits the label
+and return status `incomplete` with `incomplete_details.reason` of
+`max_output_tokens`. The run stops and the report's `stopped.message` includes
+that reason. It does not include headers or the API key. Use `minimal` when
+the deployment accepts it, or raise the answer bound, if that happens. Each
+request times out after 20 seconds and retries at most once on 408, 409, 429,
+500, 502, 503, 504, or a transport timeout.
 
 ### Reset the ledger
 

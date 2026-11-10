@@ -47,8 +47,12 @@ import {
 export const DEFAULT_DEPLOYMENT = "gpt-5.4-mini";
 /** Documented default for the Azure OpenAI v1 Responses API. */
 export const DEFAULT_API_VERSION = "v1";
-export const PREDICT_MAX_OUTPUT_TOKENS = 64;
-export const PROPOSE_MAX_OUTPUT_TOKENS = 512;
+export const PREDICT_MAX_OUTPUT_TOKENS = 256;
+export const PROPOSE_MAX_OUTPUT_TOKENS = 1024;
+export const DEFAULT_REASONING_EFFORT = "low";
+export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"] as const;
+/** Env value that leaves `reasoning` off the request. */
+export const OMIT_REASONING = "omit";
 export const REQUEST_TIMEOUT_MS = 20_000;
 export const MAX_ATTEMPTS = 2;
 export const SMOKE_ROWS = 14;
@@ -73,6 +77,9 @@ export const LIVE_ENV = {
   totalCap: "LOOPITER_BENCH_TOTAL_CAP_USD",
   warn: "LOOPITER_BENCH_WARN_USD",
   invocationCap: "LOOPITER_BENCH_INVOCATION_CAP_USD",
+  reasoning: "LOOPITER_BENCH_REASONING_EFFORT",
+  predictMax: "LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS",
+  proposeMax: "LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS",
 } as const;
 
 const PREDICT_INSTRUCTIONS =
@@ -367,13 +374,40 @@ export function redactSecrets(text: string, secrets: readonly string[]): string 
   return redacted;
 }
 
+export interface RequestLimits {
+  predictMaxOutputTokens: number;
+  proposeMaxOutputTokens: number;
+  /** Null omits the reasoning field. */
+  reasoningEffort: string | null;
+}
+
+export function requestLimits(input: {
+  predictMaxOutputTokens?: number;
+  proposeMaxOutputTokens?: number;
+  reasoningEffort?: string | null;
+} = {}): RequestLimits {
+  const predict = input.predictMaxOutputTokens ?? PREDICT_MAX_OUTPUT_TOKENS;
+  const propose = input.proposeMaxOutputTokens ?? PROPOSE_MAX_OUTPUT_TOKENS;
+  requirePositiveInt(predict, LIVE_ENV.predictMax);
+  requirePositiveInt(propose, LIVE_ENV.proposeMax);
+  return {
+    predictMaxOutputTokens: predict,
+    proposeMaxOutputTokens: propose,
+    reasoningEffort: normalizeReasoning(input.reasoningEffort),
+  };
+}
+
 export function planLiveRun(input: {
   seeds: number[];
   rowLimit?: number;
   deployment?: string;
   label: PlanSummary["label"];
+  predictMaxOutputTokens?: number;
+  proposeMaxOutputTokens?: number;
+  reasoningEffort?: string | null;
 }): PlanSummary {
   const deployment = input.deployment ?? DEFAULT_DEPLOYMENT;
+  const limits = requestLimits(input);
   const calls: PlannedCall[] = [];
   for (const seed of input.seeds) {
     const split = limitSplit(buildSplit(seed), input.rowLimit);
@@ -386,28 +420,28 @@ export function planLiveRun(input: {
       })),
     );
     for (const row of split.test)
-      calls.push(planned("baseline", "predict", "held-out", seed, predictBody(baseline, questionText(row), deployment), PREDICT_MAX_OUTPUT_TOKENS));
+      calls.push(planned("baseline", "predict", "held-out", seed, predictBody(baseline, questionText(row), deployment, limits), limits.predictMaxOutputTokens));
     calls.push(
       planned(
         "candidate",
         "propose",
         "propose",
         seed,
-        proposeBody(baseline, split.optimization, deployment),
-        PROPOSE_MAX_OUTPUT_TOKENS,
+        proposeBody(baseline, split.optimization, deployment, limits),
+        limits.proposeMaxOutputTokens,
       ),
     );
     for (const stage of ["validation", "audit"] as const) {
       for (const row of split[stage]) {
         const question = questionText(row);
-        calls.push(planned("candidate", "predict", stage, seed, predictBody(baseline, question, deployment), PREDICT_MAX_OUTPUT_TOKENS));
-        calls.push(planned("candidate", "predict", stage, seed, predictBody(standIn, question, deployment), PREDICT_MAX_OUTPUT_TOKENS));
+        calls.push(planned("candidate", "predict", stage, seed, predictBody(baseline, question, deployment, limits), limits.predictMaxOutputTokens));
+        calls.push(planned("candidate", "predict", stage, seed, predictBody(standIn, question, deployment, limits), limits.predictMaxOutputTokens));
       }
     }
     for (const row of split.production)
-      calls.push(planned("candidate", "predict", "production", seed, predictBody(standIn, row.question, deployment), PREDICT_MAX_OUTPUT_TOKENS));
+      calls.push(planned("candidate", "predict", "production", seed, predictBody(standIn, row.question, deployment, limits), limits.predictMaxOutputTokens));
     for (const row of split.test)
-      calls.push(planned("candidate", "predict", "held-out", seed, predictBody(standIn, questionText(row), deployment), PREDICT_MAX_OUTPUT_TOKENS));
+      calls.push(planned("candidate", "predict", "held-out", seed, predictBody(standIn, questionText(row), deployment, limits), limits.predictMaxOutputTokens));
   }
   return summarizePlan(input.label, input.seeds, input.rowLimit ?? null, calls);
 }
@@ -416,6 +450,7 @@ export function renderEstimate(
   prices: { inputUsdPerMillion: number; outputUsdPerMillion: number },
   deployment = DEFAULT_DEPLOYMENT,
   apiVersion = DEFAULT_API_VERSION,
+  limits: RequestLimits = requestLimits(),
 ): string {
   const priced: LivePrices = {
     inputUsdPerMillion: prices.inputUsdPerMillion,
@@ -427,11 +462,13 @@ export function renderEstimate(
     seeds: [1],
     rowLimit: SMOKE_ROWS,
     deployment,
+    ...limits,
   });
   const full = planLiveRun({
     label: "full",
     seeds: [...FULL_SEEDS],
     deployment,
+    ...limits,
   });
   const ratio = full.candidateCalls / full.baselineCalls;
   const lines = [
@@ -442,7 +479,10 @@ export function renderEstimate(
     `API: Azure OpenAI Responses (api-version ${apiVersion})`,
     `Input price USD per 1M tokens: ${prices.inputUsdPerMillion}`,
     `Output price USD per 1M tokens: ${prices.outputUsdPerMillion}`,
-    "Projection: input tokens are ceil(UTF-8 bytes / 4) of each request body. Output tokens are the max_output_tokens bound (64 for predict, 512 for propose). Each call is rounded to micro-USD and summed. Cache discounts are not included. The pre-call ceiling counts one input token per request byte plus that same output bound.",
+    `Reasoning effort: ${limits.reasoningEffort ?? "omitted"}`,
+    `Predict max output tokens: ${limits.predictMaxOutputTokens}`,
+    `Propose max output tokens: ${limits.proposeMaxOutputTokens}`,
+    `Projection: input tokens are ceil(UTF-8 bytes / 4) of each request body. Output tokens are the max_output_tokens bound (${limits.predictMaxOutputTokens} for predict, ${limits.proposeMaxOutputTokens} for propose). Each call is rounded to micro-USD and summed. Cache discounts are not included. The pre-call ceiling counts one input token per request byte plus that same output bound.`,
     "Candidate prompt sizes use a same-shape replacement fragment because the live proposal is not known ahead of time.",
     "",
     formatPlan(smoke, priced),
@@ -471,6 +511,9 @@ export interface LiveRunOptions {
   stopAtWarn: boolean;
   ledgerPath: string;
   fetch?: typeof fetch;
+  predictMaxOutputTokens?: number;
+  proposeMaxOutputTokens?: number;
+  reasoningEffort?: string | null;
 }
 
 export interface LiveReport {
@@ -562,6 +605,7 @@ interface LiveArm {
 /** One Azure Responses session. Retries are bounded and each attempt is billed. */
 export class LiveSession {
   readonly provider: AzureOpenAIProvider;
+  readonly limits: RequestLimits;
   lastError: string | null = null;
   private warned = false;
 
@@ -575,8 +619,13 @@ export class LiveSession {
       deployment: string;
       apiVersion: string;
       fetch?: typeof fetch;
-    },
+    } & RequestLimits,
   ) {
+    this.limits = {
+      predictMaxOutputTokens: options.predictMaxOutputTokens,
+      proposeMaxOutputTokens: options.proposeMaxOutputTokens,
+      reasoningEffort: options.reasoningEffort,
+    };
     const hidden = this.secrets;
     const baseFetch = options.fetch ?? fetch;
     const fetchImpl: typeof fetch = async (url, init) => {
@@ -592,7 +641,10 @@ export class LiveSession {
       model: options.deployment,
       apiVersion: options.apiVersion,
       maximumRequests: 100_000,
-      maximumOutputTokens: PROPOSE_MAX_OUTPUT_TOKENS,
+      maximumOutputTokens: Math.max(
+        options.predictMaxOutputTokens,
+        options.proposeMaxOutputTokens,
+      ),
       maximumInputBytes: 65_536,
       timeoutMs: REQUEST_TIMEOUT_MS,
       fetch: fetchImpl,
@@ -638,6 +690,9 @@ export class LiveSession {
       const generated = await meter(ceiling + maxOutput + 64, async () => {
         const result = await this.provider.generate({
           ...input,
+          ...(this.limits.reasoningEffort
+            ? { reasoningEffort: this.limits.reasoningEffort }
+            : {}),
           maximumOutputTokens: maxOutput,
           signal,
         });
@@ -690,6 +745,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
   if (options.seeds.length < 1) throw new LiveGateError("At least one seed is required.");
   if (new Set(options.seeds).size !== options.seeds.length)
     throw new LiveGateError("Seeds must be unique.");
+  const limits = requestLimits(options);
   assertLiveSpendGuards(options);
   const secrets = [options.apiKey];
   const caps = {
@@ -698,7 +754,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
     warnMicroUsd: usdToMicro(options.warnUsd),
   };
   const ledger = await LiveLedger.open(options.ledgerPath, caps, options.prices);
-  const session = new LiveSession(ledger, secrets, options.stopAtWarn, options);
+  const session = new LiveSession(ledger, secrets, options.stopAtWarn, { ...options, ...limits });
   if (ledger.totalMicroUsd >= caps.warnMicroUsd) {
     ledger.warnCrossed = true;
     session.markWarned();
@@ -792,7 +848,7 @@ export function estimateFromEnv(env: NodeJS.ProcessEnv): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(apiVersion))
     throw new LiveGateError(`Invalid ${LIVE_ENV.apiVersion}.`);
   if (!deployment.trim()) throw new LiveGateError(`Invalid ${LIVE_ENV.deployment}.`);
-  return renderEstimate(prices, deployment, apiVersion);
+  return renderEstimate(prices, deployment, apiVersion, readRequestLimits(env));
 }
 
 export function liveOptionsFromEnv(
@@ -820,6 +876,7 @@ export function liveOptionsFromEnv(
   const apiVersion = env[LIVE_ENV.apiVersion]?.trim() || DEFAULT_API_VERSION;
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(apiVersion))
     throw new LiveGateError(`Invalid ${LIVE_ENV.apiVersion}.`);
+  const limits = readRequestLimits(env);
   return {
     seeds: args.seeds,
     ...(args.rowLimit === undefined ? {} : { rowLimit: args.rowLimit }),
@@ -834,6 +891,9 @@ export function liveOptionsFromEnv(
     invocationCapUsd,
     stopAtWarn: args.stopAtWarn,
     ledgerPath: args.ledgerPath,
+    predictMaxOutputTokens: limits.predictMaxOutputTokens,
+    proposeMaxOutputTokens: limits.proposeMaxOutputTokens,
+    reasoningEffort: limits.reasoningEffort,
   };
 }
 
@@ -870,6 +930,58 @@ function assertLiveSpendGuards(input: {
   if (input.warnUsd > input.totalCapUsd)
     throw new LiveGateError(
       `${LIVE_ENV.warn} must be less than or equal to ${LIVE_ENV.totalCap}. Refusing to start.`,
+    );
+}
+
+function readRequestLimits(env: NodeJS.ProcessEnv): RequestLimits {
+  const predict = readOptionalInt(env, LIVE_ENV.predictMax);
+  const propose = readOptionalInt(env, LIVE_ENV.proposeMax);
+  const reasoning = readReasoningEnv(env);
+  return requestLimits({
+    ...(predict === undefined ? {} : { predictMaxOutputTokens: predict }),
+    ...(propose === undefined ? {} : { proposeMaxOutputTokens: propose }),
+    ...(reasoning === undefined ? {} : { reasoningEffort: reasoning }),
+  });
+}
+
+function readOptionalInt(env: NodeJS.ProcessEnv, name: string): number | undefined {
+  const raw = env[name];
+  if (raw === undefined) return undefined;
+  if (!/^[1-9]\d*$/.test(raw.trim()))
+    throw new LiveGateError(
+      `${name} must be a finite integer greater than zero. Refusing to start.`,
+    );
+  const value = Number(raw.trim());
+  requirePositiveInt(value, name);
+  return value;
+}
+
+function readReasoningEnv(env: NodeJS.ProcessEnv): string | null | undefined {
+  const raw = env[LIVE_ENV.reasoning];
+  if (raw === undefined) return undefined;
+  const value = raw.trim();
+  if (value === OMIT_REASONING) return null;
+  if (!(REASONING_EFFORTS as readonly string[]).includes(value))
+    throw new LiveGateError(
+      `${LIVE_ENV.reasoning} must be one of ${REASONING_EFFORTS.join(", ")}, or ${OMIT_REASONING} to leave the field off. Refusing to start.`,
+    );
+  return value;
+}
+
+function normalizeReasoning(value: string | null | undefined): string | null {
+  if (value === undefined) return DEFAULT_REASONING_EFFORT;
+  if (value === null || value === OMIT_REASONING) return null;
+  if (!(REASONING_EFFORTS as readonly string[]).includes(value))
+    throw new LiveGateError(
+      `${LIVE_ENV.reasoning} must be one of ${REASONING_EFFORTS.join(", ")}, or ${OMIT_REASONING} to leave the field off. Refusing to start.`,
+    );
+  return value;
+}
+
+function requirePositiveInt(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0)
+    throw new LiveGateError(
+      `${name} must be a finite integer greater than zero. Refusing to start.`,
     );
 }
 
@@ -988,7 +1100,12 @@ const proposeSchema: JsonObject = {
   additionalProperties: false,
 };
 
-function predictBody(fragment: string, question: string, deployment: string): string {
+function predictBody(
+  fragment: string,
+  question: string,
+  deployment: string,
+  limits: RequestLimits,
+): string {
   return JSON.stringify(
     responsesRequestBody({
       model: deployment,
@@ -1000,12 +1117,18 @@ function predictBody(fragment: string, question: string, deployment: string): st
       }),
       name: "classification",
       schema: predictSchema(),
-      maxOutputTokens: PREDICT_MAX_OUTPUT_TOKENS,
+      maxOutputTokens: limits.predictMaxOutputTokens,
+      ...(limits.reasoningEffort ? { reasoningEffort: limits.reasoningEffort } : {}),
     }),
   );
 }
 
-function proposeBody(fragment: string, rows: readonly DatasetRow[], deployment: string): string {
+function proposeBody(
+  fragment: string,
+  rows: readonly DatasetRow[],
+  deployment: string,
+  limits: RequestLimits,
+): string {
   return JSON.stringify(
     responsesRequestBody({
       model: deployment,
@@ -1019,7 +1142,8 @@ function proposeBody(fragment: string, rows: readonly DatasetRow[], deployment: 
       }),
       name: "bounded_prompt_revision",
       schema: proposeSchema,
-      maxOutputTokens: PROPOSE_MAX_OUTPUT_TOKENS,
+      maxOutputTokens: limits.proposeMaxOutputTokens,
+      ...(limits.reasoningEffort ? { reasoningEffort: limits.reasoningEffort } : {}),
     }),
   );
 }
@@ -1080,7 +1204,7 @@ async function ask(
   meter: Meter,
   signal: AbortSignal = new AbortController().signal,
 ): Promise<string> {
-  const body = predictBody(fragment, question, session.provider.model);
+  const body = predictBody(fragment, question, session.provider.model, session.limits);
   const generation = await session.generate(
     {
       instructions: PREDICT_INSTRUCTIONS,
@@ -1093,7 +1217,7 @@ async function ask(
       schema: predictSchema(),
     },
     body,
-    PREDICT_MAX_OUTPUT_TOKENS,
+    session.limits.predictMaxOutputTokens,
     meter,
     signal,
   );
@@ -1118,7 +1242,7 @@ async function runCandidate(
   baselineVersion: string;
   failure: { reason: string; message: string } | null;
 }> {
-  const reserve = widestReserve(session.provider.model);
+  const reserve = widestReserve(session.provider.model, session.limits);
   const inLoop =
     1 +
     split.validation.length * 2 +
@@ -1195,7 +1319,7 @@ async function runCandidate(
       labels: labels(),
       propose: async (examples, context) => {
         const current = fragmentOf(await registry.get(registry.version));
-        const body = proposeBody(current, examples, session.provider.model);
+        const body = proposeBody(current, examples, session.provider.model, session.limits);
         const generation = await session.generate(
           {
             instructions: PROPOSE_INSTRUCTIONS,
@@ -1210,7 +1334,7 @@ async function runCandidate(
             schema: proposeSchema,
           },
           body,
-          PROPOSE_MAX_OUTPUT_TOKENS,
+          session.limits.proposeMaxOutputTokens,
           (maximum, call) => context.meter(maximum, call),
           context.signal,
         );
@@ -1434,10 +1558,10 @@ function livePolicy(split: TaskSplit, reserve: number, inLoop: number) {
   };
 }
 
-function widestReserve(deployment: string): number {
+function widestReserve(deployment: string, limits: RequestLimits): number {
   const wide = FACTS.map((fact) => `${fact.id}=${"x".repeat(80)}`).join("\n");
   const split = buildSplit(1);
-  let bytes = Buffer.byteLength(proposeBody(wide, split.optimization, deployment), "utf8");
+  let bytes = Buffer.byteLength(proposeBody(wide, split.optimization, deployment, limits), "utf8");
   const questions = [
     ...split.optimization.map((row) => questionText(row)),
     ...split.validation.map((row) => questionText(row)),
@@ -1446,8 +1570,8 @@ function widestReserve(deployment: string): number {
     ...split.production.map((row) => row.question),
   ];
   for (const question of questions)
-    bytes = Math.max(bytes, Buffer.byteLength(predictBody(wide, question, deployment), "utf8"));
-  return bytes * 2 + Math.max(PREDICT_MAX_OUTPUT_TOKENS, PROPOSE_MAX_OUTPUT_TOKENS) + 64;
+    bytes = Math.max(bytes, Buffer.byteLength(predictBody(wide, question, deployment, limits), "utf8"));
+  return bytes * 2 + Math.max(limits.predictMaxOutputTokens, limits.proposeMaxOutputTokens) + 64;
 }
 
 function flattenCases(value: JsonValue[] | undefined): {

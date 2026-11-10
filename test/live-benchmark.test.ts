@@ -17,6 +17,8 @@ import {
   FULL_SEEDS,
   LIVE_ENV,
   LiveLedger,
+  PREDICT_MAX_OUTPUT_TOKENS,
+  PROPOSE_MAX_OUTPUT_TOKENS,
   SMOKE_ROWS,
   estimateFromEnv,
   liveCostMicroUsd,
@@ -74,7 +76,9 @@ test("live plan keeps the offline call shape, about 12x on the full split", () =
   assert.ok(smoke.inputTokens > 0);
   assert.equal(
     smoke.outputTokens,
-    smoke.baselineCalls * 64 + 512 + (smoke.candidateCalls - 1) * 64,
+    smoke.baselineCalls * PREDICT_MAX_OUTPUT_TOKENS +
+      PROPOSE_MAX_OUTPUT_TOKENS +
+      (smoke.candidateCalls - 1) * PREDICT_MAX_OUTPUT_TOKENS,
   );
 });
 
@@ -329,7 +333,11 @@ test("pre-call cap stops before the next request and keeps a partial report", as
   const server = await fakeServer(async () => ({
     status: 200,
     text: JSON.stringify({ label: "incomplete" }),
-    usage: { input_tokens: first.ceilingInputTokens, output_tokens: 64, cached_tokens: 0 },
+    usage: {
+      input_tokens: first.ceilingInputTokens,
+      output_tokens: first.outputTokens,
+      cached_tokens: 0,
+    },
   }));
   try {
     const report = await runLiveBenchmark({
@@ -346,8 +354,12 @@ test("pre-call cap stops before the next request and keeps a partial report", as
     assert.equal(report.passed, false);
     assert.equal(report.perSeed[0]?.candidate, null);
     assert.equal(JSON.stringify(report).includes(KEY), false);
-    const body = JSON.parse(server.requests[0]!.body) as { max_output_tokens: number };
-    assert.equal(body.max_output_tokens, 64);
+    const body = JSON.parse(server.requests[0]!.body) as {
+      max_output_tokens: number;
+      reasoning?: { effort?: string };
+    };
+    assert.equal(body.max_output_tokens, PREDICT_MAX_OUTPUT_TOKENS);
+    assert.equal(body.reasoning?.effort, "low");
     assert.equal(server.requests[0]!.url.includes("api-version=v1"), true);
   } finally {
     await server.close();
@@ -505,6 +517,122 @@ test("end-to-end live path bills a fake HTTP server and persists the ledger", as
   }
 });
 
+test("reasoning effort, output bounds, and incomplete reasons stay on the fake server", async () => {
+  assert.throws(
+    () =>
+      estimateFromEnv(
+        scrubbed({
+          [LIVE_ENV.priceInput]: "4",
+          [LIVE_ENV.priceOutput]: "20",
+          [LIVE_ENV.reasoning]: "turbo",
+        }),
+      ),
+    /LOOPITER_BENCH_REASONING_EFFORT/,
+  );
+  assert.throws(
+    () =>
+      liveOptionsFromEnv(
+        scrubbed({ ...readyEnv(), [LIVE_ENV.predictMax]: "0" }),
+        blankArgs(),
+      ),
+    /LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS/,
+  );
+  assert.throws(
+    () =>
+      liveOptionsFromEnv(
+        scrubbed({ ...readyEnv(), [LIVE_ENV.proposeMax]: "1.5" }),
+        blankArgs(),
+      ),
+    /LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS/,
+  );
+  const priced = scrubbed({
+    [LIVE_ENV.priceInput]: "4",
+    [LIVE_ENV.priceOutput]: "20",
+    [LIVE_ENV.predictMax]: "128",
+    [LIVE_ENV.proposeMax]: "333",
+    [LIVE_ENV.reasoning]: "minimal",
+  });
+  const text = estimateFromEnv(priced);
+  assert.match(text, /Reasoning effort: minimal/);
+  assert.match(text, /Predict max output tokens: 128/);
+  assert.match(text, /Propose max output tokens: 333/);
+  const smoke = planLiveRun({
+    label: "smoke",
+    seeds: [1],
+    rowLimit: SMOKE_ROWS,
+    predictMaxOutputTokens: 128,
+    proposeMaxOutputTokens: 333,
+    reasoningEffort: "minimal",
+  });
+  assert.match(text, new RegExp(`output tokens: ${smoke.outputTokens}`));
+  assert.equal(
+    smoke.outputTokens,
+    smoke.baselineCalls * 128 + 333 + (smoke.candidateCalls - 1) * 128,
+  );
+
+  const high = await fakeServer(async () => ({
+    status: 200,
+    text: "{}",
+    raw: JSON.stringify({
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+      output: [],
+      leaked_key: KEY,
+    }),
+  }));
+  try {
+    const report = await runLiveBenchmark({
+      ...liveShape(high, await tempLedger()),
+      prices: pricesOf(1, 1, 0),
+      totalCapUsd: 50,
+      invocationCapUsd: 50,
+      warnUsd: 40,
+      rowLimit: 1,
+      seeds: [1],
+      reasoningEffort: "high",
+      predictMaxOutputTokens: 180,
+    });
+    assert.equal(high.requests.length, 1);
+    const body = JSON.parse(high.requests[0]!.body) as {
+      max_output_tokens: number;
+      reasoning?: { effort?: string };
+    };
+    assert.equal(body.reasoning?.effort, "high");
+    assert.equal(body.max_output_tokens, 180);
+    assert.match(report.stopped?.message ?? "", /incomplete_details\.reason: max_output_tokens/);
+    assert.equal((report.stopped?.message ?? "").includes(KEY), false);
+    assert.equal((report.stopped?.message ?? "").includes("api-key"), false);
+  } finally {
+    await high.close();
+  }
+
+  const omitted = await fakeServer(async () => ({
+    status: 200,
+    text: JSON.stringify({ label: "incomplete" }),
+  }));
+  try {
+    await runLiveBenchmark({
+      ...liveShape(omitted, await tempLedger()),
+      prices: pricesOf(1, 1, 0),
+      totalCapUsd: 50,
+      invocationCapUsd: 50,
+      warnUsd: 40,
+      rowLimit: 1,
+      seeds: [1],
+      reasoningEffort: null,
+      predictMaxOutputTokens: 90,
+    });
+    const body = JSON.parse(omitted.requests[0]!.body) as {
+      max_output_tokens: number;
+      reasoning?: unknown;
+    };
+    assert.equal(Object.hasOwn(body, "reasoning"), false);
+    assert.equal(body.max_output_tokens, 90);
+  } finally {
+    await omitted.close();
+  }
+});
+
 function blankArgs() {
   return {
     seeds: [1],
@@ -590,6 +718,7 @@ async function fakeServer(
   ) => Promise<{
     status: number;
     text: string;
+    raw?: string;
     usage?: { input_tokens: number; output_tokens: number; cached_tokens: number };
   }>,
 ): Promise<FakeServer> {
@@ -604,6 +733,11 @@ async function fakeServer(
     };
     requests.push(recorded);
     const response = await respond(recorded);
+    if (response.raw) {
+      res.writeHead(response.status, { "content-type": "application/json" });
+      res.end(response.raw);
+      return;
+    }
     if (response.status === 200) {
       const payload = JSON.parse(response.text) as { fragment?: string; label?: string };
       const usage = response.usage ?? {

@@ -9,6 +9,8 @@ export interface GenerateInput {
   signal: AbortSignal;
   /** Overrides the provider cap for this call. Must be at most that cap. */
   maximumOutputTokens?: number;
+  /** When set, the request includes reasoning.effort. Omitted leaves the field off. */
+  reasoningEffort?: string;
 }
 export interface Generation {
   value: JsonObject;
@@ -53,6 +55,7 @@ export function responsesRequestBody(input: {
   name: string;
   schema: JsonObject;
   maxOutputTokens: number;
+  reasoningEffort?: string;
 }) {
   return {
     model: input.model,
@@ -60,6 +63,7 @@ export function responsesRequestBody(input: {
     instructions: input.instructions,
     input: input.input,
     max_output_tokens: input.maxOutputTokens,
+    ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
     text: {
       format: {
         type: "json_schema" as const,
@@ -123,6 +127,7 @@ class ResponsesProvider implements GenerationProvider {
             name: input.name,
             schema: input.schema,
             maxOutputTokens: maxOutput,
+            ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
           }),
         ),
       },
@@ -136,7 +141,7 @@ class ResponsesProvider implements GenerationProvider {
     input.signal.throwIfAborted();
     object(body, "OpenAI response");
     if (body.status !== "completed" || !Array.isArray(body.output))
-      throw new Error("OpenAI response was incomplete or malformed.");
+      throw new Error(incompleteMessage(body));
     const texts: string[] = [];
     for (const item of body.output) {
       if (!item || item.type !== "message" || !Array.isArray(item.content))
@@ -206,6 +211,23 @@ export class AzureOpenAIProvider extends ResponsesProvider {
       return { "api-key": options.apiKey! };
     });
   }
+}
+
+function incompleteMessage(body: unknown): string {
+  const reason = incompleteReason(body);
+  return reason
+    ? `OpenAI response was incomplete or malformed (incomplete_details.reason: ${reason}).`
+    : "OpenAI response was incomplete or malformed.";
+}
+
+/** Only a short token is copied. Response bodies and headers stay out of the message. */
+function incompleteReason(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const details = (body as { incomplete_details?: unknown }).incomplete_details;
+  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
+  const reason = (details as { reason?: unknown }).reason;
+  if (typeof reason !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(reason)) return null;
+  return reason;
 }
 
 function countUsage(value: unknown): number | null {
