@@ -54,8 +54,9 @@ application-owned module is implemented and doctor and verify pass, run
 `--enable` authorizes improvement work and provider spending inside the existing
 gates. It does not bypass audit, budgets, or rollback. Omit `--once` for a
 supervised foreground worker. `--mode recommend` stores proposals and does not
-apply. Omitting `--mode` still selects recommend. Constructing
-`ImprovementController` without a mode does the same.
+apply. Omitting `--mode` uses `plan.mode`; the flag overrides the plan.
+Constructing `ImprovementController` without a mode still recommends and does
+not apply. Non-interactive autonomous runs pass `--confirm-activation`.
 
 Read the installed guide with `python -m loopiter guide`, and reference code with
 `python -m loopiter reference`. The optional examples also ship under

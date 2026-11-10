@@ -20,6 +20,7 @@ import type {
 } from "./improvement-contracts.js";
 import {
   compare,
+  minimumCertifiableAuditUnits,
   passesGates,
   prepareDataset,
   validateChange,
@@ -43,6 +44,7 @@ const terminal: RunState[] = [
   "completed",
   "no_improvement",
   "failed",
+  "timed_out",
   "rolled_back",
 ];
 const states: RunState[] = [
@@ -56,10 +58,17 @@ const states: RunState[] = [
   "no_improvement",
   "paused",
   "failed",
+  "timed_out",
   "reconciliation_required",
   "rolling_back",
   "rolled_back",
 ];
+const DEFAULT_STEP_MS = 120_000;
+const DEFAULT_TICK_MS = 600_000;
+const MAX_STEP_MS = 3_600_000;
+const MAX_TICK_MS = 3_660_000;
+/** First pre-deployment timeout is retried. The next one ends the run as timed_out. */
+const STEP_TIMEOUT_ATTEMPTS = 2;
 const asJson = (x: unknown) => x as JsonObject;
 const plus = (time: string, ms: number) =>
   new Date(Date.parse(time) + ms).toISOString();
@@ -71,6 +80,7 @@ export class ImprovementController {
   private readonly definitions = new Map<string, string>();
   private readonly callbackMs: number;
   private readonly tickMs: number;
+  private retiredStale = false;
   constructor(
     readonly loop: FeedbackLoop,
     options: ImprovementControllerOptions,
@@ -91,15 +101,16 @@ export class ImprovementController {
       "mode",
     );
     this.options = { ...options };
-    this.callbackMs = options.callbackTimeoutMs ?? 120000;
-    this.tickMs = options.tickTimeoutMs ?? 600000;
-    integer(this.callbackMs, "callbackTimeoutMs");
+    this.callbackMs =
+      options.stepTimeoutMs ?? options.callbackTimeoutMs ?? DEFAULT_STEP_MS;
+    this.tickMs =
+      options.tickTimeoutMs ?? Math.max(DEFAULT_TICK_MS, this.callbackMs + 1000);
+    integer(this.callbackMs, "stepTimeoutMs");
     integer(this.tickMs, "tickTimeoutMs");
-    if (this.callbackMs > 120000 || this.tickMs > 600000)
-      fail(
-        "invalid_input",
-        "Deadlines may be shortened, not extended beyond 2/10 minutes.",
-      );
+    if (this.callbackMs > MAX_STEP_MS || this.tickMs > MAX_TICK_MS)
+      fail("invalid_input", "Step timeout cannot exceed 1 hour.");
+    if (this.tickMs < this.callbackMs)
+      fail("invalid_input", "Tick timeout must cover the step timeout.");
     if (!Array.isArray(options.workflows) || !options.workflows.length)
       fail("invalid_input", "Workflows required.");
     for (const raw of options.workflows) {
@@ -205,6 +216,7 @@ export class ImprovementController {
     timestamp(d.leaseUntil, "leaseUntil");
     if (d.leaseOwner !== null) nonempty(d.leaseOwner, "leaseOwner");
     integer(d.proposalCalls, "proposalCalls", 0);
+    if (d.stepTimeouts !== undefined) integer(d.stepTimeouts, "stepTimeouts", 0);
     if (!Array.isArray(d.candidateIds))
       fail("integrity_error", "Invalid candidate references.");
     d.candidateIds.forEach((v) => nonempty(v, "candidateId"));
@@ -291,6 +303,7 @@ export class ImprovementController {
         await this.put(tx, "coordination", this.targetKey(w), {
           ...target.data,
           consecutiveFailures: 0,
+          consecutiveTimeouts: 0,
         });
       const now = this.loop.now();
       await tx.insert("events", {
@@ -444,10 +457,19 @@ export class ImprovementController {
           key = this.targetKey(w),
           lock = await this.read(tx, "coordination", key);
         if (lock?.data.activeRun === runId) {
+          const timedOut = data.state === "timed_out";
           const consecutiveFailures =
             data.state === "completed"
               ? 0
-              : Number(lock.data.consecutiveFailures ?? 0) + 1;
+              : timedOut
+                ? Number(lock.data.consecutiveFailures ?? 0)
+                : Number(lock.data.consecutiveFailures ?? 0) + 1;
+          const consecutiveTimeouts =
+            data.state === "completed"
+              ? 0
+              : timedOut
+                ? Number(lock.data.consecutiveTimeouts ?? 0) + 1
+                : Number(lock.data.consecutiveTimeouts ?? 0);
           const previousOutcomes = [
             ...((lock.data.previousOutcomes ?? []) as JsonValue[]),
             { state: data.state, reason: data.reason },
@@ -456,6 +478,7 @@ export class ImprovementController {
             ...lock.data,
             activeRun: null,
             consecutiveFailures,
+            consecutiveTimeouts,
             previousOutcomes,
             nextEligibleAt: plus(this.loop.now(), w.policy.cooldownMs),
           });
@@ -472,12 +495,23 @@ export class ImprovementController {
     signal: AbortSignal,
     allowPaused = false,
   ): Promise<T> {
-    const w = this.workflow(run.data.workflowId),
-      operationId = `${run.id}:${kind}`;
+    const w = this.workflow(run.data.workflowId);
+    let operationId = `${run.id}:${kind}`;
     let cached: JsonValue | undefined;
     await this.loop.store.transaction(this.loop.namespace, async (tx) => {
       const current = await this.owned(tx, run.id, owner, allowPaused);
-      const old = await this.read(tx, "operations", operationId);
+      let old = await this.read(tx, "operations", operationId);
+      let attempt = 0;
+      while (old?.data.status === "timed_out") {
+        attempt += 1;
+        if (attempt > STEP_TIMEOUT_ATTEMPTS)
+          fail(
+            "timeout_retries_exhausted",
+            "Step timeout retries are exhausted.",
+          );
+        operationId = `${run.id}:${kind}:retry:${attempt}`;
+        old = await this.read(tx, "operations", operationId);
+      }
       if (old) {
         if (old.data.status === "completed") {
           if (!Object.hasOwn(old.data, "result"))
@@ -594,11 +628,141 @@ export class ImprovementController {
       });
       return result;
     } catch (error) {
-      // Pending stays pending on lost lease/crash/cancellation; never optimistic refund/replay.
+      // A timeout closes this attempt so a bounded retry can use a new id.
+      // Crash, cancellation and a lost lease stay pending and are never replayed or refunded.
+      if ((error as { code?: unknown }).code === "timeout")
+        await this.loop.store
+          .transaction(this.loop.namespace, async (tx) => {
+            const op = await this.read(tx, "operations", operationId);
+            if (op?.data.status === "pending")
+              await this.put(tx, "operations", operationId, {
+                ...op.data,
+                status: "timed_out",
+              });
+          })
+          .catch(() => undefined);
       throw error;
     }
   }
+  private async noteTimeout(w: ImprovementWorkflow): Promise<number> {
+    return this.loop.store.transaction(this.loop.namespace, async (tx) => {
+      const key = this.targetKey(w);
+      const lock = await this.read(tx, "coordination", key);
+      const consecutiveTimeouts =
+        Number(lock?.data.consecutiveTimeouts ?? 0) + 1;
+      integer(consecutiveTimeouts, "consecutiveTimeouts", 0);
+      await this.put(tx, "coordination", key, {
+        ...lock?.data,
+        consecutiveTimeouts,
+      });
+      return consecutiveTimeouts;
+    });
+  }
+  private undecided(run: ImprovementRun): boolean {
+    return (
+      run.data.state === "timed_out" ||
+      (run.data.state === "failed" &&
+        ["cancelled", "timeout", "timed_out"].includes(run.data.reason))
+    );
+  }
+  private async retireUndecided(candidateIds: string[], reason: string) {
+    nonempty(reason, "reason");
+    for (const cid of candidateIds) {
+      const candidate = await this.loop.getCandidate(cid);
+      if (candidate?.status === "proposed")
+        await this.loop.rejectCandidate(cid, reason);
+    }
+  }
+  private async retireStale() {
+    let cursor: string | undefined;
+    for (let page = 0; page < 20; page++) {
+      const listed = await this.loop.list("candidates", {
+        limit: 100,
+        ...(cursor ? { cursor } : {}),
+      });
+      for (const candidate of listed.items) {
+        if (candidate.status !== "proposed") continue;
+        const runId = candidate.metadata?.runId;
+        if (typeof runId !== "string" || !runId) continue;
+        let run: ImprovementRun | undefined;
+        try {
+          run = await this.getRun(runId);
+        } catch {
+          continue;
+        }
+        if (!run || !this.undecided(run)) continue;
+        await this.loop.rejectCandidate(candidate.id, run.data.reason);
+      }
+      if (!listed.nextCursor) break;
+      cursor = listed.nextCursor;
+    }
+  }
+  /** A pure step timeout retries once, then ends as timed_out without a failure strike. */
+  private async recordStepTimeout(
+    rid: string,
+    owner: string,
+  ): Promise<boolean> {
+    const current = await this.getRun(rid);
+    if (!current || current.data.leaseOwner !== owner) return false;
+    const recovery =
+      current.data.pendingPromotion ||
+      [
+        "deploying",
+        "rolling_back",
+        "reconciliation_required",
+        "observing",
+      ].includes(current.data.state);
+    if (
+      recovery ||
+      !["proposing", "evaluating", "selected"].includes(current.data.state)
+    )
+      return false;
+    const attempts = Number(current.data.stepTimeouts ?? 0) + 1;
+    if (attempts < STEP_TIMEOUT_ATTEMPTS) {
+      await this.save(
+        rid,
+        owner,
+        { stepTimeouts: attempts, reason: "timed_out" },
+        true,
+      );
+      return true;
+    }
+    const saved = await this.save(
+      rid,
+      owner,
+      {
+        stepTimeouts: attempts,
+        state: "timed_out",
+        reason: "timed_out",
+      },
+      true,
+    );
+    await this.retireUndecided(saved.data.candidateIds, "timed_out");
+    return true;
+  }
+  private async consumeAudit(run: ImprovementRun, owner: string) {
+    await this.loop.store.transaction(this.loop.namespace, async (tx) => {
+      await this.owned(tx, run.id, owner);
+      for (const row of run.data.dataset.audit) {
+        for (const identity of [
+          `id:${row.id}`,
+          `episode:${row.episodeId}`,
+          `entity:${row.entityId}`,
+        ]) {
+          const key = `audit:${hash(identity)}`,
+            prior = await this.read(tx, "coordination", key);
+          if (prior && prior.data.runId !== run.id)
+            fail("audit_consumed", "Fresh audit data required.");
+          if (!prior) await this.put(tx, "coordination", key, { runId: run.id });
+        }
+      }
+    });
+  }
   async tick(workflowId: string, signal?: AbortSignal): Promise<TickResult> {
+    if (!this.retiredStale) {
+      await this.retireStale();
+      this.retiredStale = true;
+    }
     const w = this.workflow(workflowId),
       mode = this.options.mode ?? "recommend";
     const signal2 = AbortSignal.any([
@@ -643,10 +807,17 @@ export class ImprovementController {
         if (mode === "autonomous" && this.options.selfImproving !== true)
           return idle("self_improvement_disabled", "paused");
         if (
-          Number(lock.target?.data.consecutiveFailures ?? 0) >=
-          (w.policy.maximumConsecutiveFailures ?? 3)
+          mode === "autonomous" &&
+          !w.policy.auditMethod &&
+          w.policy.minimumAuditUnits <
+            minimumCertifiableAuditUnits(w.policy.objective)
         )
+          return idle("audit_size_cannot_certify", "paused");
+        const failureCap = w.policy.maximumConsecutiveFailures ?? 3;
+        if (Number(lock.target?.data.consecutiveFailures ?? 0) >= failureCap)
           return idle("repeated_failures_require_review", "paused");
+        if (Number(lock.target?.data.consecutiveTimeouts ?? 0) >= failureCap)
+          return idle("repeated_timeouts_require_review", "paused");
         const next = lock.target?.data.nextEligibleAt;
         if (typeof next === "string" && next > this.loop.now())
           return idle("cooldown", "waiting_for_evidence", next);
@@ -736,13 +907,19 @@ export class ImprovementController {
       }
     } catch (error) {
       const code = (error as { code?: unknown }).code;
-      return idle(
+      const reason =
         typeof code === "string"
           ? code
           : signal2.aborted
             ? "cancelled"
-            : "callback_failed",
-      );
+            : "callback_failed";
+      if (reason === "timeout") {
+        const count = await this.noteTimeout(w);
+        if (count >= (w.policy.maximumConsecutiveFailures ?? 3))
+          return idle("repeated_timeouts_require_review", "paused");
+        return idle("timed_out");
+      }
+      return idle(reason);
     }
     const rid = run.id;
     // A different workflow may own this target; it must be resumed by its own definition.
@@ -987,24 +1164,6 @@ export class ImprovementController {
       } else if (d.state === "selected") {
         const cid = d.selectedId!,
           candidate = (await this.loop.getCandidate(cid))!;
-        // Audit examples are consumed before first exposure. Global within this namespace.
-        await this.loop.store.transaction(this.loop.namespace, async (tx) => {
-          await this.owned(tx, rid, owner);
-          for (const r of d.dataset.audit) {
-            for (const identity of [
-              `id:${r.id}`,
-              `episode:${r.episodeId}`,
-              `entity:${r.entityId}`,
-            ]) {
-              const key = `audit:${hash(identity)}`,
-                prior = await this.read(tx, "coordination", key);
-              if (prior && prior.data.runId !== rid)
-                fail("audit_consumed", "Fresh audit data required.");
-              if (!prior)
-                await this.put(tx, "coordination", key, { runId: rid });
-            }
-          }
-        });
         const audit = await this.evaluatePartition(
           run,
           owner,
@@ -1020,6 +1179,8 @@ export class ImprovementController {
             candidateIds: d.candidateIds,
             budget: await this.budget(w),
           };
+        // Consume only after a finished audit. A timeout leaves the rows available.
+        await this.consumeAudit(run, owner);
         const gates = compare(audit, d.dataset.audit, w.policy, true);
         const auditMetrics = {
           ...audit.metrics,
@@ -1483,7 +1644,9 @@ export class ImprovementController {
           runId: rid,
           candidateIds: run?.data.candidateIds ?? [],
         };
-      if (code !== "lease_lost") {
+      if (code === "timeout" && (await this.recordStepTimeout(rid, owner))) {
+        // Retry or terminal timed_out. Not a consecutive-failure strike.
+      } else if (code !== "lease_lost") {
         const current = await this.getRun(rid);
         if (current?.data.leaseOwner === owner) {
           const recovery =
@@ -1506,6 +1669,8 @@ export class ImprovementController {
             },
             true,
           ).catch(() => current);
+          if (run && this.undecided(run))
+            await this.retireUndecided(run.data.candidateIds, run.data.reason);
         }
       }
     } finally {

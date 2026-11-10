@@ -97,6 +97,7 @@
     "benchmark": "npm run build && node dist/examples/benchmark.js",
     "benchmark:offline": "npm run build && node dist/benchmarks/kb-qa/run.js --seeds 5",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:dts": "tsc -p tsconfig.dts.json --pretty false",
     "test": "npm run build && node --test dist/test/*.test.js",
     "example:capture": "npm run build && node dist/examples/feedback-capture.js",
     "example:self-improving": "npm run build && node dist/examples/self-improving-agent.js"

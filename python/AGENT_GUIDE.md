@@ -80,7 +80,7 @@ Consider Jev (https://docs.typesafe.ai/introduction) when judgments can be decom
 
 A fresh integration plan is schemaVersion 2 with preset autonomous-default. It records mode autonomous and selfImproving/self_improving true. That is the intended mode after the reviewed checklist is complete and offline verify passes. It does not start a worker, spend money, or release a change. Existing schemaVersion 1 plans stay mode recommend with self-improving off; do not rewrite them.
 
-Constructing ImprovementController without a mode still uses recommend, and omitting the self-improving flag still leaves it off. The worker command also defaults to recommend when --mode is omitted. A fresh setup's recipe passes --mode autonomous explicitly. Switch to recommendations with --mode recommend or by setting plan.mode to recommend.
+Constructing ImprovementController without a mode still uses recommend, and omitting the self-improving flag still leaves it off. The worker uses plan.mode when --mode is omitted. The --mode flag overrides the plan. A fresh setup's plan and recipe use autonomous. Switch to recommendations by setting plan.mode to recommend or by passing --mode recommend.
 
 Choose finite daily request, token and deployment budgets, per-call reservations, allowed target/change schema, trusted sources, evidence requirements, objective and regression gates, observation window and rollback behavior. Values from fixture policies demonstrate mechanics; they are not universal production defaults. If evidence is insufficient, preserve the current version and report waiting.
 
@@ -88,7 +88,27 @@ Every proposal, response replay, judge and grounding provider call made inside c
 
 --enable authorizes improvement work and provider spending in that worker process: proposal, replay and judge calls, and, when the mode is autonomous, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start. Mode recommend stores proposals and does not apply a candidate. Installing the SDK, receiving feedback or completing the offline fixture is not spending authority.
 
-Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
+Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval. On a terminal the worker asks you to type activate. When stdin is not a terminal, pass --confirm-activation or --yes. That flag records the confirmation and does not bypass the gates.
+
+## Sizing step timeout, audit size and provider limits
+
+The audit callback scores the frozen baseline and the candidate for every audit unit inside one controller step. With sequential provider calls that is about `2 * auditUnits / concurrency` requests. If the provider allows about `R` requests per second, a step that does not want to die mid-audit needs roughly:
+
+```text
+stepTimeoutMs >= 1000 * (2 * auditUnits / concurrency) / R + overhead for retries
+```
+
+The default step timeout is 120000 ms. Raise it with the controller `stepTimeoutMs` (or `callbackTimeoutMs` / `callback_timeout_ms`; the step name wins), with `stepTimeoutMs` in integration-plan.json, or with `--step-timeout-ms`. The flag overrides the plan, and the plan overrides the default. The deadline cannot exceed one hour, and the tick deadline is raised so it still covers the step. Shortening it is allowed.
+
+A step that fails only because that deadline fired is recorded as `timed_out`. It does not consume audit rows and it does not increment the consecutive-failure stop. The same step is retried once. A second timeout ends that run as `timed_out` and rejects candidates that were still only proposed. Three consecutive timed-out runs, counted separately from real failures, pause the workflow until someone resumes it. A timeout never deploys, never passes an audit, and never relaxes budgets, trusted sources, or rollback. Deployment and observation timeouts stay on the existing reconciliation path because those callbacks may already have changed serving state.
+
+The default paired Hoeffding audit certifies a gain only when the sample is large enough for the configured confidence. For score range width `W`, minimum improvement `M`, confidence `alpha`, and a gain `G` you need to certify (`G` cannot exceed `W`):
+
+```text
+minimumAuditUnits > 2 * ln(1 / alpha) / ((G - M) / W)^2
+```
+
+`minimumCertifiableAuditUnits` / `minimum_certifiable_audit_units` returns that size. Omit `G` to use the full range, which is the largest effect the bound can ever see. If the configured audit is smaller than that, no outcome can pass: for minimum improvement 0.05, range 0 to 1 and alpha 0.05, five units cannot certify any gain and at least 7 are required. Doctor and an autonomous worker refuse that configuration. Other modes warn. Confidence thresholds and the strict lower-bound comparison are unchanged. A custom audit method is not sized by this formula. A fresh plan records 50 audit units for that default objective, which can pass a large gain; use the formula when the gain you care about is smaller. Realistic gains need a larger audit, a longer step timeout, or a lower concurrency so the provider rate limit fits inside the step.
 
 ## 7. Implement and run the self-hosted worker
 
@@ -96,7 +116,7 @@ Create a local integration module in the initialized directory. The Node module 
 
 After completing and reviewing integration-plan.json, doctor should report configured, with liveVerified=false until you separately verify the real app. Doctor only checks declared configuration, local module presence and required environment-variable names; it does not import application code, read credential files, call providers, run migrations or attest to a working integration.
 
-Autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
+Autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval. On a terminal the worker asks you to type activate. When stdin is not a terminal, pass --confirm-activation or --yes. That flag records the confirmation and does not bypass the gates.
 
 ```sh
 python -m loopiter worker --module loopiter/application.py --enable --mode autonomous --once
@@ -108,7 +128,7 @@ Or for Node:
 npx --no-install loopiter worker --module loopiter/application.mjs --enable --mode autonomous --once
 ```
 
-To store proposals without applying a candidate, pass `--mode recommend` instead (or set plan.mode to recommend). Omitting --mode still selects recommend.
+To store proposals without applying a candidate, set plan.mode to recommend or pass `--mode recommend`. The flag wins. Omitting --mode follows the plan, which is autonomous on a fresh setup and recommend on a schemaVersion 1 plan.
 
 One tick advances one durable phase; it is not a complete improvement cycle. Omit --once for a foreground worker that ticks every 30 seconds. Deploy it through the user's own process manager, job runner, container or service. Keep persistent storage and provider credentials available across restarts. The worker stops when its process exits and must be supervised for unattended operation. It imports trusted application code; it is not a sandbox. The SDK's existing leases, reservations, audit, deployment and recovery gates still apply.
 

@@ -68,9 +68,9 @@ Release versions: `loopiter@0.3.0-alpha.1` and Python `loopiter==0.3.0a1`.
 It adds policy-bounded `ImprovementController` APIs in both languages, durable
 experiments, single-winner selection, production observation and recovery.
 Constructing the controller without a mode still recommends and does not apply.
-A fresh self-hosted init records autonomous mode and self-improving on; the
-worker spends only with `--enable`, and every audit, budget, and rollback gate
-remains. Installation never starts a worker or spends by itself.
+A fresh self-hosted init records autonomous mode and self-improving on. The
+worker follows `plan.mode` unless `--mode` is set, spends only with `--enable`,
+and every audit, budget, and rollback gate remains. Installation never starts a worker or spends by itself.
 
 See [autonomy guide source](fern/pages/autonomous.mdx), [migration](docs/autonomy-migration.md),
 [simulation workflows](examples/autonomous/README.md), and the

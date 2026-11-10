@@ -1,4 +1,5 @@
 /** Node-only self-hosted onboarding. No platform account or external service is used. */
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,9 +11,12 @@ import type {
   ImprovementWorkflow,
   TickResult,
 } from "./improvement-contracts.js";
+import { minimumCertifiableAuditUnits } from "./improvement-evidence.js";
 import { runDemo } from "../examples/autonomous/demo.js";
 
 const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
+const workerModes = ["observe", "recommend", "experiment", "autonomous"] as const;
+const MAX_STEP_MS = 3_600_000;
 const shellQuote = (value: string) =>
   "'" + value.replaceAll("'", "'\\''") + "'";
 export const referenceFiles: Record<string, string> = {
@@ -35,6 +39,127 @@ export async function readReference(name: string): Promise<string> {
   return readFile(resolve(packageRoot, referenceFiles[name]!), "utf8");
 }
 
+function validStepTimeout(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 1 &&
+    value <= MAX_STEP_MS
+  );
+}
+function loadIntegrationPlan(
+  modulePath: string,
+): Record<string, unknown> | undefined {
+  const path = resolve(dirname(resolve(modulePath)), "integration-plan.json");
+  if (!existsSync(path)) return undefined;
+  const plan = JSON.parse(readFileSync(path, "utf8")) as unknown;
+  if (!plan || typeof plan !== "object" || Array.isArray(plan))
+    throw Error("Invalid integration plan.");
+  return plan as Record<string, unknown>;
+}
+export function readWorkerSettings(
+  modulePath: string,
+  overrides: {
+    mode?: ImprovementMode;
+    modeSource?: "flag" | "option" | "plan" | "default";
+    stepTimeoutMs?: number;
+    stepTimeoutSource?: "flag" | "option" | "plan" | "default";
+  } = {},
+) {
+  const plan = loadIntegrationPlan(modulePath);
+  if (
+    plan &&
+    !workerModes.includes(plan.mode as (typeof workerModes)[number])
+  )
+    throw Error("Invalid mode in integration plan.");
+  const mode = (overrides.mode ??
+    (plan?.mode as ImprovementMode | undefined) ??
+    "recommend") as ImprovementMode;
+  if (!workerModes.includes(mode)) throw Error("Invalid improvement mode.");
+  const modeSource = overrides.mode
+    ? (overrides.modeSource ?? "option")
+    : plan?.mode
+      ? "plan"
+      : "default";
+  if (plan?.stepTimeoutMs !== undefined && !validStepTimeout(plan.stepTimeoutMs))
+    throw Error("Invalid stepTimeoutMs in integration plan.");
+  const stepTimeoutMs =
+    overrides.stepTimeoutMs ??
+    (validStepTimeout(plan?.stepTimeoutMs) ? plan.stepTimeoutMs : 120000);
+  if (!validStepTimeout(stepTimeoutMs))
+    throw Error(
+      "Step timeout must be an integer number of milliseconds from 1 to 3600000.",
+    );
+  const stepTimeoutSource =
+    overrides.stepTimeoutMs !== undefined
+      ? (overrides.stepTimeoutSource ?? "option")
+      : plan?.stepTimeoutMs !== undefined
+        ? "plan"
+        : "default";
+  return {
+    mode,
+    modeSource,
+    stepTimeoutMs,
+    stepTimeoutSource,
+  } as const;
+}
+function auditPlanMessages(plan: Record<string, unknown>): {
+  error?: string;
+  warning?: string;
+} {
+  const audit = plan.audit;
+  if (audit === undefined) {
+    if (plan.mode !== "autonomous") return {};
+    const needed = minimumCertifiableAuditUnits({
+      minimumImprovement: 0.05,
+      range: [0, 1],
+      alpha: 0.05,
+    });
+    return {
+      error: `Declare audit sizing. With minimum improvement 0.05, range 0 to 1 and alpha 0.05, the paired bound needs at least ${needed} units.`,
+    };
+  }
+  if (!audit || typeof audit !== "object" || Array.isArray(audit))
+    throw Error("Invalid audit sizing in integration plan.");
+  const row = audit as Record<string, unknown>;
+  const method = row.method ?? "paired-hoeffding";
+  if (typeof method !== "string" || !method.trim())
+    throw Error("Invalid audit method in integration plan.");
+  if (
+    typeof row.minimumUnits !== "number" ||
+    !Number.isSafeInteger(row.minimumUnits) ||
+    row.minimumUnits < 1
+  )
+    throw Error("Invalid audit.minimumUnits in integration plan.");
+  if (method !== "paired-hoeffding")
+    return {
+      warning: "Custom audit method is not sized by the paired Hoeffding check.",
+    };
+  if (
+    typeof row.minimumImprovement !== "number" ||
+    !Array.isArray(row.range) ||
+    row.range.length !== 2 ||
+    typeof row.range[0] !== "number" ||
+    typeof row.range[1] !== "number" ||
+    typeof row.alpha !== "number"
+  )
+    throw Error("Invalid audit objective in integration plan.");
+  let needed: number;
+  try {
+    needed = minimumCertifiableAuditUnits({
+      minimumImprovement: row.minimumImprovement,
+      range: [row.range[0], row.range[1]],
+      alpha: row.alpha,
+    });
+  } catch (error) {
+    throw Error(
+      error instanceof Error ? error.message : "Invalid audit objective.",
+    );
+  }
+  if (row.minimumUnits >= needed) return {};
+  const message = `Audit of ${row.minimumUnits} units cannot certify a gain of ${row.minimumImprovement} at alpha ${row.alpha}. At least ${needed} units are required.`;
+  return plan.mode === "autonomous" ? { error: message } : { warning: message };
+}
 export async function initializeSelfHosted(directory: string) {
   const destination = resolve(directory);
   const guide = await readAgentGuide();
@@ -47,6 +172,14 @@ export async function initializeSelfHosted(directory: string) {
     preset: "autonomous-default",
     mode: "autonomous",
     selfImproving: true,
+    stepTimeoutMs: 120000,
+    audit: {
+      method: "paired-hoeffding",
+      minimumImprovement: 0.05,
+      range: [0, 1],
+      alpha: 0.05,
+      minimumUnits: 50,
+    },
     namespace: "",
     applicationModule: "./application.mjs",
     storage: "unconfigured",
@@ -65,7 +198,7 @@ export async function initializeSelfHosted(directory: string) {
     "integration-plan.json": JSON.stringify(plan, null, 2) + "\n",
     "verify.mjs":
       'import { verifySelfHostedInstallation } from "loopiter/onboarding";\nconsole.log(JSON.stringify(await verifySelfHostedInstallation(), null, 2));\n',
-    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode autonomous --once\n\n--enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode recommend --once\n\nOmitting --mode on the worker still selects recommend. Constructing ImprovementController without a mode also stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
+    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.\n\nOn a terminal the worker asks you to type activate. When stdin is not a terminal, pass --confirm-activation or --yes. That flag records the one-time confirmation and does not bypass audit, budget, or rollback gates.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode autonomous --once\n\n--enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --enable --mode recommend --once\n\nOmitting --mode uses plan.mode. The --mode flag overrides the plan. Set plan.mode to recommend to turn off autonomous. Constructing ImprovementController without a mode stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
   };
   for (const [name, contents] of Object.entries(files)) {
     await writeFile(resolve(destination, name), contents, {
@@ -149,12 +282,20 @@ export async function inspectSelfHostedSetup(
       missing.push(
         `Set ${name} through your secret manager or process environment.`,
       );
+  if (plan.stepTimeoutMs !== undefined && !validStepTimeout(plan.stepTimeoutMs))
+    throw Error(
+      "stepTimeoutMs must be an integer number of milliseconds from 1 to 3600000.",
+    );
+  const audit = auditPlanMessages(plan);
+  const warnings = audit.warning ? [audit.warning] : [];
+  if (audit.error) missing.push(audit.error);
   return {
     configured: missing.length === 0,
     liveVerified: false,
     mode: plan.mode,
     selfImproving: plan.selfImproving,
     missing,
+    warnings,
     note: "Configuration checks only. This does not import application code, contact providers, verify model quality or activate releases.",
   };
 }
@@ -192,6 +333,9 @@ export interface SelfHostedIntegration {
 export interface SelfHostedWorkerOptions {
   module: string;
   mode?: ImprovementMode;
+  modeSource?: "flag" | "option" | "plan" | "default";
+  stepTimeoutMs?: number;
+  stepTimeoutSource?: "flag" | "option" | "plan" | "default";
   selfImproving?: boolean;
   once?: boolean;
   intervalMs?: number;
@@ -203,12 +347,26 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
     throw Error(
       "Worker is disabled. Review the setup and pass --enable to permit improvement work and provider spending.",
     );
-  const mode = options.mode ?? "recommend",
-    interval = options.intervalMs ?? 30000;
-  if (!["observe", "recommend", "experiment", "autonomous"].includes(mode))
-    throw Error("Invalid improvement mode.");
+  const settings = readWorkerSettings(options.module, {
+    ...(options.mode
+      ? { mode: options.mode, modeSource: options.modeSource }
+      : {}),
+    ...(options.stepTimeoutMs !== undefined
+      ? {
+          stepTimeoutMs: options.stepTimeoutMs,
+          stepTimeoutSource: options.stepTimeoutSource,
+        }
+      : {}),
+  });
+  const interval = options.intervalMs ?? 30000;
   if (!Number.isSafeInteger(interval) || interval < 1000)
     throw Error("intervalMs must be an integer of at least 1000.");
+  console.error(
+    `effective mode ${settings.mode} (source: ${settings.modeSource})`,
+  );
+  console.error(
+    `effective step timeout ${settings.stepTimeoutMs}ms (source: ${settings.stepTimeoutSource})`,
+  );
   options.signal?.throwIfAborted();
   const loaded = (await import(
     pathToFileURL(resolve(options.module)).href
@@ -232,10 +390,19 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
       throw Error(
         "createIntegration must return { loop: FeedbackLoop, workflows, close? }.",
       );
+    for (const workflow of integration.workflows) {
+      if (workflow.policy.auditMethod) continue;
+      const needed = minimumCertifiableAuditUnits(workflow.policy.objective);
+      if (workflow.policy.minimumAuditUnits >= needed) continue;
+      const message = `Audit size ${workflow.policy.minimumAuditUnits} cannot certify the configured gain at this confidence. At least ${needed} units are required.`;
+      if (settings.mode === "autonomous") throw Error(message);
+      console.error(`warning: ${message}`);
+    }
     const controller = new ImprovementController(integration.loop, {
       workflows: integration.workflows,
-      mode,
+      mode: settings.mode,
       selfImproving: true,
+      stepTimeoutMs: settings.stepTimeoutMs,
     });
     const results: TickResult[] = [];
     do {

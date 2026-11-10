@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from . import FeedbackLoop, ImprovementController
+from .improvement_evidence import minimum_certifiable_audit_units
 
 REFERENCES = {
     "workflows": "autonomous_workflows.py",
@@ -22,6 +23,7 @@ REFERENCES = {
     "classification": "reviewed_loop.py",
 }
 MODES = ("observe", "recommend", "experiment", "autonomous")
+MAX_STEP_MS = 3_600_000
 
 
 def read_agent_guide():
@@ -43,6 +45,112 @@ def read_reference(name):
     return (_reference_directory() / REFERENCES[name]).read_text(encoding="utf-8")
 
 
+def _valid_step_timeout(value):
+    return type(value) is int and 1 <= value <= MAX_STEP_MS
+
+
+def _load_plan(module_path):
+    path = Path(module_path).resolve().parent / "integration-plan.json"
+    if not path.is_file():
+        return None
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    if type(plan) is not dict:
+        raise ValueError("Invalid integration plan.")
+    return plan
+
+
+def read_worker_settings(
+    module_path, *, mode=None, mode_source=None, step_timeout_ms=None, step_timeout_source=None
+):
+    plan = _load_plan(module_path)
+    if plan is not None and plan.get("mode") not in MODES:
+        raise ValueError("Invalid mode in integration plan.")
+    if mode is not None and mode not in MODES:
+        raise ValueError("Invalid improvement mode.")
+    resolved_mode = mode if mode is not None else (plan or {}).get("mode", "recommend")
+    if resolved_mode not in MODES:
+        raise ValueError("Invalid improvement mode.")
+    resolved_mode_source = (
+        (mode_source or "option")
+        if mode is not None
+        else "plan"
+        if plan and plan.get("mode")
+        else "default"
+    )
+    if (
+        plan is not None
+        and "stepTimeoutMs" in plan
+        and not _valid_step_timeout(plan["stepTimeoutMs"])
+    ):
+        raise ValueError("Invalid stepTimeoutMs in integration plan.")
+    resolved_timeout = (
+        step_timeout_ms
+        if step_timeout_ms is not None
+        else plan["stepTimeoutMs"]
+        if plan is not None and "stepTimeoutMs" in plan
+        else 120000
+    )
+    if not _valid_step_timeout(resolved_timeout):
+        raise ValueError(
+            "Step timeout must be an integer number of milliseconds from 1 to 3600000."
+        )
+    resolved_timeout_source = (
+        (step_timeout_source or "option")
+        if step_timeout_ms is not None
+        else "plan"
+        if plan is not None and "stepTimeoutMs" in plan
+        else "default"
+    )
+    return {
+        "mode": resolved_mode,
+        "mode_source": resolved_mode_source,
+        "step_timeout_ms": resolved_timeout,
+        "step_timeout_source": resolved_timeout_source,
+    }
+
+
+def _audit_plan_messages(plan):
+    audit = plan.get("audit", None)
+    if audit is None:
+        if plan.get("mode") != "autonomous":
+            return {}
+        needed = minimum_certifiable_audit_units(
+            {"minimum_improvement": 0.05, "range": [0, 1], "alpha": 0.05}
+        )
+        return {
+            "error": (
+                "Declare audit sizing. With minimum improvement 0.05, range 0 to 1 and "
+                f"alpha 0.05, the paired bound needs at least {needed} units."
+            )
+        }
+    if type(audit) is not dict:
+        raise ValueError("Invalid audit sizing in integration plan.")
+    method = audit.get("method", "paired-hoeffding")
+    if type(method) is not str or not method.strip():
+        raise ValueError("Invalid audit method in integration plan.")
+    units = audit.get("minimumUnits")
+    if type(units) is not int or units < 1:
+        raise ValueError("Invalid audit.minimumUnits in integration plan.")
+    if method != "paired-hoeffding":
+        return {"warning": "Custom audit method is not sized by the paired Hoeffding check."}
+    objective = {
+        "minimum_improvement": audit.get("minimumImprovement"),
+        "range": audit.get("range"),
+        "alpha": audit.get("alpha"),
+    }
+    try:
+        needed = minimum_certifiable_audit_units(objective)
+    except Exception as error:
+        raise ValueError(str(error) or "Invalid audit objective.") from error
+    if units >= needed:
+        return {}
+    message = (
+        f"Audit of {units} units cannot certify a gain of {objective['minimum_improvement']} "
+        f"at alpha {objective['alpha']}. At least {needed} units are required."
+    )
+    return {"error": message} if plan.get("mode") == "autonomous" else {"warning": message}
+
+
 def initialize_self_hosted(directory):
     # Keep the final component lexical so even a dangling symlink is rejected by mkdir.
     destination = Path(directory).absolute()
@@ -56,6 +164,14 @@ def initialize_self_hosted(directory):
         "preset": "autonomous-default",
         "mode": "autonomous",
         "selfImproving": True,
+        "stepTimeoutMs": 120000,
+        "audit": {
+            "method": "paired-hoeffding",
+            "minimumImprovement": 0.05,
+            "range": [0, 1],
+            "alpha": 0.05,
+            "minimumUnits": 50,
+        },
         "namespace": "",
         "applicationModule": "./application.py",
         "storage": "unconfigured",
@@ -87,6 +203,8 @@ This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and
 
 After doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
 
+On a terminal the worker asks you to type activate. When stdin is not a terminal, pass --confirm-activation or --yes. That flag records the one-time confirmation and does not bypass audit, budget, or rollback gates.
+
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --mode autonomous --once
 
 --enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.
@@ -95,7 +213,7 @@ After doctor reports configured and verify passes, autonomous remains the first 
 
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --mode recommend --once
 
-Omitting --mode on the worker still selects recommend. Constructing ImprovementController without a mode also stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.
+Omitting --mode uses plan.mode. The --mode flag overrides the plan. Set plan.mode to recommend to turn off autonomous. Constructing ImprovementController without a mode stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.
 
 One tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your process manager. A worker does not remain running after its process exits.
 
@@ -151,12 +269,21 @@ def inspect_self_hosted_setup(directory, environment=None):
     for name in names:
         if not environment.get(name):
             missing.append(f"Set {name} through your secret manager or process environment.")
+    if "stepTimeoutMs" in plan and not _valid_step_timeout(plan["stepTimeoutMs"]):
+        raise ValueError(
+            "stepTimeoutMs must be an integer number of milliseconds from 1 to 3600000."
+        )
+    audit = _audit_plan_messages(plan)
+    warnings = [audit["warning"]] if audit.get("warning") else []
+    if audit.get("error"):
+        missing.append(audit["error"])
     return {
         "configured": not missing,
         "liveVerified": False,
         "mode": plan["mode"],
         "selfImproving": plan["selfImproving"],
         "missing": missing,
+        "warnings": warnings,
         "note": "Configuration checks only. This does not import application code, contact providers, verify model quality or activate releases.",
     }
 
@@ -214,7 +341,10 @@ def _integration_factory(module_path):
 async def run_self_hosted_worker(
     module_path,
     *,
-    mode="recommend",
+    mode=None,
+    mode_source=None,
+    step_timeout_ms=None,
+    step_timeout_source=None,
     self_improving=False,
     once=False,
     interval_ms=30000,
@@ -225,8 +355,23 @@ async def run_self_hosted_worker(
         raise ValueError(
             "Worker is disabled. Review the setup and pass --enable to permit improvement work and provider spending."
         )
-    if mode not in MODES or type(interval_ms) is not int or interval_ms < 1000:
+    settings = read_worker_settings(
+        module_path,
+        mode=mode,
+        mode_source=mode_source,
+        step_timeout_ms=step_timeout_ms,
+        step_timeout_source=step_timeout_source,
+    )
+    if type(interval_ms) is not int or interval_ms < 1000:
         raise ValueError("Choose a valid mode and an integer interval_ms of at least 1000.")
+    print(
+        f"effective mode {settings['mode']} (source: {settings['mode_source']})",
+        file=sys.stderr,
+    )
+    print(
+        f"effective step timeout {settings['step_timeout_ms']}ms (source: {settings['step_timeout_source']})",
+        file=sys.stderr,
+    )
     cancellation = cancellation if cancellation is not None else asyncio.Event()
     if cancellation.is_set():
         raise asyncio.CancelledError
@@ -241,8 +386,26 @@ async def run_self_hosted_worker(
             raise ValueError(
                 "create_integration must return a dictionary with loop, workflows and optional async close."
             )
+        for workflow in integration["workflows"]:
+            policy = workflow.policy
+            if "audit_method" in policy:
+                continue
+            needed = minimum_certifiable_audit_units(policy["objective"])
+            if policy["minimum_audit_units"] >= needed:
+                continue
+            message = (
+                f"Audit size {policy['minimum_audit_units']} cannot certify the configured gain "
+                f"at this confidence. At least {needed} units are required."
+            )
+            if settings["mode"] == "autonomous":
+                raise ValueError(message)
+            print("warning: " + message, file=sys.stderr)
         controller = ImprovementController(
-            integration["loop"], workflows=integration["workflows"], mode=mode, self_improving=True
+            integration["loop"],
+            workflows=integration["workflows"],
+            mode=settings["mode"],
+            self_improving=True,
+            step_timeout_ms=settings["step_timeout_ms"],
         )
         results = []
         while not cancellation.is_set():
@@ -289,11 +452,27 @@ def main(argv=None):
     worker.add_argument(
         "--mode",
         choices=MODES,
-        default="recommend",
-        help="Defaults to recommend. Fresh init recipes pass autonomous after doctor and verify.",
+        default=None,
+        help="Overrides plan.mode. Omit to use the integration plan, or recommend when no plan is present.",
     )
     worker.add_argument("--once", action="store_true")
     worker.add_argument("--interval-ms", type=int, default=30000)
+    worker.add_argument(
+        "--step-timeout-ms",
+        type=int,
+        default=None,
+        help="Per-step callback deadline in milliseconds. Overrides plan stepTimeoutMs. Default 120000.",
+    )
+    worker.add_argument(
+        "--confirm-activation",
+        action="store_true",
+        help="Record the one-time confirmation required for autonomous mode when stdin is not a terminal.",
+    )
+    worker.add_argument(
+        "--yes",
+        action="store_true",
+        help="Same as --confirm-activation.",
+    )
     args = parser.parse_args(argv)
     try:
         if args.command == "guide":
@@ -309,6 +488,31 @@ def main(argv=None):
         elif args.command == "verify":
             report = asyncio.run(verify_self_hosted_installation())
         else:
+            settings = read_worker_settings(
+                args.module,
+                mode=args.mode,
+                mode_source="flag" if args.mode else None,
+                step_timeout_ms=args.step_timeout_ms,
+                step_timeout_source="flag" if args.step_timeout_ms is not None else None,
+            )
+            if (
+                args.enable
+                and settings["mode"] == "autonomous"
+                and not (args.yes or args.confirm_activation)
+            ):
+                if not sys.stdin.isatty():
+                    raise ValueError(
+                        "Autonomous activation needs a one-time confirmation. "
+                        "Pass --confirm-activation or --yes when stdin is not a terminal."
+                    )
+                print(
+                    "Autonomous mode can spend provider budget and deploy a candidate "
+                    "that passes validation and audit.",
+                    file=sys.stderr,
+                )
+                answer = input("Type activate to confirm: ")
+                if answer.strip() != "activate":
+                    raise ValueError("Autonomous activation was not confirmed.")
 
             async def run():
                 cancellation = asyncio.Event()
@@ -323,7 +527,10 @@ def main(argv=None):
                 try:
                     await run_self_hosted_worker(
                         args.module,
-                        mode=args.mode,
+                        mode=settings["mode"],
+                        mode_source=settings["mode_source"],
+                        step_timeout_ms=settings["step_timeout_ms"],
+                        step_timeout_source=settings["step_timeout_source"],
                         self_improving=args.enable,
                         once=args.once,
                         interval_ms=args.interval_ms,

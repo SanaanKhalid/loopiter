@@ -45,6 +45,28 @@ class PostgresArtifactRegistry:
                 async with connection.cursor(row_factory=dict_row) as cursor:
                     yield cursor
 
+    async def update_configuration(self, configuration_hash):
+        """Record a serving-configuration change that keeps the current artifact version.
+
+        Call this only when no improvement run is active. An in-flight run fences the
+        previous hash and fails closed instead of deploying onto the new configuration.
+        """
+        v.nonempty(configuration_hash, "configuration hash")
+        async with self._transaction() as c:
+            await c.execute(
+                "SELECT version,configuration_hash FROM loopiter_python_example_targets WHERE scope=%s FOR UPDATE",
+                (self.scope,),
+            )
+            active = await c.fetchone()
+            if not active:
+                v.fail("not_found", "Explicitly initialize the application registry first.")
+            if active["configuration_hash"] == configuration_hash:
+                return
+            await c.execute(
+                "UPDATE loopiter_python_example_targets SET configuration_hash=%s WHERE scope=%s",
+                (configuration_hash, self.scope),
+            )
+
     async def initialize(self, artifact, configuration_hash):
         """Explicit initial seed, never an overwrite of a deployed version."""
         from psycopg.types.json import Jsonb

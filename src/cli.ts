@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createInterface } from "node:readline/promises";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,7 @@ import {
   inspectSelfHostedSetup,
   readAgentGuide,
   readReference,
+  readWorkerSettings,
   referenceFiles,
   runSelfHostedWorker,
   verifySelfHostedInstallation,
@@ -40,7 +42,7 @@ function validateOptions(values: string[], switches: string[] = []) {
 async function main() {
   if (!command || command === "--help" || args.includes("--help")) {
     console.log(
-      "Loopiter alpha — self-hosted SDK tools\n guide — print the installed agent setup guide\n init --directory ./loopiter — create a self-hosted setup (never overwrites)\n doctor --directory ./loopiter — check configuration without calling models\n verify — run isolated offline controller/rollback checks\n reference [--name workflows|registry|registrySql|providers|classification|classificationReadme]\n starter demo [--reject|--interrupt] — packaged classification example\n worker --module ./loopiter/application.mjs --enable [--mode observe|recommend|experiment|autonomous] [--once] [--interval-ms 30000]\n Fresh init writes schemaVersion 2 (autonomous-default): mode autonomous and selfImproving true. The worker still defaults to recommend and refuses to start without --enable. --enable authorizes improvement work and provider spending inside the existing policy gates; it does not bypass audit, budgets, or rollback.\n analyze --file STATE --namespace NAME --dimensions metadata.task\n candidates|events --file STATE --namespace NAME\n export --file STATE --namespace NAME (writes JSON to stdout)\n import-v1 --input OLD --file NEW --namespace NAME",
+      "Loopiter alpha — self-hosted SDK tools\n guide — print the installed agent setup guide\n init --directory ./loopiter — create a self-hosted setup (never overwrites)\n doctor --directory ./loopiter — check configuration without calling models\n verify — run isolated offline controller/rollback checks\n reference [--name workflows|registry|registrySql|providers|classification|classificationReadme]\n starter demo [--reject|--interrupt] — packaged classification example\n worker --module ./loopiter/application.mjs --enable [--mode observe|recommend|experiment|autonomous] [--step-timeout-ms 120000] [--once] [--interval-ms 30000] [--confirm-activation|--yes]\n Fresh init writes schemaVersion 2 (autonomous-default): mode autonomous and selfImproving true. Omitting --mode uses plan.mode; --mode overrides it. The worker refuses to start without --enable. Non-interactive autonomous runs also require --confirm-activation or --yes. --enable authorizes improvement work and provider spending inside the existing policy gates; it does not bypass audit, budgets, or rollback.\n analyze --file STATE --namespace NAME --dimensions metadata.task\n candidates|events --file STATE --namespace NAME\n export --file STATE --namespace NAME (writes JSON to stdout)\n import-v1 --input OLD --file NEW --namespace NAME",
     );
     return;
   }
@@ -50,12 +52,14 @@ async function main() {
     doctor: ["--directory"],
     verify: [],
     reference: ["--name"],
-    worker: ["--module", "--mode", "--interval-ms"],
+    worker: ["--module", "--mode", "--interval-ms", "--step-timeout-ms"],
   };
   if (Object.hasOwn(selfHostedOptions, command))
     validateOptions(
       selfHostedOptions[command]!,
-      command === "worker" ? ["--enable", "--once"] : [],
+      command === "worker"
+        ? ["--enable", "--once", "--yes", "--confirm-activation"]
+        : [],
     );
   if (command === "guide") {
     console.log(await readAgentGuide());
@@ -116,6 +120,43 @@ async function main() {
     const module = flag("module");
     if (!module)
       throw Error("--module must name a local application integration module.");
+    const modeFlag = flag("mode");
+    const timeoutFlag = flag("step-timeout-ms");
+    const settings = readWorkerSettings(module, {
+      ...(modeFlag
+        ? { mode: modeFlag as ImprovementMode, modeSource: "flag" as const }
+        : {}),
+      ...(timeoutFlag
+        ? {
+            stepTimeoutMs: Number(timeoutFlag),
+            stepTimeoutSource: "flag" as const,
+          }
+        : {}),
+    });
+    if (
+      args.includes("--enable") &&
+      settings.mode === "autonomous" &&
+      !args.includes("--yes") &&
+      !args.includes("--confirm-activation")
+    ) {
+      if (!process.stdin.isTTY)
+        throw Error(
+          "Autonomous activation needs a one-time confirmation. Pass --confirm-activation or --yes when stdin is not a terminal.",
+        );
+      const prompts = createInterface({
+        input: process.stdin,
+        output: process.stderr,
+      });
+      try {
+        const answer = await prompts.question(
+          "Autonomous mode can spend provider budget and deploy a candidate that passes validation and audit.\nType activate to confirm: ",
+        );
+        if (answer.trim() !== "activate")
+          throw Error("Autonomous activation was not confirmed.");
+      } finally {
+        prompts.close();
+      }
+    }
     const shutdown = new AbortController();
     const stop = () => shutdown.abort();
     process.once("SIGINT", stop);
@@ -123,7 +164,10 @@ async function main() {
     try {
       await runSelfHostedWorker({
         module,
-        mode: (flag("mode") ?? "recommend") as ImprovementMode,
+        mode: settings.mode,
+        modeSource: settings.modeSource,
+        stepTimeoutMs: settings.stepTimeoutMs,
+        stepTimeoutSource: settings.stepTimeoutSource,
         selfImproving: args.includes("--enable"),
         once: args.includes("--once"),
         intervalMs: Number(flag("interval-ms") ?? 30000),

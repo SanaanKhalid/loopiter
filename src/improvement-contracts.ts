@@ -23,6 +23,7 @@ export type RunState =
   | "no_improvement"
   | "paused"
   | "failed"
+  | "timed_out"
   | "reconciliation_required"
   | "rolling_back"
   | "rolled_back";
@@ -239,6 +240,8 @@ export interface ImprovementRunData {
   configuration?: CallbackContext["configuration"];
   operationIds?: string[];
   assignmentHash?: string;
+  /** Pre-deployment callback timeouts already spent on this run. */
+  stepTimeouts?: number;
 }
 export interface ImprovementRun extends RecordBase {
   format: 1;
@@ -262,7 +265,9 @@ export interface ImprovementControllerOptions {
   selfImproving?: boolean;
   mode?: ImprovementMode;
   workflows: ImprovementWorkflow[];
+  /** Per-step callback deadline. `stepTimeoutMs` wins when both are set. */
   callbackTimeoutMs?: number;
+  stepTimeoutMs?: number;
   tickTimeoutMs?: number;
 }
 export type ControllerData = JsonObject;

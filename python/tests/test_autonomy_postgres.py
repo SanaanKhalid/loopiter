@@ -9,7 +9,7 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).parents[1] / "examples"))
 from autonomous_registry import PostgresArtifactRegistry, registry_migration_sql
 
-from loopiter import FeedbackLoop
+from loopiter import FeedbackLoop, LoopiterError
 from loopiter.postgres import PostgresStore, migration_sql
 
 
@@ -78,6 +78,41 @@ class AutonomyPostgresTests(unittest.IsolatedAsyncioTestCase):
                         "loopiter_python_example_artifacts",
                     ):
                         # Constants only; no user-controlled SQL identifiers.
+                        await connection.execute(
+                            "DELETE FROM " + table + " WHERE scope=%s", (registry.scope,)
+                        )
+
+    async def test_configuration_hash_can_be_updated(self):
+        from psycopg import AsyncConnection
+        from psycopg_pool import AsyncConnectionPool
+
+        url = os.environ["LOOPITER_PYTHON_TEST_DATABASE_URL"]
+        async with await AsyncConnection.connect(url, autocommit=True) as connection:
+            await connection.execute(registry_migration_sql())
+        namespace = "config-hash/" + str(uuid4())
+        async with AsyncConnectionPool(url, open=False) as pool:
+            registry = PostgresArtifactRegistry(
+                pool, namespace=namespace, target={"kind": "prompt", "key": "classifier"}
+            )
+            try:
+                await registry.initialize({"fragment": "v1"}, "hash-a")
+                before = await registry.current()
+                await registry.update_configuration("hash-b")
+                after = await registry.current()
+                self.assertEqual(after["version"], before["version"])
+                self.assertEqual(after["configuration_hash"], "hash-b")
+                self.assertEqual(after["artifact"], {"fragment": "v1"})
+                await registry.update_configuration("hash-b")
+                self.assertEqual((await registry.current())["configuration_hash"], "hash-b")
+                with self.assertRaises(LoopiterError):
+                    await registry.update_configuration(" ")
+            finally:
+                async with pool.connection() as connection:
+                    for table in (
+                        "loopiter_python_example_receipts",
+                        "loopiter_python_example_targets",
+                        "loopiter_python_example_artifacts",
+                    ):
                         await connection.execute(
                             "DELETE FROM " + table + " WHERE scope=%s", (registry.scope,)
                         )

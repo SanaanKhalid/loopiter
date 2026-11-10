@@ -4,8 +4,15 @@
 
 ### Minor
 
+- The controller step timeout is configurable from the controller, `stepTimeoutMs` in the integration plan, and `--step-timeout-ms`. The default remains 120 seconds and the deadline cannot exceed one hour. A step that fails only by timeout is recorded as `timed_out`, does not consume audit rows, and does not increment the consecutive-failure stop. It is retried once; a second timeout ends that run. Repeated timeouts pause separately from real failures and still cannot deploy.
+- Doctor and an autonomous worker refuse an audit size that cannot certify the configured gain at the configured confidence. The paired Hoeffding minimum is `minimumCertifiableAuditUnits` / `minimum_certifiable_audit_units`. Fresh plans record an audit size that can pass. Confidence thresholds are unchanged.
+- The worker uses `plan.mode` when `--mode` is omitted. The flag overrides the plan, and the effective mode and step timeout are logged with their source.
+- The starter Postgres registry can update a setup's configuration hash without replacing the artifact version.
+- Candidates left proposed by a timed-out or cancelled run are rejected when the run ends, and stale ones are rejected on startup.
+- The first `--enable` run in autonomous mode asks for the one-time activation confirmation. Non-interactive runs must pass `--confirm-activation` or `--yes`.
+
 - Fresh self-hosted `init` writes onboarding plan schemaVersion 2, preset `autonomous-default`, in Node and Python: `mode` autonomous and self-improving on. Doctor still accepts schemaVersion 1 plans and does not rewrite them.
-- `ImprovementController` constructed without a mode still recommends and does not apply. The worker still requires `--enable` before spending. New setup recipes pass `--enable --mode autonomous` after doctor and verify. `--mode recommend` remains one flag away, and omitting `--mode` still selects recommend.
+- `ImprovementController` constructed without a mode still recommends and does not apply. The worker still requires `--enable` before spending. New setup recipes pass `--enable --mode autonomous` after doctor and verify. `--mode recommend` remains one flag away. Omitting `--mode` follows `plan.mode`.
 - `--enable` authorizes improvement work and provider spending inside the existing gates. Autonomous mode still fails closed without an audit partition, a budget, or that flag. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks are unchanged. No storage migration.
 - Before the first `--enable --mode autonomous` run, the agent guide and init recipe require one-time explicit confirmation from the human. A checklist, doctor report, or plan output is not that confirmation. Later autonomous runs do not add per-candidate approval.
 

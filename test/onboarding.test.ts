@@ -10,6 +10,7 @@ import {
   inspectSelfHostedSetup,
   readAgentGuide,
   readReference,
+  readWorkerSettings,
   runSelfHostedWorker,
   verifySelfHostedInstallation,
 } from "../src/onboarding.js";
@@ -33,6 +34,7 @@ test("self-hosted init never overwrites user files or follows an existing destin
     assert.equal(plan.selfImproving, true);
     assert.deepEqual(Object.keys(plan).sort(), [
       "applicationModule",
+      "audit",
       "language",
       "mode",
       "namespace",
@@ -41,6 +43,7 @@ test("self-hosted init never overwrites user files or follows an existing destin
       "reviewed",
       "schemaVersion",
       "selfImproving",
+      "stepTimeoutMs",
       "storage",
     ]);
     assert.equal(setup.mode, "autonomous");
@@ -56,7 +59,8 @@ test("self-hosted init never overwrites user files or follows an existing destin
       readme,
       /fails closed without an audit partition, a budget, or --enable/,
     );
-    assert.match(readme, /Omitting --mode on the worker still selects recommend/);
+    assert.match(readme, /Omitting --mode uses plan.mode/);
+    assert.match(readme, /The --mode flag overrides the plan/);
     const confirmation =
       "Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.";
     assert.ok(readme.includes(confirmation));
@@ -302,6 +306,123 @@ test("CLI errors do not turn an unfinished setup into a successful connection", 
       run("worker", "--module", "absent.mjs", "--mode", "autonomous").status,
       1,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor refuses an audit that cannot certify and plan.mode is honored", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-audit-mode-"));
+  try {
+    const destination = join(root, "setup");
+    await initializeSelfHosted(destination);
+    const path = join(destination, "integration-plan.json");
+    const plan = JSON.parse(await readFile(path, "utf8"));
+    Object.assign(plan, {
+      namespace: "app/dev",
+      storage: "postgres",
+      requiredEnvironment: [],
+      reviewed: Object.fromEntries(
+        Object.keys(plan.reviewed).map((key) => [key, true]),
+      ),
+    });
+    await writeFile(join(destination, "application.mjs"), "export {};\n");
+    plan.audit.minimumUnits = 5;
+    await writeFile(path, JSON.stringify(plan));
+    const blocked = await inspectSelfHostedSetup(destination, {});
+    assert.equal(blocked.configured, false);
+    assert.match(blocked.missing.join("\n"), /At least 7 units are required/);
+    plan.mode = "recommend";
+    await writeFile(path, JSON.stringify(plan));
+    const warned = await inspectSelfHostedSetup(destination, {});
+    assert.equal(warned.configured, true);
+    assert.match(warned.warnings.join("\n"), /At least 7 units are required/);
+    const module = join(root, "application.mjs");
+    await writeFile(
+      join(root, "integration-plan.json"),
+      JSON.stringify({
+        ...plan,
+        mode: "autonomous",
+        audit: { ...plan.audit, minimumUnits: 50 },
+        stepTimeoutMs: 180000,
+      }),
+    );
+    await writeFile(module, "export {};\n");
+    const fromPlan = readWorkerSettings(module);
+    assert.equal(fromPlan.mode, "autonomous");
+    assert.equal(fromPlan.modeSource, "plan");
+    assert.equal(fromPlan.stepTimeoutMs, 180000);
+    assert.equal(fromPlan.stepTimeoutSource, "plan");
+    const flagged = readWorkerSettings(module, {
+      mode: "recommend",
+      modeSource: "flag",
+      stepTimeoutMs: 90000,
+      stepTimeoutSource: "flag",
+    });
+    assert.equal(flagged.mode, "recommend");
+    assert.equal(flagged.modeSource, "flag");
+    assert.equal(flagged.stepTimeoutMs, 90000);
+    const guide = await readAgentGuide();
+    assert.match(guide, /stepTimeoutMs >= 1000/);
+    assert.match(guide, /minimumCertifiableAuditUnits/);
+    const cli = new URL("../src/cli.js", import.meta.url);
+    const entry = new URL("../src/index.js", import.meta.url).href;
+    const policy = JSON.parse(
+      await readFile(
+        new URL("../../python/tests/fixtures/autonomy.json", import.meta.url),
+        "utf8",
+      ),
+    ).policy;
+    await writeFile(
+      module,
+      `
+import { FeedbackLoop, InMemoryStore } from ${JSON.stringify(entry)};
+export async function createIntegration() {
+ const loop = new FeedbackLoop({ store: new InMemoryStore(), namespace: 'cli/confirm' });
+ const policy = ${JSON.stringify(policy)};
+ const rows = (prefix, count, day) => Array.from({length: count}, (_, i) => ({id: prefix+i, episodeId: prefix+i, entityId: prefix+i, occurredAt: '2026-01-0'+day+'T00:00:00Z', observedAt: '2026-01-0'+day+'T01:00:00Z', source: policy.trustedSources[0], input:'test', label:'yes'}));
+ const workflow = {id:'cli', version:'1', optimizerVersion:'1', evaluatorVersion:'1', policy,
+  artifact: async()=>({artifactVersion:'baseline',configurationHash:'fixed'}),
+  dataset: async()=>({version:'1',optimization:rows('o',3,1),validation:rows('v',20,2),audit:rows('a',50,3)}),
+  propose: async()=>[{score:1}],
+  evaluate: async({examples})=>({cases:examples.map((row)=>({id:row.id,baseline:0,candidate:1})),metrics:{errors:0},estimatedServingCost:0}),
+  deployment:{apply:async()=>{throw Error('not this test')},rollback:async()=>{throw Error('no')},inspect:async()=>({status:'unknown'})},
+  observe:async()=>{throw Error('no')}};
+ return {loop, workflows:[workflow], close:async()=>{await loop.close();}};
+}
+`,
+    );
+    const run = (args: string[]) =>
+      spawnSync(process.execPath, [cli.pathname, ...args], {
+        cwd: root,
+        encoding: "utf8",
+        input: "",
+      });
+    const denied = run([
+      "worker",
+      "--module",
+      module,
+      "--enable",
+      "--mode",
+      "autonomous",
+      "--once",
+    ]);
+    assert.equal(denied.status, 1);
+    assert.match(denied.stderr, /--confirm-activation or --yes/);
+    const allowed = run([
+      "worker",
+      "--module",
+      module,
+      "--enable",
+      "--confirm-activation",
+      "--once",
+      "--step-timeout-ms",
+      "180000",
+    ]);
+    assert.equal(allowed.status, 0, allowed.stderr);
+    assert.match(allowed.stderr, /effective mode autonomous \(source: plan\)/);
+    assert.match(allowed.stderr, /effective step timeout 180000ms \(source: flag\)/);
+    assert.match(allowed.stdout, /"state":"evaluating"/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,6 +1,8 @@
 import asyncio
 import json
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +13,7 @@ from loopiter.onboarding import (
     inspect_self_hosted_setup,
     read_agent_guide,
     read_reference,
+    read_worker_settings,
     run_self_hosted_worker,
     verify_self_hosted_installation,
 )
@@ -42,6 +45,8 @@ class OnboardingTests(unittest.TestCase):
                     "preset",
                     "mode",
                     "selfImproving",
+                    "stepTimeoutMs",
+                    "audit",
                     "namespace",
                     "applicationModule",
                     "storage",
@@ -54,7 +59,8 @@ class OnboardingTests(unittest.TestCase):
             self.assertIn("--enable --mode recommend --once", readme)
             self.assertIn("--enable authorizes improvement work and provider spending", readme)
             self.assertIn("fails closed without an audit partition, a budget, or --enable", readme)
-            self.assertIn("Omitting --mode on the worker still selects recommend", readme)
+            self.assertIn("Omitting --mode uses plan.mode", readme)
+            self.assertIn("The --mode flag overrides the plan", readme)
             confirmation = (
                 "Before the first run with --enable --mode autonomous, stop and get explicit "
                 "confirmation from the human. That confirmation is one-time, for initial "
@@ -229,3 +235,137 @@ async def create_integration(*, cancellation):
             result = await run_self_hosted_worker(module, self_improving=True, once=True)
             self.assertEqual(len(result), 1)
             self.assertEqual(closed.read_text(), "closed")
+
+    def test_doctor_audit_size_plan_mode_and_confirmation_flag(self):
+        with tempfile.TemporaryDirectory() as root:
+            destination = Path(root) / "setup"
+            initialize_self_hosted(destination)
+            path = destination / "integration-plan.json"
+            plan = json.loads(path.read_text())
+            plan.update(
+                namespace="app/dev",
+                storage="postgres",
+                requiredEnvironment=[],
+                reviewed=dict.fromkeys(plan["reviewed"], True),
+            )
+            (destination / "application.py").write_text("raise RuntimeError('unused')\n")
+            plan["audit"]["minimumUnits"] = 5
+            path.write_text(json.dumps(plan))
+            blocked = inspect_self_hosted_setup(destination, {})
+            self.assertFalse(blocked["configured"])
+            self.assertIn("At least 7 units are required", "\n".join(blocked["missing"]))
+            plan["mode"] = "recommend"
+            path.write_text(json.dumps(plan))
+            warned = inspect_self_hosted_setup(destination, {})
+            self.assertTrue(warned["configured"])
+            self.assertIn("At least 7 units are required", "\n".join(warned["warnings"]))
+            module = Path(root) / "application.py"
+            plan["mode"] = "autonomous"
+            plan["audit"]["minimumUnits"] = 50
+            plan["stepTimeoutMs"] = 180000
+            (Path(root) / "integration-plan.json").write_text(json.dumps(plan))
+            module.write_text("raise RuntimeError('settings only')\n")
+            settings = read_worker_settings(module)
+            self.assertEqual(settings["mode"], "autonomous")
+            self.assertEqual(settings["mode_source"], "plan")
+            self.assertEqual(settings["step_timeout_ms"], 180000)
+            flagged = read_worker_settings(
+                module,
+                mode="recommend",
+                mode_source="flag",
+                step_timeout_ms=90000,
+                step_timeout_source="flag",
+            )
+            self.assertEqual(flagged["mode_source"], "flag")
+            self.assertEqual(flagged["step_timeout_ms"], 90000)
+            guide = read_agent_guide()
+            self.assertIn("stepTimeoutMs >= 1000", guide)
+            self.assertIn("minimum_certifiable_audit_units", guide)
+            policy = json.loads((ROOT / "python/tests/fixtures/autonomy.json").read_text())[
+                "policy"
+            ]
+            module.write_text(
+                "import json\nfrom loopiter import FeedbackLoop, InMemoryStore, ImprovementWorkflow\n"
+                "async def create_integration(*, cancellation):\n"
+                "    loop = FeedbackLoop(store=InMemoryStore(), namespace='cli/confirm')\n"
+                f"    policy = json.loads({json.dumps(json.dumps(snake_policy(policy)))})\n"
+                "    def rows(prefix, count, day):\n"
+                "        return [dict(id=prefix+str(i), episode_id=prefix+str(i), entity_id=prefix+str(i),"
+                " occurred_at=f'2026-01-0{day}T00:00:00Z', observed_at=f'2026-01-0{day}T01:00:00Z',"
+                " source=policy['trusted_sources'][0], input='test', label='yes') for i in range(count)]\n"
+                "    async def artifact(context):\n"
+                "        return dict(artifact_version='baseline', configuration_hash='fixed')\n"
+                "    async def dataset(context):\n"
+                "        return dict(version='1', optimization=rows('o',3,1), validation=rows('v',20,2), audit=rows('a',50,3))\n"
+                "    async def propose(data, context): return [dict(score=1)]\n"
+                "    async def evaluate(data, context):\n"
+                "        return dict(cases=[dict(id=row['id'], baseline=0, candidate=1) for row in data['examples']],"
+                " metrics=dict(errors=0), estimated_serving_cost=0)\n"
+                "    class Registry:\n"
+                "        async def apply(self, request): raise AssertionError('no')\n"
+                "        async def rollback(self, request): raise AssertionError('no')\n"
+                "        async def inspect(self, request): return dict(status='unknown')\n"
+                "    async def observe(data, context): raise AssertionError('no')\n"
+                "    workflow = ImprovementWorkflow(id='cli', version='1', optimizer_version='1', evaluator_version='1',"
+                " policy=policy, dataset=dataset, artifact=artifact, propose=propose, evaluate=evaluate,"
+                " deployment=Registry(), observe=observe)\n"
+                "    return dict(loop=loop, workflows=[workflow], close=loop.close)\n"
+            )
+            denied = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--mode",
+                    "autonomous",
+                    "--once",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(denied.returncode, 1)
+            self.assertIn("--confirm-activation or --yes", denied.stderr)
+            allowed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--confirm-activation",
+                    "--once",
+                    "--step-timeout-ms",
+                    "180000",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            self.assertIn("effective mode autonomous (source: plan)", allowed.stderr)
+            self.assertIn("effective step timeout 180000ms (source: flag)", allowed.stderr)
+            self.assertIn('"state": "evaluating"', allowed.stdout)
+
+
+def snake_policy(value):
+    if isinstance(value, list):
+        return [snake_policy(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower(): child
+            if key == "changeSchema"
+            else snake_policy(child)
+            for key, child in value.items()
+        }
+    return value
