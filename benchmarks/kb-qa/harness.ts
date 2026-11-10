@@ -847,7 +847,7 @@ function fragmentOf(artifact: JsonValue): string {
 }
 
 /** In-memory registry shaped like the autonomous example. Development only. */
-class MemoryRegistry implements ArtifactRegistry {
+export class MemoryRegistry implements ArtifactRegistry {
   version: string;
   private artifacts = new Map<string, JsonValue>();
   private receipts = new Map<string, DeploymentReceipt | null>();

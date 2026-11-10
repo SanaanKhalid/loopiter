@@ -7,12 +7,16 @@ export interface GenerateInput {
   schema: JsonObject;
   name: string;
   signal: AbortSignal;
+  /** Overrides the provider cap for this call. Must be at most that cap. */
+  maximumOutputTokens?: number;
 }
 export interface Generation {
   value: JsonObject;
   model: string;
   inputTokens: number | null;
   outputTokens: number | null;
+  /** Subset of inputTokens when the response reports a cache. Null if unreported. */
+  cachedInputTokens: number | null;
   latencyMs: number;
 }
 export interface GenerationProvider {
@@ -25,7 +29,46 @@ interface ResponseOptions {
   maximumRequests?: number;
   maximumOutputTokens?: number;
   maximumInputBytes?: number;
+  timeoutMs?: number;
   fetch?: typeof fetch;
+}
+export interface ResponseUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedInputTokens: number | null;
+}
+/** HTTP failure. The message is status-only so response bodies and headers stay out of logs. */
+export class ProviderRequestError extends Error {
+  readonly usage: ResponseUsage | null;
+  constructor(readonly status: number, usage: ResponseUsage | null) {
+    super(`OpenAI request failed (HTTP ${status}); no automatic retry.`);
+    this.name = "ProviderRequestError";
+    this.usage = usage;
+  }
+}
+export function responsesRequestBody(input: {
+  model: string;
+  instructions: string;
+  input: string;
+  name: string;
+  schema: JsonObject;
+  maxOutputTokens: number;
+}) {
+  return {
+    model: input.model,
+    store: false as const,
+    instructions: input.instructions,
+    input: input.input,
+    max_output_tokens: input.maxOutputTokens,
+    text: {
+      format: {
+        type: "json_schema" as const,
+        name: input.name,
+        strict: true as const,
+        schema: input.schema,
+      },
+    },
+  };
 }
 class ResponsesProvider implements GenerationProvider {
   readonly mode = "live" as const;
@@ -41,6 +84,7 @@ class ResponsesProvider implements GenerationProvider {
     integer(options.maximumRequests ?? 80, "maximumRequests");
     integer(options.maximumOutputTokens ?? 2048, "maximumOutputTokens");
     integer(options.maximumInputBytes ?? 16384, "maximumInputBytes");
+    integer(options.timeoutMs ?? 60000, "timeoutMs");
   }
   async generate(input: GenerateInput): Promise<Generation> {
     input.signal.throwIfAborted();
@@ -49,7 +93,16 @@ class ResponsesProvider implements GenerationProvider {
       throw new Error("Model request budget exhausted.");
     this.requests++;
     const started = performance.now();
-    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(60000)]);
+    const cap = this.options.maximumOutputTokens ?? 2048;
+    const maxOutput = input.maximumOutputTokens ?? cap;
+    integer(maxOutput, "maximumOutputTokens");
+    if (maxOutput > cap)
+      throw new Error("maximumOutputTokens exceeds the provider cap.");
+    const timeoutMs = this.options.timeoutMs ?? 60000;
+    const signal = AbortSignal.any([
+      input.signal,
+      AbortSignal.timeout(timeoutMs),
+    ]);
     const authentication = await this.authenticate(signal);
     signal.throwIfAborted();
     const response = await (this.options.fetch ?? fetch)(
@@ -62,27 +115,22 @@ class ResponsesProvider implements GenerationProvider {
         },
         signal,
         redirect: "error",
-        body: JSON.stringify({
-          model: this.model,
-          store: false,
-          instructions: input.instructions,
-          input: input.input,
-          max_output_tokens: this.options.maximumOutputTokens ?? 2048,
-          text: {
-            format: {
-              type: "json_schema",
-              name: input.name,
-              strict: true,
-              schema: input.schema,
-            },
-          },
-        }),
+        body: JSON.stringify(
+          responsesRequestBody({
+            model: this.model,
+            instructions: input.instructions,
+            input: input.input,
+            name: input.name,
+            schema: input.schema,
+            maxOutputTokens: maxOutput,
+          }),
+        ),
       },
     );
-    if (!response.ok)
-      throw new Error(
-        `OpenAI request failed (HTTP ${response.status}); no automatic retry.`,
-      );
+    if (!response.ok) {
+      const usage = await usageFromBody(response);
+      throw new ProviderRequestError(response.status, usage);
+    }
     input.signal.throwIfAborted();
     const body: unknown = await response.json();
     input.signal.throwIfAborted();
@@ -107,18 +155,13 @@ class ResponsesProvider implements GenerationProvider {
     const value: unknown = JSON.parse(texts.join(""));
     json(value);
     object(value, "structured output");
-    const usage = body.usage as Record<string, unknown> | undefined;
-    const tokens = (key: string) =>
-      typeof usage?.[key] === "number" &&
-      Number.isFinite(usage[key]) &&
-      usage[key] >= 0
-        ? (usage[key] as number)
-        : null;
+    const usage = readUsage(body);
     return {
       value: value as JsonObject,
       model: typeof body.model === "string" ? body.model : this.model,
-      inputTokens: tokens("input_tokens"),
-      outputTokens: tokens("output_tokens"),
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cachedInputTokens: usage.cachedInputTokens,
       latencyMs: performance.now() - started,
     };
   }
@@ -138,6 +181,8 @@ export class AzureOpenAIProvider extends ResponsesProvider {
     endpoint: string;
     apiKey?: string;
     tokenProvider?: (signal: AbortSignal) => Promise<string>;
+    /** Query value for api-version. Omitted leaves the provider URL unchanged. */
+    apiVersion?: string;
   }) {
     const endpoint = new URL(options.endpoint);
     if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password ||
@@ -146,7 +191,13 @@ export class AzureOpenAIProvider extends ResponsesProvider {
     if (Boolean(options.apiKey) === Boolean(options.tokenProvider))
       throw new Error("Configure exactly one Azure API key or token provider.");
     if (options.apiKey) nonempty(options.apiKey, "AZURE_OPENAI_API_KEY");
-    super(options, new URL("openai/v1/responses", endpoint).href, async (signal) => {
+    const url = new URL("openai/v1/responses", endpoint);
+    if (options.apiVersion !== undefined) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(options.apiVersion))
+        throw new Error("Invalid Azure API version.");
+      url.searchParams.set("api-version", options.apiVersion);
+    }
+    super(options, url.href, async (signal) => {
       if (options.tokenProvider) {
         const token = await options.tokenProvider(signal);
         nonempty(token, "Azure authentication token");
@@ -154,5 +205,41 @@ export class AzureOpenAIProvider extends ResponsesProvider {
       }
       return { "api-key": options.apiKey! };
     });
+  }
+}
+
+function countUsage(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+}
+
+export function readUsage(body: unknown): ResponseUsage {
+  const usage =
+    body && typeof body === "object"
+      ? (body as { usage?: unknown }).usage
+      : undefined;
+  if (!usage || typeof usage !== "object")
+    return { inputTokens: null, outputTokens: null, cachedInputTokens: null };
+  const record = usage as Record<string, unknown>;
+  const details = record.input_tokens_details;
+  const cached =
+    details && typeof details === "object"
+      ? countUsage((details as Record<string, unknown>).cached_tokens)
+      : null;
+  return {
+    inputTokens: countUsage(record.input_tokens),
+    outputTokens: countUsage(record.output_tokens),
+    cachedInputTokens: cached,
+  };
+}
+
+async function usageFromBody(response: Response): Promise<ResponseUsage | null> {
+  try {
+    const text = await response.text();
+    if (!text) return null;
+    return readUsage(JSON.parse(text) as unknown);
+  } catch {
+    return null;
   }
 }

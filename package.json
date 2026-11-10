@@ -96,6 +96,7 @@
     "test:fern": "node scripts/check-fern.mjs",
     "benchmark": "npm run build && node dist/examples/benchmark.js",
     "benchmark:offline": "npm run build && node dist/benchmarks/kb-qa/run.js --seeds 5",
+    "benchmark:live": "npm run build && node dist/benchmarks/kb-qa/run.js --live",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/test/*.test.js",
     "example:capture": "npm run build && node dist/examples/feedback-capture.js",

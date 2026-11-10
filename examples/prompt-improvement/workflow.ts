@@ -72,6 +72,7 @@ export class FixtureProvider implements GenerationProvider {
       model: this.model,
       inputTokens: null,
       outputTokens: null,
+      cachedInputTokens: null,
       latencyMs: 0,
     };
   }

@@ -74,8 +74,9 @@ Useful flags:
 | `--bootstrap-seed` | `17` | Bootstrap RNG seed |
 | `--out` | stdout | JSON path. A `.md` summary is written beside it |
 
-`--live`, and the environment variable `LOOPITER_BENCHMARK_LIVE=1`, are refused.
-This command never calls a provider.
+`--live` does not run unless `LOOPITER_BENCH_ALLOW_LIVE=1` is also set.
+`LOOPITER_BENCHMARK_LIVE=1` alone is still refused. The Phase 0 command never
+calls a provider. See [Phase 1](#phase-1-live-runbook) for the opt-in path.
 
 Unit tests for the intervals, the spend ledger, and the check rules:
 
@@ -148,18 +149,112 @@ Charged spend must stay at or under both caps, each run must refuse at least one
 further call, and neither run may finish as `completed`. The loop stops because
 the mock throws `spend_cap` before recording the call that would exceed the cap.
 
-## Phase 1 later
+## Phase 1 live runbook
 
-Phase 1 is not implemented and must not be started from this harness.
+Phase 1 compares the same two arms as Phase 0, frozen baseline versus the
+autonomous candidate, on the same splits. It calls Azure OpenAI through the
+Responses API (`/openai/v1/responses`), which is the provider surface already
+used by `AzureOpenAIProvider`. The deployment name defaults to `gpt-5.4-mini`.
 
-A later live run would:
+Results are internal only. Do not publish them, attach them to a release, or
+commit them. Reports and the spend ledger are written under `reports/kb-qa-live/`,
+which is gitignored.
 
-- call a real provider, with the default model `gpt-5.4-mini`
-- compare autonomous versus frozen only
-- keep results internal (no publish, no release)
-- read credentials from environment variables, never from the repo
-- require explicit spend caps
-- refuse to start unless someone has explicitly approved that run
+The default `benchmark:offline` command never calls a provider. A live process
+starts only when both `--live` and `LOOPITER_BENCH_ALLOW_LIVE=1` are present.
+Missing prices, caps, or credentials refuse the process before any request.
+There are no baked-in prices or caps.
 
-Do not set provider keys for the Phase 0 command. `--live` exits with an error
-and does not call a model.
+### Environment
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `LOOPITER_BENCH_ALLOW_LIVE` | live run | Must be `1` |
+| `AZURE_OPENAI_ENDPOINT` | live run | HTTPS resource origin, no path and no credentials |
+| `AZURE_OPENAI_API_KEY` | live run | API key. Never printed, logged, or stored |
+| `AZURE_OPENAI_DEPLOYMENT` | no | Deployment name. Default `gpt-5.4-mini` |
+| `AZURE_OPENAI_API_VERSION` | no | Query value. Default `v1` (the documented Azure OpenAI v1 Responses API) |
+| `LOOPITER_BENCH_PRICE_INPUT_PER_1M` | live run and `--estimate` | USD per 1M uncached input tokens |
+| `LOOPITER_BENCH_PRICE_OUTPUT_PER_1M` | live run and `--estimate` | USD per 1M output tokens |
+| `LOOPITER_BENCH_PRICE_CACHED_INPUT_PER_1M` | live run | USD per 1M cached input tokens. Required because Responses usage can report them |
+| `LOOPITER_BENCH_TOTAL_CAP_USD` | live run | Cumulative cap across invocations. A Phase 1 ceiling of 150 USD is the planned budget |
+| `LOOPITER_BENCH_WARN_USD` | live run | Warn once when cumulative spend crosses it. A Phase 1 warning of 100 USD is the planned mark |
+| `LOOPITER_BENCH_INVOCATION_CAP_USD` | live run | Cap for this process only |
+
+Do not put the key in the shell history if that is a problem for you, and do
+not echo it. The process redacts the key and `api-key` / `Authorization` header
+values from errors. It does not log request headers.
+
+### Estimate, then smoke, then the full run
+
+`--estimate` prices the harness call plan and makes no provider calls. It does
+not need a key, an endpoint, or the allow flag. It still needs the input and
+output prices. It prints the smoke plan (1 seed, 14 rows in each split) and the
+full plan (seeds 1–5, every row). Input tokens are `ceil(UTF-8 bytes / 4)` of
+each request body. Output tokens are the `max_output_tokens` bound sent on that
+call (64 for an answer, 512 for a proposal). The candidate side of the plan is
+about 12× the baseline call count on the full split: one proposal, a paired
+validation pass, a paired audit pass, production observation, and held-out
+scoring.
+
+```sh
+LOOPITER_BENCH_PRICE_INPUT_PER_1M=0.75 \
+LOOPITER_BENCH_PRICE_OUTPUT_PER_1M=4.5 \
+node dist/benchmarks/kb-qa/run.js --estimate
+```
+
+Smoke is the same small plan, actually executed. It is meant to stay around
+$5 or below at typical mini-model rates. Set the caps before either live
+command. Example caps below are the planned Phase 1 budget, not defaults:
+
+```sh
+export LOOPITER_BENCH_ALLOW_LIVE=1
+export AZURE_OPENAI_ENDPOINT=https://YOUR_RESOURCE.openai.azure.com/
+export AZURE_OPENAI_API_KEY=...
+export LOOPITER_BENCH_PRICE_INPUT_PER_1M=0.75
+export LOOPITER_BENCH_PRICE_OUTPUT_PER_1M=4.5
+export LOOPITER_BENCH_PRICE_CACHED_INPUT_PER_1M=0.075
+export LOOPITER_BENCH_TOTAL_CAP_USD=150
+export LOOPITER_BENCH_WARN_USD=100
+export LOOPITER_BENCH_INVOCATION_CAP_USD=25
+npm run build
+node dist/benchmarks/kb-qa/run.js --live --smoke
+node dist/benchmarks/kb-qa/run.js --live --seeds 5
+```
+
+`--rows N` caps every split at N rows. `--seeds N` limits how many seeds run,
+starting at `--seed-start` (default 1). `--stop-at-warn` stops before the next
+call once cumulative spend has reached `LOOPITER_BENCH_WARN_USD`. A normal run
+prints a `WARN` line and records `warn.marker` in the report, then continues
+until a hard cap.
+
+Before each request the process prices a worst case: one input token per
+request byte, plus the `max_output_tokens` bound, at the higher of the input
+and cached prices. If that worst case would pass the total cap or the
+per-invocation cap, the call is not sent and the report is partial. Every
+attempt, including a retry, is added to the ledger. The ledger is
+`reports/kb-qa-live/ledger.json`. A hold for the worst case is written before
+the request and replaced with the usage from the response when the response
+includes it. Failed attempts without usage keep the worst-case amount so a
+retry cannot be free. Each request sets `max_output_tokens`, times out after
+20 seconds, and retries at most once on 408, 409, 429, 500, 502, 503, 504, or
+a transport timeout.
+
+### Reset the ledger
+
+Cumulative spend survives later invocations. To start a new budget, stop the
+process and delete the ledger file:
+
+```sh
+rm -f reports/kb-qa-live/ledger.json
+```
+
+Deleting it resets the recorded total to zero. Do that only when you mean to.
+A ledger file that cannot be parsed refuses to start, so a corrupt file is not
+silently treated as zero spend.
+
+The JSON report is the source of truth for a live run. `passed` is true only
+when every seed finished in `completed`, both arms were fully scored, spend
+stayed inside the caps, and the candidate's mean held-out rate is above the
+frozen baseline. A stopped run is a failure with a partial report, not a crash
+that drops the ledger.
