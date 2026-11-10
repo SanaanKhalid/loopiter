@@ -789,6 +789,47 @@ test("pacing and HTTP 429 retries stay on the fake server", async () => {
   }
 });
 
+test("both retry headers prefer retry-after-ms and the retry is metered", async () => {
+  const clock = fakeClock();
+  let calls = 0;
+  const server = await fakeServer(async () => {
+    calls += 1;
+    if (calls === 1)
+      return {
+        status: 429,
+        text: JSON.stringify({ error: KEY }),
+        headers: { "retry-after-ms": "2500", "Retry-After": "30" },
+      };
+    return { status: 200, text: JSON.stringify({ label: "incomplete" }) };
+  });
+  try {
+    const report = await runLiveBenchmark({
+      ...liveShape(server, await tempLedger()),
+      prices: pricesOf(1, 1, 0),
+      totalCapUsd: 50,
+      invocationCapUsd: 50,
+      warnUsd: 40,
+      rowLimit: 1,
+      seeds: [1],
+      maxRetryWaitMs: 60_000,
+      max429Retries: 2,
+      now: clock.now,
+      sleep: clock.sleep,
+      random: clock.random,
+    });
+    assert.equal(clock.sleeps[0], 2_500);
+    assert.equal(clock.sleeps.includes(30_000), false);
+    assert.equal(report.pacing.waitMs, 2_500);
+    assert.equal(report.pacing.rateLimitResponses, 1);
+    assert.ok(report.attempts > report.liveCalls);
+    assert.ok(report.spend.totalMicroUsd > 0);
+    assert.equal((report.stopped?.message ?? "").includes(KEY), false);
+    assert.equal(JSON.stringify(report).includes(KEY), false);
+  } finally {
+    await server.close();
+  }
+});
+
 function fakeClock() {
   let now = 1_000;
   const sleeps: number[] = [];
