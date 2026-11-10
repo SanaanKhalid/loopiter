@@ -44,7 +44,7 @@ export class ProviderRequestError extends Error {
   readonly usage: ResponseUsage | null;
   readonly retryAfterMs: number | null;
   constructor(readonly status: number, usage: ResponseUsage | null, retryAfterMs: number | null = null) {
-    super(`OpenAI request failed (HTTP ${status}); no automatic retry.`);
+    super(`OpenAI request failed (HTTP ${status}).`);
     this.name = "ProviderRequestError";
     this.usage = usage;
     this.retryAfterMs = retryAfterMs;

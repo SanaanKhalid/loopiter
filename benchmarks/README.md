@@ -187,7 +187,8 @@ There are no baked-in prices or caps.
 | `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS` | no | Cap on each 429 wait. Default `60`. A finite integer greater than zero |
 | `LOOPITER_BENCH_MAX_429_RETRIES` | no | Extra attempts after HTTP 429. Default `6`. A finite integer greater than zero |
 | `LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS` | no | Per-request abort. Default `120`. A timed-out request is retried within the existing attempt limit |
-| `LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS` | no | Cap on cumulative retry and pace wait. Default `900`. The run stops with a clear message instead of waiting longer |
+| `LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS` | no | Cap on retry wait for one model call. Pace waits are not counted. Default `900`. The run stops with a clear message instead of waiting longer |
+| `LOOPITER_BENCH_STALL_MINUTES` | no | Exit if a live run records no attempt, ledger write, or retry for this many minutes. Default `10`. A ref'd watchdog, so a stalled socket cannot silence it |
 
 Do not put the key in the shell history if that is a problem for you, and do
 not echo it. The process redacts the key and `api-key` / `Authorization` header
@@ -266,18 +267,24 @@ to use all of its attempts: calls × attempts × request timeout, plus the retry
 and pace waits those calls can spend. Those waits are bounded by the total-wait
 cap. The tick deadline covers that step, so a retry is not aborted when the
 first request times out. A per-request timeout, HTTP 500, 502, 503, and 504,
-and transient network failures (`fetch failed` and cause codes `ECONNRESET`,
-`ETIMEDOUT`, `ECONNREFUSED`, `EAI_AGAIN`, and `UND_ERR_SOCKET` or a socket hang
-up) are retried once. Each of those retries logs the error class, waits with
+and transient network failures whose cause is `ECONNRESET`, `ETIMEDOUT`,
+`ECONNREFUSED`, `EAI_AGAIN`, or `UND_ERR_SOCKET` (including a socket hang up)
+are retried once. A bare `fetch failed`, `ENOTFOUND`, and TLS or certificate
+errors stop the run. Each of those retries logs the error class, waits with
 the same exponential backoff and jitter as a 429 that has no `Retry-After`,
 and is still checked against the spend cap before it is sent. HTTP 4xx other
 than 429, and any other error, stop the run. HTTP 429 is retried up to
 `LOOPITER_BENCH_MAX_429_RETRIES` times. The wait uses `retry-after-ms` or
 `Retry-After` when the response has one, otherwise exponential backoff with
 jitter, and each wait is capped by `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS`.
-Cumulative retry and pace wait is capped by
+Retry wait for a single model call, not including pace waits, is capped by
 `LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS` (default 900). Crossing that cap stops
-the run with a clear message instead of waiting longer.
+the run with a clear message instead of waiting longer. Each attempt also has
+a hard deadline covering pace, the ledger write, the request, the body read,
+and the retry sleep. If nothing records progress for
+`LOOPITER_BENCH_STALL_MINUTES` (default 10), a partial report is written and
+the process exits. The progress ticker stays referenced so a quiet socket
+cannot leave it unscheduled.
 Every attempt, including those retries, is checked against the spend caps and
 added to the ledger. The pre-call spend check still uses the worst-case
 ceiling (one input token per request byte plus the output bound). If the

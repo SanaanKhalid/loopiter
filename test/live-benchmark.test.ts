@@ -26,6 +26,7 @@ import {
   liveCallbackTimeoutMs,
   maxModelCallsPerStep,
   createInterruptHandler,
+  createStallWatchdog,
   estimateFromEnv,
   formatProgress,
   liveCostMicroUsd,
@@ -36,6 +37,7 @@ import {
   projectedWallMs,
   redactSecrets,
   renderEstimate,
+  reservedAttemptsPerCall,
   runLiveBenchmark,
   startProgressTicker,
   type LivePrices,
@@ -982,11 +984,11 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
   await ask(200, 10);
   await clock.sleep(20_000);
   await ask(120, 10);
-  await assert.rejects(ask(204, 10), /Cumulative wait reached/);
-  assert.equal(fetches, 2);
-  assert.equal(session.waitMs, 40_000);
-  assert.equal(session.waitLimitReached, true);
-  assert.deepEqual(clock.sleeps, [20_000, 40_000]);
+  await ask(204, 10);
+  assert.equal(fetches, 3);
+  assert.equal(session.waitLimitReached, false);
+  assert.ok(session.waitMs >= 60_000);
+  assert.deepEqual(clock.sleeps, [20_000, 40_000, 20_000]);
 
   let classification = 0;
   let retriedWhileLive = false;
@@ -1236,7 +1238,7 @@ test("transient fetch failures retry within the attempt and wait caps", async ()
         meter,
         new AbortController().signal,
       ),
-      /Cumulative wait reached/,
+      /Retry wait for this call reached/,
     );
     assert.equal(waitedFetches, 1);
     assert.equal(waitingLedger.attempts, 1);
@@ -1304,6 +1306,209 @@ test("transient fetch failures retry within the attempt and wait caps", async ()
   }
 });
 
+test("a stalled provider and a stalled ledger stop on the attempt deadline", async () => {
+  const directory = await tempLedger();
+  const hung = await runLiveBenchmark({
+    seeds: [1],
+    smoke: false,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    prices: pricesOf(1, 1, 0),
+    totalCapUsd: 50,
+    invocationCapUsd: 50,
+    warnUsd: 40,
+    stopAtWarn: false,
+    ledgerPath: join(directory, "hung.json"),
+    rowLimit: 1,
+    requestTimeoutMs: 5_000,
+    maxRetryWaitMs: 1_000,
+    max429Retries: 1,
+    maxTotalWaitMs: 5_000,
+    attemptDeadlineMs: 40,
+    fetch: () => new Promise(() => undefined),
+  });
+  assert.equal(hung.stopped?.reason, "attempt_deadline");
+  assert.match(hung.stopped?.message ?? "", /Attempt deadline exceeded/);
+
+  const ledger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "stalled-ledger.json"),
+  );
+  ledger.beginAttempt = () => new Promise(() => undefined);
+  const session = new LiveSession(ledger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => completedResponse({ label: "yes" }),
+    maxTokensPerMinute: 0,
+    maxRetryWaitMs: 1_000,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 5_000,
+    attemptDeadlineMs: 40,
+    now: () => Date.now(),
+    sleep: async () => undefined,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  const meter = async <T>(
+    _maximum: number,
+    call: () => Promise<{ value: T; tokens: number | null }>,
+  ) => (await call()).value;
+  await assert.rejects(
+    session.generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      new AbortController().signal,
+    ),
+    /Attempt deadline exceeded/,
+  );
+
+  let stalled = false;
+  const watchdog = createStallWatchdog({
+    intervalMs: 15,
+    stallMs: 30,
+    lastActivity: () => Date.now() - 1_000,
+    onStall: () => {
+      stalled = true;
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  watchdog.stop();
+  assert.equal(stalled, true);
+  assert.equal(reservedAttemptsPerCall(6), MAX_ATTEMPTS + 6);
+});
+
+test("user abort, unauthorized, server, and lookup errors stay bounded", async () => {
+  const directory = await tempLedger();
+  const clock = fakeClock();
+  const logs: string[] = [];
+  const original = console.error;
+  console.error = (message?: unknown) => {
+    logs.push(String(message));
+  };
+  const meter = async <T>(
+    _maximum: number,
+    call: () => Promise<{ value: T; tokens: number | null }>,
+  ) => (await call()).value;
+  const sessionFor = (fetch: typeof globalThis.fetch, ledgerName: string) => {
+    const ledger = new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      pricesOf(1, 1, 0),
+      join(directory, ledgerName),
+    );
+    const session = new LiveSession(ledger, [], false, {
+      endpoint: "https://example.openai.azure.com/",
+      apiKey: KEY,
+      deployment: "gpt-5.4-mini",
+      apiVersion: "v1",
+      fetch,
+      maxTokensPerMinute: 0,
+      maxRetryWaitMs: 1_000,
+      max429Retries: 1,
+      requestTimeoutMs: 1_000,
+      maxTotalWaitMs: 5_000,
+      attemptDeadlineMs: 5_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      random: () => 0,
+      predictMaxOutputTokens: 10,
+      proposeMaxOutputTokens: 10,
+      reasoningEffort: null,
+    });
+    return { ledger, session };
+  };
+  const ask = (session: LiveSession, signal = new AbortController().signal) =>
+    session.generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      signal,
+    );
+  try {
+    let lookups = 0;
+    const lookup = sessionFor(async () => {
+      lookups += 1;
+      const cause = new Error("getaddrinfo");
+      (cause as Error & { code: string }).code = "ENOTFOUND";
+      const error = new TypeError("fetch failed");
+      (error as TypeError & { cause?: unknown }).cause = cause;
+      throw error;
+    }, "lookup.json");
+    await assert.rejects(ask(lookup.session), /fetch failed/);
+    assert.equal(lookups, 1);
+    assert.equal(lookup.ledger.attempts, 1);
+
+    let certs = 0;
+    const certificate = sessionFor(async () => {
+      certs += 1;
+      const cause = new Error("certificate");
+      (cause as Error & { code: string }).code = "UNABLE_TO_VERIFY_LEAF_SIGNATURE";
+      const error = new TypeError("fetch failed");
+      (error as TypeError & { cause?: unknown }).cause = cause;
+      throw error;
+    }, "cert.json");
+    await assert.rejects(ask(certificate.session), /fetch failed/);
+    assert.equal(certs, 1);
+
+    const parent = new AbortController();
+    let aborted = 0;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const cancellable = sessionFor((_url, init) => {
+      aborted += 1;
+      entered();
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(Object.assign(new Error("The operation was aborted."), { name: "AbortError" })),
+          { once: true },
+        );
+      });
+    }, "abort.json");
+    const pending = ask(cancellable.session, parent.signal);
+    await started;
+    parent.abort();
+    await assert.rejects(pending, /aborted|Cancelled/);
+    assert.equal(aborted, 1);
+
+    let denied = 0;
+    const unauthorized = sessionFor(async () => {
+      denied += 1;
+      return new Response("{}", { status: 401, headers: { "content-type": "application/json" } });
+    }, "unauthorized.json");
+    await assert.rejects(ask(unauthorized.session), /HTTP 401/);
+    assert.equal(denied, 1);
+    assert.equal(unauthorized.ledger.attempts, 1);
+
+    let serverErrors = 0;
+    const server = sessionFor(async () => {
+      serverErrors += 1;
+      if (serverErrors === 1)
+        return new Response("{}", { status: 503, headers: { "content-type": "application/json" } });
+      return completedResponse({ label: "yes" });
+    }, "server.json");
+    await ask(server.session);
+    assert.equal(serverErrors, 2);
+    assert.equal(server.ledger.attempts, 2);
+    assert.match(logs.join("\n"), /retrying HTTP 503/);
+    assert.equal(logs.join("\n").includes("no automatic retry"), false);
+  } finally {
+    console.error = original;
+  }
+});
+
 test("pace reservation settles to actual tokens", async () => {
   const clock = fakeClock();
   const window = new TokenMinuteWindow(100, clock.now, clock.sleep);
@@ -1352,6 +1557,13 @@ test("progress ticker prints while waiting, and SIGINT writes a partial report",
     ledger,
     reportPath,
     secrets: [KEY],
+    perSeed: [
+      {
+        seed: 2,
+        baseline: { successes: 3, scored: 4, trials: 4, rate: 0.75, complete: true },
+        candidate: null,
+      },
+    ],
     exit: (code) => {
       exits.push(code);
       finished();
@@ -1365,11 +1577,19 @@ test("progress ticker prints while waiting, and SIGINT writes a partial report",
     interrupted: boolean;
     stopped: { reason: string };
     spend: { attempts: number };
+    perSeed?: {
+      seed: number;
+      baseline: { complete: boolean };
+      candidate: unknown;
+    }[];
   };
   assert.equal(report.status, "partial");
   assert.equal(report.interrupted, true);
   assert.equal(report.stopped.reason, "interrupted");
   assert.equal(report.spend.attempts, 1);
+  assert.equal(report.perSeed?.[0]?.seed, 2);
+  assert.equal(report.perSeed?.[0]?.baseline.complete, true);
+  assert.equal(report.perSeed?.[0]?.candidate, null);
   const stored = JSON.parse(await readFile(ledgerPath, "utf8")) as { attempts: number };
   assert.equal(stored.attempts, 1);
   assert.equal(JSON.stringify(report).includes(KEY), false);

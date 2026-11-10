@@ -57,6 +57,11 @@ export const REQUEST_TIMEOUT_MS = 20_000;
 export const DEFAULT_REQUEST_TIMEOUT_SECONDS = 120;
 export const PROGRESS_INTERVAL_MS = 120_000;
 export const MAX_ATTEMPTS = 2;
+/** One initial send, plus network retries, plus every 429 retry. */
+export function reservedAttemptsPerCall(max429Retries: number): number {
+  return MAX_ATTEMPTS + max429Retries;
+}
+export const DEFAULT_STALL_MINUTES = 10;
 export const DEFAULT_MAX_429_RETRIES = 6;
 export const DEFAULT_MAX_RETRY_WAIT_SECONDS = 60;
 export const DEFAULT_MAX_TOTAL_WAIT_SECONDS = 900;
@@ -122,7 +127,6 @@ export function transientErrorClass(error: unknown): string | null {
     if (/socket hang up/i.test(message)) return "UND_ERR_SOCKET";
     const name = (current as { name?: string }).name;
     if (name === "TimeoutError") fallback ??= "TimeoutError";
-    if (name === "TypeError" && /fetch failed/i.test(message)) fallback ??= "TypeError";
     current = (current as { cause?: unknown }).cause;
   }
   return fallback;
@@ -155,6 +159,7 @@ export const LIVE_ENV = {
   max429Retries: "LOOPITER_BENCH_MAX_429_RETRIES",
   requestTimeout: "LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS",
   maxTotalWait: "LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS",
+  stallMinutes: "LOOPITER_BENCH_STALL_MINUTES",
 } as const;
 
 const PREDICT_INSTRUCTIONS =
@@ -600,8 +605,12 @@ export interface LiveRunOptions {
   max429Retries?: number;
   /** Per-request abort. Unset uses DEFAULT_REQUEST_TIMEOUT_SECONDS. */
   requestTimeoutMs?: number;
-  /** Cumulative retry and pace wait. Unset uses DEFAULT_MAX_TOTAL_WAIT_SECONDS. */
+  /** Retry-wait cap for one model call. Pace waits are not counted. Unset uses DEFAULT_MAX_TOTAL_WAIT_SECONDS. */
   maxTotalWaitMs?: number;
+  /** Hard bound for one attempt, including pace, ledger, the request, and the retry sleep. */
+  attemptDeadlineMs?: number;
+  /** Exit if no attempt, ledger write, or retry records progress for this long. */
+  stallTimeoutMs?: number;
   /** Heartbeat while idle. Unset prints every PROGRESS_INTERVAL_MS. */
   progressIntervalMs?: number;
   reportPath?: string;
@@ -775,6 +784,8 @@ export class LiveSession {
   readonly maxTotalWaitMs: number;
   readonly callbackTimeoutMs: number;
   readonly tickTimeoutMs: number;
+  readonly attemptDeadlineMs: number;
+  lastActivityMs = Date.now();
   activity = "running";
   lastError: string | null = null;
   rateLimitResponses = 0;
@@ -802,6 +813,7 @@ export class LiveSession {
       max429Retries: number;
       requestTimeoutMs: number;
       maxTotalWaitMs: number;
+      attemptDeadlineMs?: number;
       now: () => number;
       sleep: (ms: number) => Promise<void>;
       random: () => number;
@@ -825,6 +837,9 @@ export class LiveSession {
       maxTotalWaitMs: options.maxTotalWaitMs,
     });
     this.tickTimeoutMs = this.callbackTimeoutMs + 1000;
+    this.attemptDeadlineMs =
+      options.attemptDeadlineMs ??
+      options.requestTimeoutMs + 60_000 + options.maxRetryWaitMs + 15_000;
     this.now = options.now;
     this.sleep = options.sleep;
     this.random = options.random;
@@ -837,7 +852,16 @@ export class LiveSession {
     const baseFetch = options.fetch ?? fetch;
     const fetchImpl: typeof fetch = async (url, init) => {
       try {
-        return await baseFetch(url, init);
+        const response = await baseFetch(url, init);
+        const signal = init?.signal;
+        if (signal && response.body) {
+          const cancelBody = () => {
+            void response.body?.cancel(signal.reason).catch(() => undefined);
+          };
+          if (signal.aborted) cancelBody();
+          else signal.addEventListener("abort", cancelBody, { once: true });
+        }
+        return response;
       } catch (error) {
         const text = redactSecrets(errorText(error), hidden);
         const klass =
@@ -864,6 +888,10 @@ export class LiveSession {
     });
   }
 
+  touch(): void {
+    this.lastActivityMs = Date.now();
+  }
+
   async generate(
     input: Omit<GenerateInput, "signal" | "maximumOutputTokens">,
     body: string,
@@ -873,10 +901,16 @@ export class LiveSession {
   ): Promise<Generation> {
     let otherRetries = 0;
     let rateRetries = 0;
+    let retryWaited = 0;
     for (;;) {
+      this.touch();
       try {
-        return await this.once(input, body, maxOutput, meter, signal);
+        return await this.withDeadline(signal, (deadline) =>
+          this.once(input, body, maxOutput, meter, AbortSignal.any([signal, deadline])),
+        );
       } catch (error) {
+        if (isAttemptDeadline(error)) throw error;
+        if (signal.aborted && !isTimeoutError(signal.reason)) throw error;
         if (error instanceof LoopiterError && error.code === "spend_cap") throw error;
         if (error instanceof ProviderRequestError && error.status === 429) {
           this.rateLimitResponses += 1;
@@ -899,11 +933,8 @@ export class LiveSession {
           rateRetries += 1;
           const wait = retryWaitMs(rateRetries, error.retryAfterMs, this.maxRetryWaitMs, this.random);
           console.error("retrying HTTP 429");
-          this.activity = "waiting on retry";
-          this.guardWait(wait);
-          this.waitMs += wait;
-          await this.sleep(wait);
-          this.activity = "running";
+          await this.waitToRetry(signal, retryWaited, wait);
+          retryWaited += wait;
           continue;
         }
         const networkClass = transientErrorClass(error);
@@ -926,12 +957,51 @@ export class LiveSession {
         otherRetries += 1;
         const wait = retryWaitMs(otherRetries, null, this.maxRetryWaitMs, this.random);
         console.error(`retrying ${networkClass ?? `HTTP ${httpStatus}`}`);
-        this.activity = "waiting on retry";
-        this.guardWait(wait);
-        this.waitMs += wait;
-        await this.sleep(wait);
-        this.activity = "running";
+        await this.waitToRetry(signal, retryWaited, wait);
+        retryWaited += wait;
       }
+    }
+  }
+
+  private async waitToRetry(signal: AbortSignal, already: number, wait: number): Promise<void> {
+    this.chargeRetryWait(already, wait);
+    this.activity = "waiting on retry";
+    this.waitMs += wait;
+    this.touch();
+    await this.withDeadline(signal, async (deadline) => {
+      if (deadline.aborted) throw deadline.reason;
+      await this.sleep(wait);
+      if (deadline.aborted) throw deadline.reason;
+    });
+    this.activity = "running";
+    this.touch();
+  }
+
+  private async withDeadline<T>(
+    parent: AbortSignal,
+    run: (deadline: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const ms = this.attemptDeadlineMs;
+    const controller = new AbortController();
+    const reason = attemptDeadlineError(ms);
+    const timer = setTimeout(() => controller.abort(reason), ms);
+    const onParent = () => controller.abort(parent.reason ?? new Error("Cancelled."));
+    if (parent.aborted) onParent();
+    else parent.addEventListener("abort", onParent, { once: true });
+    const aborted = new Promise<never>((_, reject) => {
+      if (controller.signal.aborted) {
+        reject(controller.signal.reason);
+        return;
+      }
+      controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {
+        once: true,
+      });
+    });
+    try {
+      return await Promise.race([run(controller.signal), aborted]);
+    } finally {
+      clearTimeout(timer);
+      parent.removeEventListener("abort", onParent);
     }
   }
 
@@ -948,9 +1018,10 @@ export class LiveSession {
       throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
     const reserved = projectedInputTokens(body) + maxOutput;
     this.activity = "waiting on pace";
+    this.touch();
     const paced = await this.pacer.acquire(reserved, (ms) => {
-      this.guardWait(ms);
       this.waitMs += ms;
+      this.touch();
     });
     this.activity = "running";
     const held = await this.ledger.beginAttempt(worst);
@@ -1010,10 +1081,10 @@ export class LiveSession {
     );
   }
 
-  private guardWait(ms: number): void {
-    if (this.waitMs + ms <= this.maxTotalWaitMs) return;
+  private chargeRetryWait(already: number, ms: number): void {
+    if (already + ms <= this.maxTotalWaitMs) return;
     const seconds = Math.round(this.maxTotalWaitMs / 1000);
-    const message = `Cumulative wait reached ${LIVE_ENV.maxTotalWait} (${seconds} seconds). Stopping instead of waiting longer.`;
+    const message = `Retry wait for this call reached ${LIVE_ENV.maxTotalWait} (${seconds} seconds). Pace waits are not counted. Stopping instead of waiting longer.`;
     this.lastError = message;
     this.waitLimitReached = true;
     throw new RateLimitStop(message);
@@ -1073,12 +1144,33 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
   const heartbeat = startProgressTicker(options.progressIntervalMs ?? PROGRESS_INTERVAL_MS, () =>
     session.emitProgress(),
   );
+  const perSeed: LiveSeed[] = [];
   const onInterrupt =
     options.handleSignals && options.reportPath
       ? createInterruptHandler({
           ledger,
           reportPath: options.reportPath,
           secrets,
+          perSeed,
+        })
+      : null;
+  const stallMs = options.stallTimeoutMs ?? DEFAULT_STALL_MINUTES * 60_000;
+  const watchdog =
+    options.reportPath
+      ? createStallWatchdog({
+          intervalMs: Math.max(1, Math.min(30_000, Math.floor(stallMs / 2))),
+          stallMs,
+          lastActivity: () => session.lastActivityMs,
+          onStall: () => {
+            void writeInterruptedReport({
+              ledger,
+              reportPath: options.reportPath!,
+              secrets,
+              perSeed,
+              reason: "stalled",
+              message: `No live-run progress for ${Math.round(stallMs / 1000)} seconds. Stopping instead of hanging.`,
+            }).then(() => process.exit(1));
+          },
         })
       : null;
   if (onInterrupt) {
@@ -1092,7 +1184,6 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
       `WARN cumulative spend crossed ${formatUsd(caps.warnMicroUsd)} USD (${LIVE_ENV.warn}).`,
     );
   }
-  const perSeed: LiveSeed[] = [];
   let failure: { reason: string; message: string } | null = null;
   try {
     for (const seed of options.seeds) {
@@ -1100,8 +1191,9 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
       const split = limitSplit(buildSplit(seed), options.rowLimit);
       const baselineFragmentText = baselineFragment();
       const baselineScore = await scoreSplit(session, split.test, baselineFragmentText);
+      const row: LiveSeed = { seed, baseline: baselineScore, candidate: null };
+      perSeed.push(row);
       if (ledger.stopReason) {
-        perSeed.push({ seed, baseline: baselineScore, candidate: null });
         failure = stopView(ledger.stopReason);
         break;
       }
@@ -1112,26 +1204,24 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
           ? await scoreSplit(session, split.test, loop.servedFragment)
           : emptyScore(split.test.length);
       if (ledger.stopReason && !failure) failure = stopView(ledger.stopReason);
-      perSeed.push({
-        seed,
-        baseline: baselineScore,
-        candidate: {
-          heldOut: candidateScore,
-          state: loop.state,
-          reason: loop.reason,
-          servedArtifactVersion: loop.servedVersion,
-          baselineArtifactVersion: loop.baselineVersion,
-        },
-      });
+      row.candidate = {
+        heldOut: candidateScore,
+        state: loop.state,
+        reason: loop.reason,
+        servedArtifactVersion: loop.servedVersion,
+        baselineArtifactVersion: loop.baselineVersion,
+      };
       if (ledger.stopReason || loop.failure) break;
     }
   } catch (error) {
-    failure = session.waitLimitReached
+    failure = isAttemptDeadline(error)
+      ? { reason: "attempt_deadline", message: errorText(error) }
+      : session.waitLimitReached
       ? {
           reason: "wait_limit",
           message:
             session.lastError ??
-            `Cumulative wait reached ${LIVE_ENV.maxTotalWait}. Stopping instead of waiting longer.`,
+            `Retry wait for this call reached ${LIVE_ENV.maxTotalWait}. Stopping instead of waiting longer.`,
         }
       : session.rateLimitExhausted
         ? {
@@ -1144,6 +1234,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
           };
   } finally {
     heartbeat.stop();
+    watchdog?.stop();
     if (onInterrupt) {
       process.off("SIGINT", onInterrupt);
       process.off("SIGTERM", onInterrupt);
@@ -1261,6 +1352,7 @@ export function liveOptionsFromEnv(
     max429Retries: pace.max429Retries,
     requestTimeoutMs: pace.requestTimeoutMs,
     maxTotalWaitMs: pace.maxTotalWaitMs,
+    stallTimeoutMs: readOptionalIntOr(env, LIVE_ENV.stallMinutes, DEFAULT_STALL_MINUTES) * 60_000,
   };
 }
 
@@ -1766,7 +1858,7 @@ async function runCandidate(
     split,
     reserve,
     inLoop,
-    Math.max(MAX_ATTEMPTS, 1 + session.max429Retries),
+    reservedAttemptsPerCall(session.max429Retries),
   );
   const clock = { now: new Date(CLOCK_START) };
   const store = new InMemoryStore();
@@ -2326,8 +2418,31 @@ export function formatProgress(input: {
 
 export function startProgressTicker(intervalMs: number, emit: () => void): { stop: () => void } {
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) return { stop: () => undefined };
-  const timer = setInterval(emit, intervalMs);
-  timer.unref?.();
+  // Ref'd on purpose. An unref'd interval does not wake epoll_wait by itself, so a
+  // stalled socket can sit forever after the one-shot request timer has already run.
+  const timer = setInterval(() => {
+    try {
+      emit();
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : "Progress ticker failed.");
+    }
+  }, intervalMs);
+  return { stop: () => clearInterval(timer) };
+}
+
+export function createStallWatchdog(input: {
+  intervalMs: number;
+  stallMs: number;
+  lastActivity: () => number;
+  now?: () => number;
+  onStall: () => void;
+}): { stop: () => void } {
+  const timer = setInterval(() => {
+    const now = input.now?.() ?? Date.now();
+    if (now - input.lastActivity() < input.stallMs) return;
+    clearInterval(timer);
+    input.onStall();
+  }, input.intervalMs);
   return { stop: () => clearInterval(timer) };
 }
 
@@ -2335,6 +2450,9 @@ export async function writeInterruptedReport(input: {
   ledger: LiveLedger;
   reportPath: string;
   secrets?: readonly string[];
+  perSeed?: LiveReport["perSeed"];
+  reason?: string;
+  message?: string;
 }): Promise<void> {
   await input.ledger.flush();
   const report = {
@@ -2343,8 +2461,10 @@ export async function writeInterruptedReport(input: {
     status: "partial",
     interrupted: true,
     stopped: {
-      reason: "interrupted",
-      message: "Interrupted. Partial report written and the spend ledger was flushed.",
+      reason: input.reason ?? "interrupted",
+      message:
+        input.message ??
+        "Interrupted. Partial report written and the spend ledger was flushed.",
     },
     spend: {
       totalMicroUsd: input.ledger.totalMicroUsd,
@@ -2352,6 +2472,7 @@ export async function writeInterruptedReport(input: {
       calls: input.ledger.calls,
       attempts: input.ledger.attempts,
     },
+    perSeed: input.perSeed ?? [],
   };
   const json = `${JSON.stringify(report, null, 2)}\n`;
   for (const secret of input.secrets ?? []) {
@@ -2367,6 +2488,7 @@ export function createInterruptHandler(input: {
   ledger: LiveLedger;
   reportPath: string;
   secrets?: readonly string[];
+  perSeed?: LiveReport["perSeed"];
   exit?: (code: number) => void;
 }): (signal: NodeJS.Signals) => void {
   let started = false;
@@ -2387,6 +2509,16 @@ function timeoutError(message: string): Error {
   const error = new Error(message);
   error.name = "TimeoutError";
   return error;
+}
+
+function attemptDeadlineError(ms: number): Error {
+  const error = new Error(`Attempt deadline exceeded after ${ms} ms.`);
+  error.name = "AttemptDeadlineError";
+  return error;
+}
+
+function isAttemptDeadline(error: unknown): boolean {
+  return !!error && typeof error === "object" && (error as { name?: string }).name === "AttemptDeadlineError";
 }
 
 function isTimeoutError(error: unknown): boolean {
