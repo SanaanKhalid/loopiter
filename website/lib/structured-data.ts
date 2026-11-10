@@ -1,5 +1,5 @@
 import { postPath, type Post } from './posts';
-import { absoluteUrl, githubUrl, siteName, siteUrl } from './site';
+import { absoluteUrl, githubUrl, siteName, siteUrl, socialImage } from './site';
 
 const organizationId = `${siteUrl}/#organization`;
 const websiteId = `${siteUrl}/#website`;
@@ -7,6 +7,14 @@ const softwareId = `${siteUrl}/#software`;
 
 const softwareDescription =
   'A lightweight, model-agnostic feedback loop for production AI systems. MIT-licensed TypeScript and Python libraries that capture executions and feedback, evaluate immutable candidates, and coordinate deployment or rollback through application-owned adapters.';
+
+const socialImageObject = {
+  '@type': 'ImageObject',
+  url: absoluteUrl(socialImage.path),
+  width: socialImage.width,
+  height: socialImage.height,
+  caption: socialImage.alt,
+};
 
 export const siteGraph = {
   '@context': 'https://schema.org',
@@ -28,6 +36,7 @@ export const siteGraph = {
       description:
         'Landing page, manifesto, and notes for Loopiter, a feedback loop for AI agents.',
       publisher: { '@id': organizationId },
+      image: socialImageObject,
       inLanguage: 'en',
     },
     {
@@ -46,6 +55,7 @@ export const siteGraph = {
       codeRepository: githubUrl,
       license: 'https://opensource.org/licenses/MIT',
       isAccessibleForFree: true,
+      image: socialImageObject,
       author: { '@id': organizationId },
       publisher: { '@id': organizationId },
     },
@@ -61,6 +71,7 @@ export function blogJsonLd(items: readonly Post[]) {
     description:
       'Notes on evaluation and feedback loops for AI agents, and how the Loopiter SDK implements them.',
     url: absoluteUrl('/blog'),
+    image: socialImageObject,
     inLanguage: 'en',
     publisher: { '@id': organizationId },
     blogPost: items.map((post) => ({
@@ -68,6 +79,8 @@ export function blogJsonLd(items: readonly Post[]) {
       headline: post.title,
       description: post.description,
       datePublished: post.date,
+      dateModified: post.dateModified,
+      image: socialImageObject,
       url: absoluteUrl(postPath(post.slug)),
     })),
   };
@@ -77,12 +90,13 @@ export function articleJsonLd(post: Post) {
   const url = absoluteUrl(postPath(post.slug));
   return {
     '@context': 'https://schema.org',
-    '@type': 'Article',
+    '@type': 'BlogPosting',
     '@id': `${url}#article`,
     headline: post.title,
     description: post.description,
     datePublished: post.date,
-    dateModified: post.date,
+    dateModified: post.dateModified,
+    image: socialImageObject,
     inLanguage: 'en',
     mainEntityOfPage: url,
     url,
@@ -93,5 +107,19 @@ export function articleJsonLd(post: Post) {
       name: 'Loopiter blog',
       url: absoluteUrl('/blog'),
     },
+  };
+}
+
+export function breadcrumbJsonLd(post: Post) {
+  const url = absoluteUrl(postPath(post.slug));
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    '@id': `${url}#breadcrumb`,
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: siteUrl },
+      { '@type': 'ListItem', position: 2, name: 'Blog', item: absoluteUrl('/blog') },
+      { '@type': 'ListItem', position: 3, name: post.title, item: url },
+    ],
   };
 }

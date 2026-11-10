@@ -11,7 +11,8 @@ Source code: https://github.com/SanaanKhalid/loopiter
 - [Home](https://loopiter.co/): SDK console, the feedback loop, graduated autonomy, and links to the manifesto and blog.
 - [Manifesto](https://loopiter.co/manifesto): Why a useful correction should start an improvement attempt, and what the application still decides.
 - [Blog](https://loopiter.co/blog): Notes on evaluation and feedback loops.
-- [Self-improving AI agents need a feedback loop you can evaluate](https://loopiter.co/blog/self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate): What self-improving agents change, why an outside check matters, and which parts of that loop this SDK implements.
+- [Evaluate self-improving AI agents offline before they change production](https://loopiter.co/blog/evaluate-self-improving-ai-agents-offline): How the repository’s Node offline KB-QA benchmark compares a frozen baseline with the SDK autonomous loop. Train is the optimization split, dev is validation and audit, and a held-out test is scored only after the loop. The harness uses seeded mocks and records zero live model calls. It checks a validation rejection, an observation rollback, and simulated spend caps. The printed scores are mocked, not a measurement of a real model.
+- [Self-improving AI agents need a feedback loop you can evaluate](https://loopiter.co/blog/self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate): What self-improving agents change, why an outside check matters, and which parts of that loop this SDK implements. Links to the offline benchmark note.
 
 ## Documentation
 

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SiteFrame } from '../../components/site-chrome';
 import { docsHref } from '../../lib/docs-links';
+import { postPath } from '../../lib/posts';
 import { pageMetadata } from '../../lib/site';
 
 export const metadata: Metadata = pageMetadata({
@@ -45,6 +46,7 @@ export default function Manifesto() {
             <p>You set the instructions that must stay fixed, the examples that must keep working, and the budget for improvement. The agent works within those limits. It doesn’t get to rewrite its own checks to make a change pass.</p>
             <p>A vague complaint may need more information. A correction may conflict with an earlier one. A promising change may fail a regression. In those cases, the current version stays in place and the reason is recorded.</p>
             <p>Passing checks is evidence about the cases you tested. Keep improving those checks as you learn. Every released change should have a history you can inspect and a previous version you can restore.</p>
+            <p>The repository’s <Link className="inline-link" href={postPath('evaluate-self-improving-ai-agents-offline')}>offline benchmark</Link> is one run of that rule: a frozen baseline, a held-out set the proposer does not grade, a harmful edit the validation gate rejects, and a rollback when observation fails. Those runs use seeded mocks, not a live model.</p>
           </section>
 
           <section aria-labelledby="keep-application">
@@ -65,6 +67,7 @@ export default function Manifesto() {
         <div className="manifesto-next">
           <Link className="text-link" href="/#how-it-works">How Loopiter works <span aria-hidden="true">↗</span></Link>
           <Link className="text-link" href="/blog/self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate">Why the loop has to be evaluable <span aria-hidden="true">↗</span></Link>
+          <Link className="text-link" href={postPath('evaluate-self-improving-ai-agents-offline')}>Evaluate it offline <span aria-hidden="true">↗</span></Link>
           <a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a>
         </div>
     </article>

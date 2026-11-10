@@ -4,7 +4,7 @@ import { JsonLd } from '../../../components/json-ld';
 import { SiteFrame } from '../../../components/site-chrome';
 import { postPath, requirePost } from '../../../lib/posts';
 import { pageMetadata } from '../../../lib/site';
-import { articleJsonLd } from '../../../lib/structured-data';
+import { articleJsonLd, breadcrumbJsonLd } from '../../../lib/structured-data';
 
 const post = requirePost('self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate');
 
@@ -13,12 +13,14 @@ export const metadata: Metadata = pageMetadata({
   description: post.description,
   path: postPath(post.slug),
   published: post.date,
+  modified: post.dateModified,
 });
 
 export default function FeedbackLoopPost() {
   return (
     <>
       <JsonLd data={articleJsonLd(post)} />
+      <JsonLd data={breadcrumbJsonLd(post)} />
       <a className="skip-link" href="#post-title">Skip to content</a>
       <SiteFrame page="blog">
       <main className="reading">

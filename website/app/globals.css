@@ -1,6 +1,7 @@
 @import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+/* Pages do not render components/ui. Leave this exclusion in place so those
+   utilities stay out of the render-blocking stylesheet. */
+@source not "../components/ui";
 
 :root {
   --ink: #f4f5f1;
@@ -511,7 +512,20 @@ section[id] { scroll-margin-top: 110px; }
 .manifesto-next .text-link { margin-top: 0; }
 .blog-list { list-style: none; padding: 0; margin: 36px 0 0; }
 .blog-list li { padding: 28px 0; border-top: 1px solid var(--line); }
-.blog-list time { display: block; margin-bottom: 10px; color: #b7bbb3; font: 600 .72rem/1.4 var(--font-geist-mono), monospace; letter-spacing: .12em; text-transform: uppercase; }
+.blog-list .blog-dates { margin: 0 0 10px; max-width: none; color: #b7bbb3; font: 600 .72rem/1.4 var(--font-geist-mono), monospace; letter-spacing: .08em; text-transform: uppercase; }
+.blog-dates time + time::before { content: " · "; }
+.post-crumbs { display: flex; flex-wrap: wrap; gap: 8px; max-width: 740px; margin: 0 0 18px; color: #b7bbb3; font: 600 .78rem/1.5 var(--font-geist-mono), monospace; }
+.post-crumbs a { color: var(--signal); }
+.post-crumbs [aria-current="page"] { color: #c5c8c1; }
+.manifesto-body .benchmark-note { margin: 0 0 22px; padding: 14px 16px; border: 1px solid #3f5a20; background: #10160c; color: #d5d8d0; font-size: .98rem; line-height: 1.65; }
+.table-scroll { overflow-x: auto; margin: 0 0 18px; }
+.benchmark-table { width: 100%; border-collapse: collapse; font: 600 .78rem/1.45 var(--font-geist-mono), ui-monospace, monospace; }
+.benchmark-table caption { caption-side: bottom; padding-top: 8px; text-align: left; color: #b7bbb3; font-size: .72rem; letter-spacing: .04em; }
+.benchmark-table th, .benchmark-table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); color: #c5c8c1; vertical-align: top; }
+.benchmark-table th { color: #b7bbb3; font-weight: 600; }
+.benchmark-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.command-block { margin: 0 0 18px; padding: 16px 18px; overflow-x: auto; background: #090b09; border: 1px solid #363a34; color: #c6ff59; font: 500 .84rem/1.6 var(--font-geist-mono), ui-monospace, monospace; }
+.command-block code { color: inherit; font-size: inherit; }
 .blog-list h2 { margin: 0 0 10px; font-size: clamp(1.5rem, 3vw, 2.1rem); letter-spacing: -.03em; font-weight: 560; }
 .blog-list p { margin: 0; max-width: 680px; color: #c5c8c1; }
 .reference-list { padding: 0; margin: 8px 0 0; list-style: none; }

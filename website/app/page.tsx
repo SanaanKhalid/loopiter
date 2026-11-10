@@ -4,6 +4,7 @@ import { SdkExample } from '../components/sdk-example';
 import { SiteFrame } from '../components/site-chrome';
 import { StartWithAgent } from '../components/start-with-agent';
 import { docUrl, docsHref } from '../lib/docs-links';
+import { postPath } from '../lib/posts';
 import { pageMetadata } from '../lib/site';
 
 export const metadata: Metadata = pageMetadata({
@@ -168,7 +169,7 @@ export default function Home() {
           </div>
           <div className="safety-grid">
             <article><span>01</span><h3>Explicit change boundaries</h3><p>Autonomy is off by default. A policy names an exact prompt, routing, or agent-release target, bounded fields, and daily budgets.</p></article>
-            <article><span>02</span><h3>Versioned evaluation</h3><p>Approval references the exact candidate, evidence, evaluator version, and passing evaluation.</p></article>
+            <article><span>02</span><h3>Versioned evaluation</h3><p>Approval references the exact candidate, evidence, evaluator version, and passing evaluation. An <Link className="inline-link" href={postPath('evaluate-self-improving-ai-agents-offline')}>offline benchmark</Link> runs that gate on a synthetic task before any live model call.</p></article>
             <article><span>03</span><h3>Application-owned boundaries</h3><p>Keep authentication, authorization, tool allowlists, and evaluator code outside generated artifacts.</p></article>
             <article><span>04</span><h3>Recoverable deployment</h3><p>The SDK records the attempt, the receipt, and the predecessor so you can inspect and roll back.</p></article>
           </div>

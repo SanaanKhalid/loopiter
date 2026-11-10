@@ -1,20 +1,19 @@
 import Link from 'next/link';
+import { PostBreadcrumb, PostByline } from './post-meta';
 import { docUrl } from '../lib/docs-links';
-import { publishedLabel, type Post } from '../lib/posts';
+import { postPath, type Post } from '../lib/posts';
 
 export function FeedbackLoopArticle({ post }: { post: Post }) {
   return (
     <article aria-labelledby="post-title">
       <header className="manifesto-heading">
+        <PostBreadcrumb current={post.title} />
         <p className="eyebrow">Blog</p>
         <h1 id="post-title">{post.title}</h1>
         <p className="manifesto-deck">
           A model that rewrites its own prompt is not a feedback loop. The loop is the evidence, the check, and a decision you can defend to keep or revert the change.
         </p>
-        <p className="post-byline">
-          <time dateTime={post.date}>{publishedLabel(post.date)}</time>
-          <span>Loopiter</span>
-        </p>
+        <PostByline post={post} />
       </header>
 
       <div className="manifesto-body">
@@ -95,6 +94,9 @@ export function FeedbackLoopArticle({ post }: { post: Post }) {
           <p>
             Candidate content and evidence are hashed. An approval is tied to the exact passing evaluation of that content. The evaluator is a versioned callback you provide. Loopiter stores the evidence and protects the lifecycle transition. It does not invent the task.
           </p>
+          <p>
+            The repository includes an <Link className="inline-link" href={postPath('evaluate-self-improving-ai-agents-offline')}>offline benchmark for that check</Link>. It runs the Node SDK’s autonomous loop against a frozen baseline on a synthetic knowledge-base task, then scores a held-out split the proposer never sees. The same run rejects a harmful candidate, rolls back a failed observation, and stops at a spend cap. The answers are seeded mocks, with zero live model calls. The numbers are not a claim about a real model.
+          </p>
           <h3>The default is a recommendation</h3>
           <p>
             <code>ImprovementController</code> modes are <code>observe</code>, <code>recommend</code>, <code>experiment</code>, and <code>autonomous</code>. Recommend is the default: it can store bounded proposals and does not approve or deploy them. Observe inspects evidence without proposing. Experiment compares candidates and can audit them without deployment. Autonomous deployment needs <code>selfImproving: true</code> (Python: <code>self_improving=True</code>), <code>mode</code> set to <code>autonomous</code>, and a complete policy. Setting the flag alone does nothing. The application calls <code>tick</code>. The <a className="inline-link" href={docUrl('autonomous')}>autonomous guide</a> says there is no hosted scheduler and no daemon in the core.
@@ -146,6 +148,7 @@ export function FeedbackLoopArticle({ post }: { post: Post }) {
       </div>
 
       <div className="manifesto-next">
+        <Link className="text-link" href={postPath('evaluate-self-improving-ai-agents-offline')}>Evaluate the loop offline <span aria-hidden="true">↗</span></Link>
         <Link className="text-link" href="/">Loopiter home <span aria-hidden="true">↗</span></Link>
         <Link className="text-link" href="/manifesto">Read the manifesto <span aria-hidden="true">↗</span></Link>
         <a className="text-link" href={docUrl('overview')}>Read the documentation <span aria-hidden="true">↗</span></a>

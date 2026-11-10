@@ -31,7 +31,12 @@ export default function BlogIndex() {
         <ol className="blog-list">
           {posts.map((post) => (
             <li key={post.slug}>
-              <time dateTime={post.date}>{publishedLabel(post.date)}</time>
+              <p className="blog-dates">
+                <time dateTime={post.date}>{publishedLabel(post.date)}</time>
+                {post.dateModified !== post.date ? (
+                  <time dateTime={post.dateModified}>Updated {publishedLabel(post.dateModified)}</time>
+                ) : null}
+              </p>
               <h2><Link href={postPath(post.slug)}>{post.title}</Link></h2>
               <p>{post.description}</p>
             </li>
