@@ -1,5 +1,5 @@
 /** CLI for the KB-QA harness. Live Azure calls are opt-in and fail closed. */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { renderMarkdown, runOfflineBenchmark } from "./harness.js";
@@ -12,7 +12,9 @@ import {
   redactSecrets,
   renderLiveMarkdown,
   runLiveBenchmark,
+  LiveExitError,
   LiveGateError,
+  forceExit,
 } from "./live.js";
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
@@ -123,6 +125,7 @@ async function runLiveCli(): Promise<void> {
     if (report.stopped) console.error(report.stopped.message);
     if (!report.passed) process.exitCode = 1;
   } catch (error) {
+    if (error instanceof LiveExitError) return;
     if (error instanceof LiveGateError && !secret) {
       console.error(error.message);
       process.exit(2);
@@ -133,15 +136,17 @@ async function runLiveCli(): Promise<void> {
 }
 
 async function boundedWrite(path: string, body: string): Promise<void> {
-  const signal = AbortSignal.timeout(10_000);
-  const timer = setTimeout(() => process.exit(1), 10_000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("Report write timed out.")), 10_000);
   try {
     await mkdir(dirname(path), { recursive: true });
-    signal.throwIfAborted();
-    await writeFile(path, body, { signal });
+    controller.signal.throwIfAborted();
+    const temporary = `${path}.${process.pid}.report.tmp`;
+    await writeFile(temporary, body, { mode: 0o600, signal: controller.signal });
+    await rename(temporary, path);
   } finally {
     clearTimeout(timer);
-    if (signal.aborted) process.exit(1);
+    if (controller.signal.aborted) forceExit(1);
   }
 }
 

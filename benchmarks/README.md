@@ -188,7 +188,7 @@ There are no baked-in prices or caps.
 | `LOOPITER_BENCH_MAX_429_RETRIES` | no | Extra attempts after HTTP 429. Default `6`. A finite integer greater than zero |
 | `LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS` | no | Per-request abort. Default `120`. A timed-out request is retried within the existing attempt limit |
 | `LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS` | no | Cap on retry wait for one model call. Pace waits are not counted. Default `900`. The run stops with a clear message instead of waiting longer |
-| `LOOPITER_BENCH_STALL_MINUTES` | no | Exit if a live run records no attempt, ledger write, or retry for this many minutes. Default `10`. A ref'd watchdog, so a stalled socket cannot silence it |
+| `LOOPITER_BENCH_STALL_MINUTES` | no | Exit if a live run records no attempt, ledger write, or retry for this many minutes. Default `10`. The value must be at least 2 × the 60 second pace window plus the attempt deadline, so one pace wait and one slow request cannot trip it. A shorter value refuses to start. A ref'd watchdog, so a stalled socket cannot silence it |
 
 Do not put the key in the shell history if that is a problem for you, and do
 not echo it. The process redacts the key and `api-key` / `Authorization` header
@@ -285,8 +285,12 @@ the run with a clear message instead of waiting longer. Each attempt also has
 a hard deadline covering pace, the ledger write, the request, the body read,
 and the retry sleep. If nothing records progress for
 `LOOPITER_BENCH_STALL_MINUTES` (default 10), a partial report is written and
-the process exits. The progress ticker stays referenced so a quiet socket
-cannot leave it unscheduled.
+the process exits. That setting must be at least two pace windows (60 seconds
+each) plus the attempt deadline. A shorter value is refused, because a healthy
+pace wait plus one slow request would otherwise look like a stall. The progress
+ticker stays referenced so a quiet socket cannot leave it unscheduled. A stall
+or signal aborts the run before another attempt starts, and that partial report
+is the only report written.
 Every attempt, including those retries, is checked against the spend caps and
 added to the ledger. The pre-call spend check still uses the worst-case
 ceiling (one input token per request byte plus the output bound). If the

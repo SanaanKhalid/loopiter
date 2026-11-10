@@ -63,6 +63,52 @@ export function reservedAttemptsPerCall(max429Retries: number): number {
 }
 export const DEFAULT_STALL_MINUTES = 10;
 const REPORT_IO_MS = 10_000;
+/** Rolling window used by the token pacer. A healthy stall timeout covers two of these plus one attempt. */
+export const PACE_WINDOW_MS = 60_000;
+
+export function minimumStallTimeoutMs(attemptDeadlineMs: number): number {
+  return 2 * PACE_WINDOW_MS + attemptDeadlineMs;
+}
+
+function boundAbort(ms: number): { signal: AbortSignal; done: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error(`Timed out after ${ms} ms.`)), ms);
+  return {
+    signal: controller.signal,
+    done() {
+      clearTimeout(timer);
+    },
+  };
+}
+
+/** process.exit does not return while a FIFO open is blocked. Follow it with a hard stop. */
+export function forceExit(
+  code: number,
+  hooks?: {
+    exit?: (code: number) => void;
+    reallyExit?: (code: number) => void;
+    delayMs?: number;
+  },
+): void {
+  (hooks?.exit ?? process.exit)(code);
+  const timer = setTimeout(() => {
+    if (hooks?.reallyExit) {
+      hooks.reallyExit(code);
+      return;
+    }
+    const really = (process as NodeJS.Process & { reallyExit?: (status: number) => void }).reallyExit;
+    if (typeof really === "function") really.call(process, code);
+    else process.kill(process.pid, "SIGKILL");
+  }, hooks?.delayMs ?? 250);
+  timer.unref();
+}
+
+export class LiveExitError extends Error {
+  constructor(readonly code: number) {
+    super("Live run stopped. The partial report is the final report.");
+    this.name = "LiveExitError";
+  }
+}
 export const DEFAULT_MAX_429_RETRIES = 6;
 export const DEFAULT_MAX_RETRY_WAIT_SECONDS = 60;
 export const DEFAULT_MAX_TOTAL_WAIT_SECONDS = 900;
@@ -323,17 +369,19 @@ export class LiveLedger {
     prices: LivePrices,
   ): Promise<LiveLedger> {
     const ledger = new LiveLedger(caps, prices, path);
-    const signal = AbortSignal.timeout(REPORT_IO_MS);
+    const bound = boundAbort(REPORT_IO_MS);
     try {
-      ledger.restore(await readFile(path, { encoding: "utf8", signal }));
+      ledger.restore(await readFile(path, { encoding: "utf8", signal: bound.signal }));
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") return ledger;
-      if (signal.aborted)
+      if (bound.signal.aborted)
         throw new LiveGateError("Spend ledger read timed out. Refusing to start.");
       throw new LiveGateError(
         "Spend ledger is unreadable. Refusing to start so cumulative spend is not reset.",
       );
+    } finally {
+      bound.done();
     }
     return ledger;
   }
@@ -382,7 +430,14 @@ export class LiveLedger {
     }
     if (signal?.aborted) {
       this.undoHold(micro, tokens);
-      await this.persist(AbortSignal.timeout(REPORT_IO_MS)).catch(() => undefined);
+      const bound = boundAbort(REPORT_IO_MS);
+      try {
+        await this.persist(bound.signal);
+      } catch {
+        // The in-memory hold is already gone. A later persist writes that state.
+      } finally {
+        bound.done();
+      }
       throw abortReason(signal);
     }
     return { micro, tokens };
@@ -701,6 +756,8 @@ export interface LiveRunOptions {
   stallTimeoutMs?: number;
   /** Replaces process.exit when leftover attempt I/O outlives the stall watchdog. */
   exit?: (code: number) => void;
+  /** How long to wait before exiting on a still-running attempt. Tests use a short value. */
+  settleTimeoutMs?: number;
   /** Heartbeat while idle. Unset prints every PROGRESS_INTERVAL_MS. */
   progressIntervalMs?: number;
   reportPath?: string;
@@ -882,6 +939,7 @@ export class LiveSession {
   lastActivityMs = Date.now();
   private inflight = 0;
   private retryQuietUntil = 0;
+  private stopSignal: AbortSignal | null = null;
   private readonly idle: (() => void)[] = [];
   activity = "running";
   lastError: string | null = null;
@@ -997,6 +1055,14 @@ export class LiveSession {
     return new Promise((resolve) => this.idle.push(resolve));
   }
 
+  bindStop(signal: AbortSignal): void {
+    this.stopSignal = signal;
+  }
+
+  isStopping(): boolean {
+    return this.stopSignal?.aborted === true;
+  }
+
   async generate(
     input: Omit<GenerateInput, "signal" | "maximumOutputTokens">,
     body: string,
@@ -1004,6 +1070,8 @@ export class LiveSession {
     meter: Meter,
     signal: AbortSignal,
   ): Promise<Generation> {
+    if (this.stopSignal) signal = AbortSignal.any([signal, this.stopSignal]);
+    if (signal.aborted) throw abortReason(signal);
     let otherRetries = 0;
     let rateRetries = 0;
     let retryWaited = 0;
@@ -1280,7 +1348,11 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
     session.emitProgress(),
   );
   const perSeed: LiveSeed[] = [];
-  const guard = createExitGuard();
+  const runControl = new AbortController();
+  session.bindStop(runControl.signal);
+  const guard = createExitGuard(options.exit ?? forceExit, () => {
+    runControl.abort(new Error("Live run is stopping."));
+  });
   const onInterrupt =
     options.handleSignals && options.reportPath
       ? createInterruptHandler({
@@ -1326,7 +1398,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
   let failure: { reason: string; message: string } | null = null;
   try {
     for (const seed of options.seeds) {
-      if (ledger.stopReason) break;
+      if (ledger.stopReason || session.isStopping()) break;
       const split = limitSplit(buildSplit(seed), options.rowLimit);
       const baselineFragmentText = baselineFragment();
       const baselineScore = await scoreSplit(session, split.test, baselineFragmentText);
@@ -1373,17 +1445,19 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
           };
   } finally {
     heartbeat.stop();
-    const settled = await Promise.race([
-      session.waitUntilSettled().then(() => true),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), REPORT_IO_MS)),
-    ]);
+    if (!guard.fired && session.inFlight > 0) {
+      const timer = setTimeout(() => {
+        if (session.inFlight > 0) (options.exit ?? forceExit)(1);
+      }, options.settleTimeoutMs ?? REPORT_IO_MS);
+      timer.unref();
+    }
     watchdog?.stop();
-    if (!settled || session.inFlight > 0) (options.exit ?? process.exit)(1);
     if (onInterrupt) {
       process.off("SIGINT", onInterrupt);
       process.off("SIGTERM", onInterrupt);
     }
   }
+  if (guard.fired) throw new LiveExitError(guard.code);
   if (!failure && ledger.stopReason) failure = stopView(ledger.stopReason);
   if (!failure && session.lastError)
     failure = { reason: "provider_error", message: session.lastError };
@@ -1496,7 +1570,7 @@ export function liveOptionsFromEnv(
     max429Retries: pace.max429Retries,
     requestTimeoutMs: pace.requestTimeoutMs,
     maxTotalWaitMs: pace.maxTotalWaitMs,
-    stallTimeoutMs: readOptionalIntOr(env, LIVE_ENV.stallMinutes, DEFAULT_STALL_MINUTES) * 60_000,
+    stallTimeoutMs: stallTimeoutFromEnv(env, pace),
   };
 }
 
@@ -1592,6 +1666,26 @@ function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
     maxTotalWaitMs:
       readOptionalIntOr(env, LIVE_ENV.maxTotalWait, DEFAULT_MAX_TOTAL_WAIT_SECONDS) * 1000,
   };
+}
+
+function stallTimeoutFromEnv(
+  env: NodeJS.ProcessEnv,
+  pace: ReturnType<typeof paceSettingsFromEnv>,
+): number {
+  const requested = readOptionalIntOr(env, LIVE_ENV.stallMinutes, DEFAULT_STALL_MINUTES) * 60_000;
+  const attempt = liveDeadlinePlan({
+    callsPerStep: maxModelCallsPerStep(),
+    requestTimeoutMs: pace.requestTimeoutMs,
+    max429Retries: pace.max429Retries,
+    maxRetryWaitMs: pace.maxRetryWaitMs,
+    maxTotalWaitMs: pace.maxTotalWaitMs,
+  }).attemptDeadlineMs;
+  const minimum = minimumStallTimeoutMs(attempt);
+  if (requested < minimum)
+    throw new LiveGateError(
+      `${LIVE_ENV.stallMinutes} of ${requested / 1000} seconds is below the minimum of ${minimum / 1000} seconds (2 × the 60 second pace window plus the ${attempt / 1000} second attempt deadline). Refusing to start.`,
+    );
+  return requested;
 }
 
 function readMaxTpm(env: NodeJS.ProcessEnv): number {
@@ -1925,8 +2019,8 @@ async function scoreSplit(
 ): Promise<ScoreView> {
   let successes = 0;
   let scored = 0;
-  for (const row of rows) {
-    if (session.ledger.stopReason) break;
+    for (const row of rows) {
+    if (session.ledger.stopReason || session.isStopping()) break;
     const question = questionText(row);
     try {
       const label = await ask(session, fragment, question, directMeter);
@@ -2187,7 +2281,7 @@ async function runCandidate(
     let result: TickResult | undefined;
     let sawObserving = false;
     for (let tick = 0; tick < 10_000; tick++) {
-      if (session.ledger.stopReason) break;
+      if (session.ledger.stopReason || session.isStopping()) break;
       result = await controller.tick(batched.id);
       if (TERMINAL.has(result.state) || result.reason === "spend_cap") break;
       if (result.state === "observing") {
@@ -2598,8 +2692,9 @@ export async function writeInterruptedReport(input: {
   reason?: string;
   message?: string;
 }): Promise<void> {
-  const signal = AbortSignal.timeout(REPORT_IO_MS);
-  await input.ledger.flush(signal);
+  const bound = boundAbort(REPORT_IO_MS);
+  try {
+  await input.ledger.flush(bound.signal);
   const report = {
     schemaVersion: 1,
     harness: "loopiter-live-kb-qa",
@@ -2624,32 +2719,53 @@ export async function writeInterruptedReport(input: {
     if (secret.length >= 4 && json.includes(secret))
       throw new LiveGateError("Refusing to write a report that contains a credential.");
   }
-  signal.throwIfAborted();
+  bound.signal.throwIfAborted();
   await mkdir(dirname(input.reportPath), { recursive: true });
-  await writeFile(input.reportPath, json, { signal });
+  const temporary = `${input.reportPath}.${process.pid}.partial.tmp`;
+  await writeFile(temporary, json, { mode: 0o600, signal: bound.signal });
+  await rename(temporary, input.reportPath);
+  } finally {
+    bound.done();
+  }
 }
 
 /** SIGINT/SIGTERM handler. Flushes the ledger, writes a partial report, then exits. */
-export function createExitGuard(exit: (code: number) => void = process.exit): {
+export function createExitGuard(
+  exit: (code: number) => void = forceExit,
+  onArm?: () => void,
+): {
   arm: (code: number, write: () => Promise<void>, timeoutMs?: number) => void;
+  readonly fired: boolean;
+  readonly code: number;
 } {
   let used = false;
   let left = false;
-  const once = (code: number) => {
+  let fired = false;
+  let code = 1;
+  const once = (status: number) => {
     if (left) return;
     left = true;
-    exit(code);
+    exit(status);
   };
   return {
-    arm(code, write, timeoutMs = REPORT_IO_MS) {
+    get fired() {
+      return fired;
+    },
+    get code() {
+      return code;
+    },
+    arm(status, write, timeoutMs = REPORT_IO_MS) {
       if (used) return;
       used = true;
+      fired = true;
+      code = status;
+      onArm?.();
       const timer = setTimeout(() => once(1), timeoutMs);
       void write()
         .catch(() => undefined)
         .finally(() => {
           clearTimeout(timer);
-          once(code);
+          once(status);
         });
     },
   };

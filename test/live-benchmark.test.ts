@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtemp, readFile } from "node:fs/promises";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,6 +17,7 @@ import {
 import {
   FULL_SEEDS,
   LIVE_ENV,
+  LiveExitError,
   LiveLedger,
   LiveSession,
   MAX_ATTEMPTS,
@@ -31,10 +33,13 @@ import {
   createInterruptHandler,
   createStallWatchdog,
   estimateFromEnv,
+  forceExit,
   formatProgress,
   liveCostMicroUsd,
   liveOptionsFromEnv,
+  minimumStallTimeoutMs,
   PACE_HEADROOM,
+  PACE_WINDOW_MS,
   pacedTokenLimit,
   planLiveRun,
   projectedWallMs,
@@ -43,6 +48,7 @@ import {
   reservedAttemptsPerCall,
   runLiveBenchmark,
   startProgressTicker,
+  writeInterruptedReport,
   type LivePrices,
 } from "../benchmarks/kb-qa/live.js";
 
@@ -1360,11 +1366,13 @@ test("a stalled provider and a stalled ledger stop on the attempt deadline", asy
     max429Retries: 1,
     maxTotalWaitMs: 5_000,
     attemptDeadlineMs: 40,
+    settleTimeoutMs: 30,
     fetch: () => new Promise(() => undefined),
     exit: (code) => exits.push(code),
   });
-  assert.deepEqual(exits, [1]);
   assert.equal(hung.stopped?.reason, "attempt_deadline");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.deepEqual(exits, [1]);
   assert.match(hung.stopped?.message ?? "", /Attempt deadline exceeded/);
 
   const ledger = new LiveLedger(
@@ -1420,6 +1428,118 @@ test("a stalled provider and a stalled ledger stop on the attempt deadline", asy
   watchdog.stop();
   assert.equal(stalled, true);
   assert.equal(reservedAttemptsPerCall(6), MAX_ATTEMPTS + 6);
+});
+
+test("a stopping run aborts new attempts and does not publish a second report", async () => {
+  const directory = await tempLedger();
+  let fetches = 0;
+  const exits: number[] = [];
+  const reportPath = join(directory, "partial.json");
+  const finalPath = join(directory, "final.json");
+  await assert.rejects(
+    runLiveBenchmark({
+      seeds: [1],
+      smoke: false,
+      deployment: "gpt-5.4-mini",
+      apiVersion: "v1",
+      endpoint: "https://example.openai.azure.com/",
+      apiKey: KEY,
+      prices: pricesOf(1, 1, 0),
+      totalCapUsd: 50,
+      invocationCapUsd: 50,
+      warnUsd: 40,
+      stopAtWarn: false,
+      ledgerPath: join(directory, "stop.json"),
+      reportPath,
+      rowLimit: 1,
+      stallTimeoutMs: 1_000,
+      progressIntervalMs: 60_000,
+      requestTimeoutMs: 5_000,
+      maxRetryWaitMs: 1_000,
+      max429Retries: 1,
+      maxTotalWaitMs: 5_000,
+      attemptDeadlineMs: 5_000,
+      fetch: () => {
+        fetches += 1;
+        return new Promise(() => undefined);
+      },
+      exit: (code) => exits.push(code),
+    }),
+    (error: unknown) => error instanceof LiveExitError,
+  );
+  const seen = fetches;
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(fetches, seen);
+  assert.equal(fetches > 0, true);
+  assert.equal(existsSync(finalPath), false);
+  assert.equal(exits.length > 0, true);
+
+  const fifo = join(directory, "fifo.json");
+  execFileSync("mkfifo", [fifo]);
+  const ledger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "fifo-ledger.json"),
+  );
+  const started = Date.now();
+  await writeInterruptedReport({
+    ledger,
+    reportPath: fifo,
+    reason: "stalled",
+    message: "stopped",
+  });
+  assert.ok(Date.now() - started < 2_000);
+  assert.equal(statSync(fifo).isFIFO(), false);
+  assert.match(readFileSync(fifo, "utf8"), /"interrupted": true/);
+
+  const forced: string[] = [];
+  forceExit(1, {
+    delayMs: 20,
+    exit: () => forced.push("exit"),
+    reallyExit: () => forced.push("really"),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(forced, ["exit", "really"]);
+
+  const minimum = minimumStallTimeoutMs(255_000);
+  assert.equal(minimum, 2 * PACE_WINDOW_MS + 255_000);
+  assert.throws(
+    () =>
+      liveOptionsFromEnv(scrubbed({ ...readyEnv(), [LIVE_ENV.stallMinutes]: "1" }), blankArgs()),
+    /pace window/,
+  );
+  const allowed = liveOptionsFromEnv(scrubbed(readyEnv()), blankArgs());
+  assert.ok((allowed.stallTimeoutMs ?? 0) >= minimum);
+
+  const handles = () =>
+    (
+      process as NodeJS.Process & { _getActiveHandles?: () => Array<{ _idleTimeout?: number }> }
+    )._getActiveHandles?.() ?? [];
+  const longTimers = () => handles().filter((handle) => handle._idleTimeout === 10_000).length;
+  const before = longTimers();
+  await runLiveBenchmark({
+    seeds: [1],
+    smoke: true,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    prices: pricesOf(1, 1, 0),
+    totalCapUsd: 50,
+    invocationCapUsd: 50,
+    warnUsd: 40,
+    stopAtWarn: false,
+    ledgerPath: join(directory, "quick.json"),
+    rowLimit: 1,
+    progressIntervalMs: 60_000,
+    requestTimeoutMs: 1_000,
+    maxRetryWaitMs: 100,
+    max429Retries: 1,
+    maxTotalWaitMs: 1_000,
+    fetch: async () => completedResponse({ label: "incomplete" }),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(longTimers(), before);
 });
 
 test("user abort, unauthorized, server, and lookup errors stay bounded", async () => {
