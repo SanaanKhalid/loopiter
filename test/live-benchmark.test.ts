@@ -1602,6 +1602,14 @@ test("sigkill helper skips a normal exit and a mismatched ppid", async () => {
     shouldForceKill({ ppid: 10, parentPid: 10, expectedStart: "5", currentStart: "9" }),
     false,
   );
+  assert.equal(
+    shouldForceKill({ ppid: 10, parentPid: 10, expectedStart: null, currentStart: null }),
+    false,
+  );
+  assert.equal(
+    shouldForceKill({ ppid: 10, parentPid: 10, expectedStart: "5", currentStart: null }),
+    false,
+  );
 
   const directory = await tempLedger();
   const liveUrl = new URL("../benchmarks/kb-qa/live.js", import.meta.url).href;
@@ -1642,6 +1650,27 @@ test("sigkill helper skips a normal exit and a mismatched ppid", async () => {
   assert.equal(sleeper.exitCode, null);
   sleeper.kill();
   helper.kill();
+
+  const missingDecision = join(directory, "missing-start.txt");
+  const held = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+        import { spawn } from "node:child_process";
+        import { forceKillScript } from ${JSON.stringify(liveUrl)};
+        const script = forceKillScript(process.pid, 80, null, ${JSON.stringify(missingDecision)});
+        spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+        setTimeout(() => process.exit(0), 400);
+      `,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(held.exitCode, null);
+  assert.equal(readFileSync(missingDecision, "utf8"), "skip");
+  held.kill();
 });
 
 test("user abort, unauthorized, server, and lookup errors stay bounded", async () => {

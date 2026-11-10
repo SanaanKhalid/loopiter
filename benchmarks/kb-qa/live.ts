@@ -94,7 +94,7 @@ export function readProcessStartTicks(pid: number): string | null {
   }
 }
 
-/** Kill only while this helper is still parented by that pid and the start time matches. */
+/** Kill only when the parent is still the same process. A missing start time does not kill. */
 export function shouldForceKill(input: {
   ppid: number;
   parentPid: number;
@@ -102,7 +102,7 @@ export function shouldForceKill(input: {
   currentStart: string | null;
 }): boolean {
   if (input.ppid !== input.parentPid) return false;
-  if (input.expectedStart === null) return true;
+  if (input.expectedStart === null || input.currentStart === null) return false;
   return input.currentStart === input.expectedStart;
 }
 
@@ -126,8 +126,7 @@ const started=Date.now();
 const timer=setInterval(()=>{
   const sameParent=process.ppid===parentPid;
   const current=currentStart();
-  const sameStart=expectedStart!==null&&current===expectedStart;
-  if(!sameParent||(expectedStart!==null&&!sameStart)){clearInterval(timer);note("skip");process.exit(0);}
+  if(!sameParent||expectedStart===null||current===null||current!==expectedStart){clearInterval(timer);note("skip");process.exit(0);}
   if(Date.now()-started<delay)return;
   clearInterval(timer);
   note("kill");
@@ -162,7 +161,13 @@ export function forceExit(
     (hooks?.exit ?? process.exit)(code);
   } finally {
     clearTimeout(timer);
-    if (killer && killer.exitCode === null && killer.signalCode === null) killer.kill();
+    if (killer && killer.exitCode === null && killer.signalCode === null) {
+      try {
+        killer.kill();
+      } catch {
+        // The helper may already have exited.
+      }
+    }
   }
 }
 
