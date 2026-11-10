@@ -34,6 +34,7 @@ import {
   createStallWatchdog,
   estimateFromEnv,
   forceExit,
+  forceKillScript,
   formatProgress,
   liveCostMicroUsd,
   liveOptionsFromEnv,
@@ -43,8 +44,10 @@ import {
   pacedTokenLimit,
   planLiveRun,
   projectedWallMs,
+  readProcessStartTicks,
   redactSecrets,
   renderEstimate,
+  shouldForceKill,
   reservedAttemptsPerCall,
   runLiveBenchmark,
   startProgressTicker,
@@ -1501,14 +1504,14 @@ test("a stopping run aborts new attempts and does not publish a second report", 
     kill: () => forced.push("kill"),
   });
   await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.deepEqual(forced, ["exit", "kill"]);
+  assert.deepEqual(forced, ["exit"]);
 
   const minimum = minimumStallTimeoutMs(255_000);
   assert.equal(minimum, 2 * PACE_WINDOW_MS + 255_000);
   assert.throws(
     () =>
       liveOptionsFromEnv(scrubbed({ ...readyEnv(), [LIVE_ENV.stallMinutes]: "1" }), blankArgs()),
-    /6\.25 minutes/,
+    /6\.25 minutes[\s\S]*smallest whole value accepted is 7/,
   );
   const allowed = liveOptionsFromEnv(scrubbed(readyEnv()), blankArgs());
   assert.ok((allowed.stallTimeoutMs ?? 0) >= minimum);
@@ -1584,6 +1587,61 @@ test("a fifo temp report cannot keep the process alive", async () => {
   if (outcome.signal === null && outcome.code === null) child.kill("SIGKILL");
   assert.ok(Date.now() - started < 3000);
   assert.ok(outcome.signal === "SIGKILL" || outcome.code === 1);
+});
+
+test("sigkill helper skips a normal exit and a mismatched ppid", async () => {
+  assert.equal(
+    shouldForceKill({ ppid: 10, parentPid: 10, expectedStart: "5", currentStart: "5" }),
+    true,
+  );
+  assert.equal(
+    shouldForceKill({ ppid: 1, parentPid: 10, expectedStart: "5", currentStart: "5" }),
+    false,
+  );
+  assert.equal(
+    shouldForceKill({ ppid: 10, parentPid: 10, expectedStart: "5", currentStart: "9" }),
+    false,
+  );
+
+  const directory = await tempLedger();
+  const liveUrl = new URL("../benchmarks/kb-qa/live.js", import.meta.url).href;
+  const normalDecision = join(directory, "normal.txt");
+  const parent = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+        import { spawn } from "node:child_process";
+        import { forceKillScript, readProcessStartTicks } from ${JSON.stringify(liveUrl)};
+        const script = forceKillScript(process.pid, 120, readProcessStartTicks(process.pid), ${JSON.stringify(normalDecision)});
+        spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+        setTimeout(() => process.exit(0), 30);
+      `,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const parentExit = await new Promise<number | null>((resolve) => {
+    parent.once("exit", (code) => resolve(code));
+  });
+  assert.equal(parentExit, 0);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(readFileSync(normalDecision, "utf8"), "skip");
+
+  const mismatchDecision = join(directory, "mismatch.txt");
+  const sleeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 2000)"], {
+    stdio: "ignore",
+  });
+  const script = forceKillScript(sleeper.pid ?? -1, 80, "1", mismatchDecision);
+  const helper = spawn(process.execPath, ["-e", script], {
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(readFileSync(mismatchDecision, "utf8"), "skip");
+  assert.equal(sleeper.exitCode, null);
+  sleeper.kill();
+  helper.kill();
 });
 
 test("user abort, unauthorized, server, and lookup errors stay bounded", async () => {

@@ -4,6 +4,7 @@
  * Tests inject a fetch implementation. This module does not read cloud credentials.
  */
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
@@ -82,6 +83,59 @@ function boundAbort(ms: number): { signal: AbortSignal; done: () => void } {
   };
 }
 
+/** `/proc/<pid>/stat` field 22, the process start time. Null when it cannot be read. */
+export function readProcessStartTicks(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const field = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    return field && /^\d+$/.test(field) ? field : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Kill only while this helper is still parented by that pid and the start time matches. */
+export function shouldForceKill(input: {
+  ppid: number;
+  parentPid: number;
+  expectedStart: string | null;
+  currentStart: string | null;
+}): boolean {
+  if (input.ppid !== input.parentPid) return false;
+  if (input.expectedStart === null) return true;
+  return input.currentStart === input.expectedStart;
+}
+
+export function forceKillScript(
+  parentPid: number,
+  delayMs: number,
+  expectedStart: string | null,
+  resultPath?: string,
+): string {
+  if (!Number.isInteger(parentPid) || parentPid <= 0 || !Number.isInteger(delayMs) || delayMs < 0)
+    throw new Error("Invalid force-kill helper.");
+  if (expectedStart !== null && !/^\d+$/.test(expectedStart))
+    throw new Error("Invalid force-kill helper.");
+  const startLiteral = expectedStart === null ? "null" : JSON.stringify(expectedStart);
+  const resultLiteral = resultPath === undefined ? "null" : JSON.stringify(resultPath);
+  return `const parentPid=${parentPid};const expectedStart=${startLiteral};const delay=${delayMs};const resultPath=${resultLiteral};
+const fs=require("node:fs");
+function currentStart(){try{const stat=fs.readFileSync("/proc/"+parentPid+"/stat","utf8");const field=stat.slice(stat.lastIndexOf(")")+2).split(" ")[19];return field&&/^\\d+$/.test(field)?field:null;}catch{return null;}}
+function note(kind){if(resultPath)fs.writeFileSync(resultPath,kind);}
+const started=Date.now();
+const timer=setInterval(()=>{
+  const sameParent=process.ppid===parentPid;
+  const current=currentStart();
+  const sameStart=expectedStart!==null&&current===expectedStart;
+  if(!sameParent||(expectedStart!==null&&!sameStart)){clearInterval(timer);note("skip");process.exit(0);}
+  if(Date.now()-started<delay)return;
+  clearInterval(timer);
+  note("kill");
+  try{process.kill(parentPid,"SIGKILL");}catch{}
+  process.exit(0);
+},20);`;
+}
+
 /** Arm SIGKILL before process.exit. A blocked FIFO open can keep process.exit from returning. */
 export function forceExit(
   code: number,
@@ -96,18 +150,20 @@ export function forceExit(
     (hooks?.kill ?? process.kill)(process.pid, "SIGKILL");
   }, delay);
   timer.unref();
-  if (!hooks) {
-    const killer = spawn(
-      process.execPath,
-      [
-        "-e",
-        `setTimeout(() => { try { process.kill(${process.pid}, "SIGKILL"); } catch {} }, ${delay})`,
-      ],
-      { detached: true, stdio: "ignore" },
-    );
-    killer.unref();
+  const killer = hooks
+    ? null
+    : spawn(process.execPath, ["-e", forceKillScript(process.pid, delay, readProcessStartTicks(process.pid))], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+  killer?.unref();
+  try {
+    (hooks?.exit ?? process.exit)(code);
+  } finally {
+    clearTimeout(timer);
+    if (killer && killer.exitCode === null && killer.signalCode === null) killer.kill();
   }
-  (hooks?.exit ?? process.exit)(code);
 }
 
 export class LiveExitError extends Error {
@@ -1689,7 +1745,7 @@ function stallTimeoutFromEnv(
   const minimum = minimumStallTimeoutMs(attempt);
   if (requested < minimum)
     throw new LiveGateError(
-      `${LIVE_ENV.stallMinutes} of ${minutesLabel(requested)} is below the minimum of ${minutesLabel(minimum)} (2 × the 60 second pace window plus the ${attempt / 1000} second attempt deadline). Refusing to start.`,
+      `${LIVE_ENV.stallMinutes} of ${minutesLabel(requested)} is below the minimum of ${minutesLabel(minimum)} (2 × the 60 second pace window plus the ${attempt / 1000} second attempt deadline). The smallest whole value accepted is ${Math.ceil(minimum / 60_000)}. Refusing to start.`,
     );
   return requested;
 }
@@ -2898,7 +2954,7 @@ function roundedMicro(value: number): number {
 
 function minutesLabel(ms: number): string {
   const minutes = Math.round((ms / 60_000) * 100) / 100;
-  const text = Number.isInteger(minutes) ? String(minutes) : String(minutes);
+  const text = String(minutes);
   return `${text} ${text === "1" ? "minute" : "minutes"}`;
 }
 
