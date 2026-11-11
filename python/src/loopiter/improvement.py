@@ -5,10 +5,13 @@ fence expected versions and inspect ambiguous operations; database leases do not
 """
 
 import asyncio
+import json
+import re
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
@@ -31,10 +34,102 @@ STATES = (
 ).split()
 DEFAULT_STEP_MS = 120_000
 DEFAULT_TICK_MS = 600_000
-MAX_STEP_MS = 3_600_000
-MAX_TICK_MS = 3_660_000
+MAX_STEP_MS = 7_200_000
+MAX_TICK_MS = 7_260_000
 # First pre-deployment timeout is retried. The next one ends the run as timed_out.
 STEP_TIMEOUT_ATTEMPTS = 2
+
+
+def _load_failure_rules():
+    raw = Path(__file__).with_name("failure_detail_rules.json").read_text(encoding="utf-8")
+    data = json.loads(raw)
+    compiled = []
+    for rule in data["rules"]:
+        flags = re.ASCII
+        if "i" in rule["flags"]:
+            flags |= re.IGNORECASE
+        replacement = rule["replace"].replace("$", "\\")
+        compiled.append((re.compile(rule["pattern"], flags), replacement))
+    return data["inputMax"], data["outputMax"], tuple(compiled)
+
+
+_FAILURE_INPUT_MAX, _FAILURE_OUTPUT_MAX, _FAILURE_RULES = _load_failure_rules()
+_FAILURE_SPACE = re.compile("[\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]")
+
+
+_DETAIL_UNAVAILABLE = "[detail unavailable]"
+_CAPTURE_PRIVATE_KEY = re.compile(
+    r"-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----",
+    re.ASCII,
+)
+_CAPTURE_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9+/_.=~-]+", re.IGNORECASE | re.ASCII)
+_CAPTURE_BASIC = re.compile(
+    r"\b[Bb][Aa][Ss][Ii][Cc]\s+(?![a-z]+\b)[A-Za-z0-9+/_.=~-]+",
+    re.ASCII,
+)
+_CAPTURE_TOKEN = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b",
+    re.ASCII,
+)
+_CAPTURE_USERINFO = re.compile(r"(https?://)[^\s/@:]+:[^\s/@]+@", re.IGNORECASE | re.ASCII)
+_CAPTURE_LABELED = re.compile(
+    r"((?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*)[^\s&,;]+",
+    re.IGNORECASE | re.ASCII,
+)
+
+
+def _capture_redact_text(value):
+    """Apply capture redaction before the error-text rules."""
+    value = _CAPTURE_PRIVATE_KEY.sub("[REDACTED]", value)
+    value = _CAPTURE_BEARER.sub("Bearer [REDACTED]", value)
+    value = _CAPTURE_BASIC.sub("Basic [REDACTED]", value)
+    value = _CAPTURE_TOKEN.sub("[REDACTED]", value)
+    value = _CAPTURE_USERINFO.sub(r"\1[REDACTED]@", value)
+    return _CAPTURE_LABELED.sub(r"\1[REDACTED]", value)
+
+
+def failure_detail_text(text):
+    """Sanitize error text, then truncate."""
+    bounded = _FAILURE_SPACE.sub(" ", text[:_FAILURE_INPUT_MAX])
+    redacted = _capture_redact_text(bounded)
+    for pattern, replacement in _FAILURE_RULES:
+        redacted = pattern.sub(replacement, redacted)
+    redacted = redacted.strip()
+    if len(redacted) <= _FAILURE_OUTPUT_MAX:
+        return redacted
+    return redacted[: _FAILURE_OUTPUT_MAX - 3] + "..."
+
+
+def _exception_text(exc):
+    """Full text Python can carry, including a cause, before sanitizing."""
+    parts = []
+    seen = set()
+    current = exc
+    while isinstance(current, BaseException) and id(current) not in seen:
+        seen.add(id(current))
+        parts.append(str(current))
+        current = current.__cause__ if current.__cause__ is not None else current.__context__
+    return "\n".join(part for part in parts if part)
+
+
+def _safe_detail(text):
+    try:
+        clean = failure_detail_text(text).strip()
+    except Exception:
+        return _DETAIL_UNAVAILABLE
+    return clean or _DETAIL_UNAVAILABLE
+
+
+def _failure_detail(exc):
+    if not isinstance(exc, BaseException):
+        return ""
+    try:
+        raw = _exception_text(exc)
+    except Exception:
+        return _DETAIL_UNAVAILABLE
+    if not raw.strip():
+        return ""
+    return _safe_detail(raw)
 
 
 def _plus(time, ms):
@@ -95,7 +190,7 @@ class ImprovementController:
         v.integer(callback_timeout_ms, "step timeout")
         v.integer(tick_timeout_ms, "tick timeout")
         if callback_timeout_ms > MAX_STEP_MS or tick_timeout_ms > MAX_TICK_MS:
-            v.fail("invalid_input", "Step timeout cannot exceed 1 hour.")
+            v.fail("invalid_input", "Step timeout cannot exceed 2 hours.")
         if tick_timeout_ms < callback_timeout_ms:
             v.fail("invalid_input", "Tick timeout must cover the step timeout.")
         self.loop, self.self_improving, self.mode = loop, self_improving, mode
@@ -351,6 +446,12 @@ class ImprovementController:
         async with self._tx() as tx:
             run = await self._owned(tx, rid, owner, recovery)
             data = {**run["data"], **deepcopy(patch)}
+            if (
+                "detail" not in patch
+                and data.get("state") != "failed"
+                and data.get("reason") not in ("callback_failed", "cancelled")
+            ):
+                data.pop("detail", None)
             row = await self._put(tx, "runs", rid, data)
             await self.loop._event(tx, "improvement." + data["state"], rid, reason=data["reason"])
             if data["state"] in TERMINAL:
@@ -772,7 +873,11 @@ class ImprovementController:
                 if count >= p.get("maximum_consecutive_failures", 3):
                     return await self._idle(w, "repeated_timeouts_require_review", "paused")
                 return await self._idle(w, "timed_out")
-            return await self._idle(w, code)
+            result = await self._idle(w, code)
+            detail = _failure_detail(exc)
+            if detail:
+                result["detail"] = detail
+            return result
         rid = run["id"]
         if run["data"]["workflow_id"] != w.id:
             return await self._idle(w, "target_owned_by_other_workflow")
@@ -869,12 +974,16 @@ class ImprovementController:
                 if isinstance(exc, asyncio.CancelledError)
                 else getattr(exc, "code", "callback_failed")
             )
+            detail = _failure_detail(exc)
             if code == "run_busy":
-                return {
+                busy = {
                     **await self._idle(w, code),
                     "run_id": rid,
                     "candidate_ids": run["data"]["candidate_ids"],
                 }
+                if detail:
+                    busy["detail"] = detail
+                return busy
             if code == "timeout" and await self._record_step_timeout(rid, owner):
                 pass
             elif code != "lease_lost":
@@ -889,7 +998,10 @@ class ImprovementController:
                         state = "reconciliation_required"
                     elif state != "observing" and code not in ("paused", "policy_changed"):
                         state = "failed"
-                    saved = await self._save(rid, owner, {"state": state, "reason": code}, True)
+                    patch = {"state": state, "reason": code}
+                    if detail:
+                        patch["detail"] = detail
+                    saved = await self._save(rid, owner, patch, True)
                     if self._undecided(saved):
                         await self._retire_undecided(
                             saved["data"]["candidate_ids"], saved["data"]["reason"]
@@ -906,11 +1018,14 @@ class ImprovementController:
                     )
         run = await self.get_run(rid)
         d = run["data"]
-        return {
+        result = {
             **await self._idle(w, d["reason"], d["state"], d.get("next_eligible_at")),
             "run_id": rid,
             "candidate_ids": d["candidate_ids"],
         }
+        if d.get("detail"):
+            result["detail"] = _safe_detail(d["detail"])
+        return result
 
     async def _advance(self, run, owner, w, paused):
         rid, d, p = run["id"], run["data"], w.policy

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import time
 import unittest
 from copy import deepcopy
 from dataclasses import replace
@@ -18,6 +19,7 @@ from loopiter import (
     LoopiterError,
     assign_cohort,
 )
+from loopiter.improvement import failure_detail_text
 from loopiter.improvement_evidence import (
     compare,
     minimum_certifiable_audit_units,
@@ -632,8 +634,9 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         )
         self.setup_workflow(FIXTURES["scenarios"][0])
         self.controller(step_timeout_ms=180000)
+        self.controller(step_timeout_ms=7_200_000)
         with self.assertRaises(LoopiterError):
-            self.controller(step_timeout_ms=3_600_001)
+            self.controller(step_timeout_ms=7_200_001)
 
         audit_calls = {"n": 0}
 
@@ -745,3 +748,173 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             (await controller.tick("classification"))["reason"],
             "repeated_timeouts_require_review",
         )
+
+    async def test_callback_failure_keeps_redacted_detail(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        host = "https://secret.example.openai.azure.com/openai"
+        key = "sk-test-secret-value"
+
+        async def propose(_data, _context):
+            raise RuntimeError(
+                f"proposal exploded at {host} api-key: {key} authorization: Bearer {key} "
+                + ("y" * 800)
+            )
+
+        self.workflow = replace(self.workflow, propose=propose)
+        controller = self.controller()
+        result = await controller.tick("classification")
+        self.assertEqual(result["reason"], "callback_failed")
+        self.assertEqual(result["state"], "failed")
+        detail = result["detail"]
+        self.assertIn("proposal exploded", detail)
+        self.assertNotIn(host, detail)
+        self.assertNotIn("secret.example.openai.azure.com", detail)
+        self.assertNotIn(key, detail)
+        self.assertLessEqual(len(detail), 500)
+        run = await controller.get_run(result["run_id"])
+        self.assertEqual(run["data"]["detail"], detail)
+
+    def test_failure_text_redacts_hosts_and_credential_material(self):
+        text = " ".join(
+            [
+                "contoso.openai.azure.com",
+                "myres.openai.azure.com.",
+                "westus.cognitiveservices.azure.com",
+                "prod.azure.com",
+                "contoso.azure-api.net",
+                "contoso.openai.azure.us",
+                "contoso.openai.azure.cn",
+                "acct.blob.core.windows.net",
+                "api.openai.com",
+                "Bearer sk-bearersecretvalue",
+                "sk-baresecretvalue99",
+                '{"api_key":"json-secret-value"}',
+                "?api-key=query-secret-value&x=1",
+                "x-api-key: header-secret-value",
+                "apiKey=kv-secret-value",
+                "API-KEY: mixed-case-secret",
+                "api_key = spaced-secret",
+                "api_key:\nnewline-secret",
+                "api-key%3Dencoded-secret",
+                "Ocp-Apim-Subscription-Key=ocp-secret-value",
+                "Subscription-Key=sub-key-secret",
+                "authorization: raw-auth-secret",
+                "Authorization=raw-auth-eq-secret",
+                "Authorization: Basic basic-auth-secret",
+                "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signaturevalue",
+                "AKIAABCDEFGHIJKLMNOP",
+                "AccountKey=account-key-secret==",
+                "?sv=2022&sig=sas-signature-secret",
+                "postgres://admin:dsn-password-secret@db.internal:5432/app",
+                "password=labeled-password-secret",
+                "ghp_abcdefghijklmnopqrstuvwxyz",
+                "https://example.com/path?q=1",
+                "y" * 800,
+            ]
+        )
+        detail = failure_detail_text(text)
+        for secret in (
+            "contoso.openai.azure.com",
+            "myres.openai.azure.com",
+            "westus.cognitiveservices.azure.com",
+            "prod.azure.com",
+            "contoso.azure-api.net",
+            "contoso.openai.azure.us",
+            "contoso.openai.azure.cn",
+            "acct.blob.core.windows.net",
+            "api.openai.com",
+            "sk-bearersecretvalue",
+            "sk-baresecretvalue99",
+            "json-secret-value",
+            "query-secret-value",
+            "header-secret-value",
+            "kv-secret-value",
+            "mixed-case-secret",
+            "spaced-secret",
+            "newline-secret",
+            "encoded-secret",
+            "ocp-secret-value",
+            "sub-key-secret",
+            "raw-auth-secret",
+            "raw-auth-eq-secret",
+            "basic-auth-secret",
+            "eyJhbGciOiJIUzI1NiJ9",
+            "AKIAABCDEFGHIJKLMNOP",
+            "account-key-secret",
+            "sas-signature-secret",
+            "dsn-password-secret",
+            "labeled-password-secret",
+            "ghp_abcdefghijklmnopqrstuvwxyz",
+            "example.com",
+        ):
+            self.assertNotIn(secret, detail, secret)
+        self.assertLessEqual(len(detail), 500)
+
+    def test_failure_text_leaves_benign_wording_unchanged(self):
+        for benign in (
+            "signature mismatch in design=modern; apikeys rotated; the azure.com docs; risk-assessment",
+            "task-runner disk-usage ask-me",
+            "status code: 429",
+            "code=context_length_exceeded",
+            "Basic validation failed",
+            "read the docs on platform.openai.com before retrying",
+            "token: 4096 exceeds limit",
+            "max_tokens=4096",
+            "token_type=Bearer",
+            "tokenizer=cl100k",
+        ):
+            self.assertEqual(failure_detail_text(benign), benign)
+
+    def test_failure_text_matches_the_shared_probe_corpus(self):
+        probes = json.loads(
+            (Path(__file__).parent / "fixtures/failure-detail-probes.json").read_text()
+        )
+        for item in probes["cases"]:
+            self.assertEqual(failure_detail_text(item["input"]), item["output"])
+
+    def test_failure_text_finishes_on_a_long_unspaced_input(self):
+        text = "api_key=early-secret " + ("a." * 100_000)
+        started = time.perf_counter()
+        detail = failure_detail_text(text)
+        self.assertLess(time.perf_counter() - started, 1)
+        self.assertNotIn("early-secret", detail)
+
+    def test_failure_text_finishes_on_a_long_scheme_like_input(self):
+        for text in ("a://" * 8192, "https://a:" * 3276):
+            started = time.perf_counter()
+            failure_detail_text(text)
+            self.assertLess(time.perf_counter() - started, 1)
+
+    async def test_chained_exception_text_is_sanitized(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+
+        async def propose(_data, _context):
+            raise RuntimeError("wrapper") from RuntimeError(
+                "contoso.openai.azure.com sk-nestedsecretvalue api_key=nested-json-secret"
+            )
+
+        self.workflow = replace(self.workflow, propose=propose)
+        result = await self.controller().tick("classification")
+        detail = result["detail"]
+        self.assertIn("wrapper", detail)
+        self.assertIn("[redacted]", detail)
+        self.assertNotIn("contoso.openai.azure.com", detail)
+        self.assertNotIn("sk-nestedsecretvalue", detail)
+        self.assertNotIn("nested-json-secret", detail)
+        self.assertNotIn("contoso.openai.azure.com", json.dumps(result))
+
+    async def test_sanitizer_failure_records_a_fixed_message(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+
+        class Boom(RuntimeError):
+            def __str__(self):
+                raise RuntimeError("should-not-leak-secret")
+
+        async def propose(_data, _context):
+            raise Boom("unused")
+
+        self.workflow = replace(self.workflow, propose=propose)
+        result = await self.controller().tick("classification")
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(result["detail"], "[detail unavailable]")
+        self.assertNotIn("should-not-leak-secret", json.dumps(result))

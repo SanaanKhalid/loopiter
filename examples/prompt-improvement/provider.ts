@@ -7,12 +7,18 @@ export interface GenerateInput {
   schema: JsonObject;
   name: string;
   signal: AbortSignal;
+  /** Overrides the provider cap for this call. Must be at most that cap. */
+  maximumOutputTokens?: number;
+  /** When set, the request includes reasoning.effort. Omitted leaves the field off. */
+  reasoningEffort?: string;
 }
 export interface Generation {
   value: JsonObject;
   model: string;
   inputTokens: number | null;
   outputTokens: number | null;
+  /** Subset of inputTokens when the response reports a cache. Null if unreported. */
+  cachedInputTokens: number | null;
   latencyMs: number;
 }
 export interface GenerationProvider {
@@ -25,7 +31,50 @@ interface ResponseOptions {
   maximumRequests?: number;
   maximumOutputTokens?: number;
   maximumInputBytes?: number;
+  timeoutMs?: number;
   fetch?: typeof fetch;
+}
+export interface ResponseUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedInputTokens: number | null;
+}
+/** HTTP failure. The message is status-only so response bodies and headers stay out of logs. */
+export class ProviderRequestError extends Error {
+  readonly usage: ResponseUsage | null;
+  readonly retryAfterMs: number | null;
+  constructor(readonly status: number, usage: ResponseUsage | null, retryAfterMs: number | null = null) {
+    super(`OpenAI request failed (HTTP ${status}).`);
+    this.name = "ProviderRequestError";
+    this.usage = usage;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+export function responsesRequestBody(input: {
+  model: string;
+  instructions: string;
+  input: string;
+  name: string;
+  schema: JsonObject;
+  maxOutputTokens: number;
+  reasoningEffort?: string;
+}) {
+  return {
+    model: input.model,
+    store: false as const,
+    instructions: input.instructions,
+    input: input.input,
+    max_output_tokens: input.maxOutputTokens,
+    ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
+    text: {
+      format: {
+        type: "json_schema" as const,
+        name: input.name,
+        strict: true as const,
+        schema: input.schema,
+      },
+    },
+  };
 }
 class ResponsesProvider implements GenerationProvider {
   readonly mode = "live" as const;
@@ -41,6 +90,7 @@ class ResponsesProvider implements GenerationProvider {
     integer(options.maximumRequests ?? 80, "maximumRequests");
     integer(options.maximumOutputTokens ?? 2048, "maximumOutputTokens");
     integer(options.maximumInputBytes ?? 16384, "maximumInputBytes");
+    integer(options.timeoutMs ?? 60000, "timeoutMs");
   }
   async generate(input: GenerateInput): Promise<Generation> {
     input.signal.throwIfAborted();
@@ -49,7 +99,16 @@ class ResponsesProvider implements GenerationProvider {
       throw new Error("Model request budget exhausted.");
     this.requests++;
     const started = performance.now();
-    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(60000)]);
+    const cap = this.options.maximumOutputTokens ?? 2048;
+    const maxOutput = input.maximumOutputTokens ?? cap;
+    integer(maxOutput, "maximumOutputTokens");
+    if (maxOutput > cap)
+      throw new Error("maximumOutputTokens exceeds the provider cap.");
+    const timeoutMs = this.options.timeoutMs ?? 60000;
+    const signal = AbortSignal.any([
+      input.signal,
+      AbortSignal.timeout(timeoutMs),
+    ]);
     const authentication = await this.authenticate(signal);
     signal.throwIfAborted();
     const response = await (this.options.fetch ?? fetch)(
@@ -62,33 +121,30 @@ class ResponsesProvider implements GenerationProvider {
         },
         signal,
         redirect: "error",
-        body: JSON.stringify({
-          model: this.model,
-          store: false,
-          instructions: input.instructions,
-          input: input.input,
-          max_output_tokens: this.options.maximumOutputTokens ?? 2048,
-          text: {
-            format: {
-              type: "json_schema",
-              name: input.name,
-              strict: true,
-              schema: input.schema,
-            },
-          },
-        }),
+        body: JSON.stringify(
+          responsesRequestBody({
+            model: this.model,
+            instructions: input.instructions,
+            input: input.input,
+            name: input.name,
+            schema: input.schema,
+            maxOutputTokens: maxOutput,
+            ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+          }),
+        ),
       },
     );
-    if (!response.ok)
-      throw new Error(
-        `OpenAI request failed (HTTP ${response.status}); no automatic retry.`,
-      );
-    input.signal.throwIfAborted();
-    const body: unknown = await response.json();
-    input.signal.throwIfAborted();
+    if (!response.ok) {
+      const retryAfterMs = retryAfterMsFrom(response);
+      const usage = await usageFromBody(response, signal);
+      throw new ProviderRequestError(response.status, usage, retryAfterMs);
+    }
+    signal.throwIfAborted();
+    const body = await readJsonBody(response, signal);
+    signal.throwIfAborted();
     object(body, "OpenAI response");
     if (body.status !== "completed" || !Array.isArray(body.output))
-      throw new Error("OpenAI response was incomplete or malformed.");
+      throw new Error(incompleteMessage(body));
     const texts: string[] = [];
     for (const item of body.output) {
       if (!item || item.type !== "message" || !Array.isArray(item.content))
@@ -107,18 +163,13 @@ class ResponsesProvider implements GenerationProvider {
     const value: unknown = JSON.parse(texts.join(""));
     json(value);
     object(value, "structured output");
-    const usage = body.usage as Record<string, unknown> | undefined;
-    const tokens = (key: string) =>
-      typeof usage?.[key] === "number" &&
-      Number.isFinite(usage[key]) &&
-      usage[key] >= 0
-        ? (usage[key] as number)
-        : null;
+    const usage = readUsage(body);
     return {
       value: value as JsonObject,
       model: typeof body.model === "string" ? body.model : this.model,
-      inputTokens: tokens("input_tokens"),
-      outputTokens: tokens("output_tokens"),
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cachedInputTokens: usage.cachedInputTokens,
       latencyMs: performance.now() - started,
     };
   }
@@ -138,6 +189,8 @@ export class AzureOpenAIProvider extends ResponsesProvider {
     endpoint: string;
     apiKey?: string;
     tokenProvider?: (signal: AbortSignal) => Promise<string>;
+    /** Query value for api-version. Omitted leaves the provider URL unchanged. */
+    apiVersion?: string;
   }) {
     const endpoint = new URL(options.endpoint);
     if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password ||
@@ -146,7 +199,13 @@ export class AzureOpenAIProvider extends ResponsesProvider {
     if (Boolean(options.apiKey) === Boolean(options.tokenProvider))
       throw new Error("Configure exactly one Azure API key or token provider.");
     if (options.apiKey) nonempty(options.apiKey, "AZURE_OPENAI_API_KEY");
-    super(options, new URL("openai/v1/responses", endpoint).href, async (signal) => {
+    const url = new URL("openai/v1/responses", endpoint);
+    if (options.apiVersion !== undefined) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(options.apiVersion))
+        throw new Error("Invalid Azure API version.");
+      url.searchParams.set("api-version", options.apiVersion);
+    }
+    super(options, url.href, async (signal) => {
       if (options.tokenProvider) {
         const token = await options.tokenProvider(signal);
         nonempty(token, "Azure authentication token");
@@ -155,4 +214,104 @@ export class AzureOpenAIProvider extends ResponsesProvider {
       return { "api-key": options.apiKey! };
     });
   }
+}
+
+/** Milliseconds from retry-after-ms or Retry-After. The header text is not returned. */
+function retryAfterMsFrom(response: Response): number | null {
+  const millis = response.headers.get("retry-after-ms");
+  if (millis !== null && /^[0-9]+$/.test(millis.trim())) {
+    const value = Number(millis.trim());
+    if (Number.isSafeInteger(value)) return value;
+  }
+  const header = response.headers.get("retry-after");
+  if (header === null) return null;
+  const trimmed = header.trim();
+  if (/^[0-9]+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    if (Number.isSafeInteger(seconds)) return seconds * 1000;
+  }
+  const when = Date.parse(trimmed);
+  if (Number.isFinite(when)) return Math.max(0, when - Date.now());
+  return null;
+}
+
+function incompleteMessage(body: unknown): string {
+  const reason = incompleteReason(body);
+  return reason
+    ? `OpenAI response was incomplete or malformed (incomplete_details.reason: ${reason}).`
+    : "OpenAI response was incomplete or malformed.";
+}
+
+/** Only a short token is copied. Response bodies and headers stay out of the message. */
+function incompleteReason(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const details = (body as { incomplete_details?: unknown }).incomplete_details;
+  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
+  const reason = (details as { reason?: unknown }).reason;
+  if (typeof reason !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(reason)) return null;
+  return reason;
+}
+
+function countUsage(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+}
+
+export function readUsage(body: unknown): ResponseUsage {
+  const usage =
+    body && typeof body === "object"
+      ? (body as { usage?: unknown }).usage
+      : undefined;
+  if (!usage || typeof usage !== "object")
+    return { inputTokens: null, outputTokens: null, cachedInputTokens: null };
+  const record = usage as Record<string, unknown>;
+  const details = record.input_tokens_details;
+  const cached =
+    details && typeof details === "object"
+      ? countUsage((details as Record<string, unknown>).cached_tokens)
+      : null;
+  return {
+    inputTokens: countUsage(record.input_tokens),
+    outputTokens: countUsage(record.output_tokens),
+    cachedInputTokens: cached,
+  };
+}
+
+async function usageFromBody(
+  response: Response,
+  signal: AbortSignal,
+): Promise<ResponseUsage | null> {
+  try {
+    const text = await readResponseText(response, signal);
+    if (!text) return null;
+    return readUsage(JSON.parse(text) as unknown);
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return null;
+  }
+}
+
+function readJsonBody(response: Response, signal: AbortSignal): Promise<unknown> {
+  return readResponseText(response, signal).then((text) => (text ? JSON.parse(text) : null));
+}
+
+function readResponseText(response: Response, signal: AbortSignal): Promise<string> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () =>
+      reject(signal.reason instanceof Error ? signal.reason : new Error("Cancelled."));
+    signal.addEventListener("abort", onAbort, { once: true });
+    response.text().then(
+      (text) => {
+        signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) onAbort();
+        else resolve(text);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }

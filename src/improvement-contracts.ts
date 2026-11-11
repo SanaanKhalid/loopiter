@@ -242,6 +242,8 @@ export interface ImprovementRunData {
   assignmentHash?: string;
   /** Pre-deployment callback timeouts already spent on this run. */
   stepTimeouts?: number;
+  /** Redacted, truncated text from a failed callback. Absent on a clean tick. */
+  detail?: string;
 }
 export interface ImprovementRun extends RecordBase {
   format: 1;
@@ -260,6 +262,8 @@ export interface TickResult {
   nextEligibleAt?: string;
   candidateIds: string[];
   budget: { modelRequests: number; tokens: number; deployments: number };
+  /** Redacted, truncated callback error. Absent when this tick has no failure text. */
+  detail?: string;
 }
 export interface ImprovementControllerOptions {
   selfImproving?: boolean;

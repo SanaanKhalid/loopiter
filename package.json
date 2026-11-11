@@ -85,7 +85,7 @@
     "docs/application-observation.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && cp python/src/loopiter/failure_detail_rules.json dist/src/failure-detail-rules.json",
     "prepack": "npm run build",
     "starter": "npm run build && node dist/examples/prompt-improvement/cli.js",
     "test:postgres": "npm run build && node --test dist/test/postgres.test.js",
@@ -96,6 +96,7 @@
     "test:fern": "node scripts/check-fern.mjs",
     "benchmark": "npm run build && node dist/examples/benchmark.js",
     "benchmark:offline": "npm run build && node dist/benchmarks/kb-qa/run.js --seeds 5",
+    "benchmark:live": "npm run build && node dist/benchmarks/kb-qa/run.js --live",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:dts": "tsc -p tsconfig.dts.json --pretty false",
     "test": "npm run build && node --test dist/test/*.test.js",

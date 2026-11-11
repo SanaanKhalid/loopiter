@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { FeedbackLoop } from "./feedback-loop.js";
 import type {
   ControlRecord,
@@ -26,6 +27,7 @@ import {
   validateChange,
   validatePolicy,
 } from "./improvement-evidence.js";
+import { redactCapture } from "./integrations/privacy.js";
 import {
   cancellable,
   clone,
@@ -65,8 +67,76 @@ const states: RunState[] = [
 ];
 const DEFAULT_STEP_MS = 120_000;
 const DEFAULT_TICK_MS = 600_000;
-const MAX_STEP_MS = 3_600_000;
-const MAX_TICK_MS = 3_660_000;
+const MAX_STEP_MS = 7_200_000;
+const MAX_TICK_MS = 7_260_000;
+const FAILURE_DETAIL_UNAVAILABLE = "[detail unavailable]";
+
+interface FailureDetailRuleFile {
+  inputMax: number;
+  outputMax: number;
+  rules: { pattern: string; flags: string; replace: string }[];
+}
+
+const failureDetailRuleFile = JSON.parse(
+  readFileSync(new URL("./failure-detail-rules.json", import.meta.url), "utf8"),
+) as FailureDetailRuleFile;
+const failureDetailRules = failureDetailRuleFile.rules.map(
+  (rule) => [new RegExp(rule.pattern, rule.flags), rule.replace] as const,
+);
+const failureDetailSpace =
+  /[\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/g;
+
+/** Sanitize error text, then truncate. */
+export function failureDetailText(text: string): string {
+  const bounded =
+    text.length > failureDetailRuleFile.inputMax
+      ? text.slice(0, failureDetailRuleFile.inputMax)
+      : text;
+  const normalized = bounded.replace(failureDetailSpace, " ");
+  const captured = redactCapture(normalized);
+  const base = typeof captured === "string" ? captured : normalized;
+  const redacted = failureDetailRules
+    .reduce((value, [pattern, replace]) => value.replace(pattern, replace), base)
+    .trim();
+  if (redacted.length <= failureDetailRuleFile.outputMax) return redacted;
+  return `${redacted.slice(0, failureDetailRuleFile.outputMax - 3)}...`;
+}
+
+function exceptionText(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  const visit = (value: unknown): void => {
+    if (value === null || value === undefined || seen.has(value)) return;
+    if (!(value instanceof Error)) return;
+    seen.add(value);
+    parts.push(value.message);
+    const nested = (value as { errors?: unknown }).errors;
+    if (Array.isArray(nested)) for (const item of nested) visit(item);
+    visit((value as { cause?: unknown }).cause);
+  };
+  visit(error);
+  return parts.join("\n");
+}
+
+function safeDetail(text: string): string {
+  try {
+    const clean = failureDetailText(text).trim();
+    return clean || FAILURE_DETAIL_UNAVAILABLE;
+  } catch {
+    return FAILURE_DETAIL_UNAVAILABLE;
+  }
+}
+
+function failureDetailFrom(error: unknown): string | undefined {
+  try {
+    const raw = exceptionText(error);
+    if (!raw.trim()) return undefined;
+    return safeDetail(raw);
+  } catch {
+    return FAILURE_DETAIL_UNAVAILABLE;
+  }
+}
+
 /** First pre-deployment timeout is retried. The next one ends the run as timed_out. */
 const STEP_TIMEOUT_ATTEMPTS = 2;
 const asJson = (x: unknown) => x as JsonObject;
@@ -108,7 +178,7 @@ export class ImprovementController {
     integer(this.callbackMs, "stepTimeoutMs");
     integer(this.tickMs, "tickTimeoutMs");
     if (this.callbackMs > MAX_STEP_MS || this.tickMs > MAX_TICK_MS)
-      fail("invalid_input", "Step timeout cannot exceed 1 hour.");
+      fail("invalid_input", "Step timeout cannot exceed 2 hours.");
     if (this.tickMs < this.callbackMs)
       fail("invalid_input", "Tick timeout must cover the step timeout.");
     if (!Array.isArray(options.workflows) || !options.workflows.length)
@@ -440,6 +510,13 @@ export class ImprovementController {
     return this.loop.store.transaction(this.loop.namespace, async (tx) => {
       const run = await this.owned(tx, runId, owner, allowPaused),
         data = { ...run.data, ...clone(patch) };
+      if (
+        !Object.hasOwn(patch, "detail") &&
+        data.state !== "failed" &&
+        data.reason !== "callback_failed" &&
+        data.reason !== "cancelled"
+      )
+        delete data.detail;
       const row = await this.put(tx, "runs", runId, data);
       const event = {
         id: id("event"),
@@ -917,13 +994,15 @@ export class ImprovementController {
           : signal2.aborted
             ? "cancelled"
             : "callback_failed";
+      const detail = failureDetailFrom(error);
       if (reason === "timeout") {
         const count = await this.noteTimeout(w);
         if (count >= (w.policy.maximumConsecutiveFailures ?? 3))
           return idle("repeated_timeouts_require_review", "paused");
         return idle("timed_out");
       }
-      return idle(reason);
+      const idleResult = await idle(reason);
+      return detail ? { ...idleResult, detail } : idleResult;
     }
     const rid = run.id;
     // A different workflow may own this target; it must be resumed by its own definition.
@@ -1640,11 +1719,13 @@ export class ImprovementController {
             : signal2.aborted
               ? "cancelled"
               : "callback_failed";
+      const detail = failureDetailFrom(error);
       if (code === "run_busy")
         return {
           ...(await idle(code)),
           runId: rid,
           candidateIds: run?.data.candidateIds ?? [],
+          ...(detail ? { detail } : {}),
         };
       if (code === "timeout" && (await this.recordStepTimeout(rid, owner))) {
         // Retry or terminal timed_out. Not a consecutive-failure strike.
@@ -1668,6 +1749,7 @@ export class ImprovementController {
                   ? current.data.state
                   : "failed",
               reason: code,
+              ...(detail ? { detail } : {}),
             },
             true,
           ).catch(() => current);
@@ -1696,6 +1778,7 @@ export class ImprovementController {
       ...(run!.data.nextEligibleAt
         ? { nextEligibleAt: run!.data.nextEligibleAt }
         : {}),
+      ...(run!.data.detail ? { detail: safeDetail(run!.data.detail) } : {}),
     };
   }
   private async evaluatePartition(
