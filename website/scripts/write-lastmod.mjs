@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +22,11 @@ function readSlugs() {
 
 function lastModified(paths) {
   for (const rel of paths) statSync(resolve(repoRoot, rel));
+  if (!existsSync(resolve(repoRoot, '.git'))) {
+    throw new Error(
+      `Cannot date ${paths.join(', ')}: this build is not a git checkout.`,
+    );
+  }
   let git = '';
   try {
     git = execFileSync(
@@ -29,15 +34,18 @@ function lastModified(paths) {
       ['log', '-1', '--format=%cI', '--', ...paths],
       { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     ).trim();
-  } catch {
-    git = '';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`git log failed for ${paths.join(', ')}: ${message}`);
   }
-  if (git && !Number.isNaN(Date.parse(git))) return git;
-  let latest = 0;
-  for (const rel of paths) {
-    latest = Math.max(latest, statSync(resolve(repoRoot, rel)).mtimeMs);
+  // A shallow checkout often has no history for paths the tip commit did not
+  // touch. Filesystem mtime is then the checkout time, not the content commit.
+  if (!git || Number.isNaN(Date.parse(git))) {
+    throw new Error(
+      `git log returned no commit for ${paths.join(', ')}. Fetch full history before building (actions/checkout fetch-depth: 0). Refusing to use filesystem mtime.`,
+    );
   }
-  return new Date(latest).toISOString();
+  return git;
 }
 
 const slugs = readSlugs();
