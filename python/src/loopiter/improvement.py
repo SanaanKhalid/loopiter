@@ -38,30 +38,76 @@ FAILURE_DETAIL_MAX = 500
 # First pre-deployment timeout is retried. The next one ends the run as timed_out.
 STEP_TIMEOUT_ATTEMPTS = 2
 _FAILURE_URL = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_FAILURE_USERINFO = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@]*:[^\s/@]+@",
+)
+_FAILURE_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
+_FAILURE_AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 _FAILURE_BEARER = re.compile(r"\bBearer\s+\S+", re.IGNORECASE)
 _FAILURE_SK = re.compile(r"\bsk-[A-Za-z0-9._~+/-]{8,}", re.IGNORECASE)
 _FAILURE_KEY = re.compile(
-    r"\\?[\"']?(?:ocp-apim-subscription-key|x-api-key|api[_-]?key)\\?[\"']?"
-    r"\s*[:=]\s*\\?[\"']?[^\s\"'&,}\\]+",
+    r"(?<![A-Za-z0-9_-])\\?[\"']?(?:ocp-apim-subscription-key|x-api-key|subscription-key|"
+    r"api[_-]?key|authorization|access[_-]?token|accountkey|token|code)\\?[\"']?"
+    r"\s*(?:=|:|%3d|%3a)\s*\\?[\"']?[^\s\"'&,}\\]+",
     re.IGNORECASE,
 )
+_FAILURE_SIG = re.compile(r"(\bsig(?:\s*=\s*|%3d))(.*?)(?=%26|&|#|\s|$)", re.IGNORECASE)
 _FAILURE_HOST = re.compile(
-    r"(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)+azure\.com(?![A-Za-z0-9.-])",
+    r"(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)+"
+    r"(?:azure-api\.net|azure\.(?:com|us|cn)|windows\.net|openai\.com)"
+    r"(?![A-Za-z0-9-]|\.[A-Za-z0-9])",
     re.IGNORECASE,
 )
+
+
+_DETAIL_UNAVAILABLE = "[detail unavailable]"
+_CAPTURE_PRIVATE_KEY = re.compile(
+    r"-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----"
+)
+_CAPTURE_AUTH = re.compile(r"\b(Bearer|Basic)\s+[A-Za-z0-9+/_.=~-]+", re.IGNORECASE)
+_CAPTURE_TOKEN = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b"
+)
+_CAPTURE_USERINFO = re.compile(r"(https?://)[^\s/@]+:[^\s/@]+@", re.IGNORECASE)
+_CAPTURE_LABELED = re.compile(
+    r"((?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*)[^\s&,;]+",
+    re.IGNORECASE,
+)
+
+
+def _capture_redact_text(value):
+    """Apply capture redaction before the error-text rules."""
+    value = _CAPTURE_PRIVATE_KEY.sub("[REDACTED]", value)
+    value = _CAPTURE_AUTH.sub(r"\1 [REDACTED]", value)
+    value = _CAPTURE_TOKEN.sub("[REDACTED]", value)
+    value = _CAPTURE_USERINFO.sub(r"\1[REDACTED]@", value)
+    return _CAPTURE_LABELED.sub(r"\1[REDACTED]", value)
 
 
 def failure_detail_text(text):
-    """Redact provider URLs, hosts, and credential material, then truncate."""
+    """Sanitize error text, then truncate."""
+    base = _capture_redact_text(text)
     redacted = _FAILURE_HOST.sub(
         "[redacted]",
-        _FAILURE_KEY.sub(
-            "[redacted]",
-            _FAILURE_SK.sub(
+        _FAILURE_SIG.sub(
+            r"\1[redacted]",
+            _FAILURE_KEY.sub(
                 "[redacted]",
-                _FAILURE_BEARER.sub(
-                    "Bearer [redacted]",
-                    _FAILURE_URL.sub("[redacted]", text),
+                _FAILURE_AKIA.sub(
+                    "[redacted]",
+                    _FAILURE_JWT.sub(
+                        "[redacted]",
+                        _FAILURE_USERINFO.sub(
+                            r"\1[redacted]@",
+                            _FAILURE_SK.sub(
+                                "[redacted]",
+                                _FAILURE_BEARER.sub(
+                                    "Bearer [redacted]",
+                                    _FAILURE_URL.sub("[redacted]", base),
+                                ),
+                            ),
+                        ),
+                    ),
                 ),
             ),
         ),
@@ -83,10 +129,24 @@ def _exception_text(exc):
     return "\n".join(part for part in parts if part)
 
 
+def _safe_detail(text):
+    try:
+        clean = failure_detail_text(text).strip()
+    except Exception:
+        return _DETAIL_UNAVAILABLE
+    return clean or _DETAIL_UNAVAILABLE
+
+
 def _failure_detail(exc):
     if not isinstance(exc, BaseException):
         return ""
-    return failure_detail_text(_exception_text(exc))
+    try:
+        raw = _exception_text(exc)
+    except Exception:
+        return _DETAIL_UNAVAILABLE
+    if not raw.strip():
+        return ""
+    return _safe_detail(raw)
 
 
 def _plus(time, ms):
@@ -981,7 +1041,7 @@ class ImprovementController:
             "candidate_ids": d["candidate_ids"],
         }
         if d.get("detail"):
-            result["detail"] = d["detail"]
+            result["detail"] = _safe_detail(d["detail"])
         return result
 
     async def _advance(self, run, owner, w, paused):

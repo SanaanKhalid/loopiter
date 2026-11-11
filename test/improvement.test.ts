@@ -1001,33 +1001,118 @@ test("callback failure keeps a redacted truncated detail", async () => {
 test("failure text redacts provider hosts and credential material", () => {
   const text = [
     "contoso.openai.azure.com",
+    "myres.openai.azure.com.",
     "westus.cognitiveservices.azure.com",
     "prod.azure.com",
+    "contoso.azure-api.net",
+    "contoso.openai.azure.us",
+    "contoso.openai.azure.cn",
+    "acct.blob.core.windows.net",
+    "api.openai.com",
     "Bearer sk-bearersecretvalue",
     "sk-baresecretvalue99",
     '{"api_key":"json-secret-value"}',
     "?api-key=query-secret-value&x=1",
     "x-api-key: header-secret-value",
     "apiKey=kv-secret-value",
+    "API-KEY: mixed-case-secret",
+    "api_key = spaced-secret",
+    "api_key:\nnewline-secret",
+    "api-key%3Dencoded-secret",
     "Ocp-Apim-Subscription-Key=ocp-secret-value",
+    "Subscription-Key=sub-key-secret",
+    "authorization: raw-auth-secret",
+    "Authorization=raw-auth-eq-secret",
+    "Authorization: Basic basic-auth-secret",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signaturevalue",
+    "AKIAABCDEFGHIJKLMNOP",
+    "AccountKey=account-key-secret==",
+    "?sv=2022&sig=sas-signature-secret",
+    "postgres://admin:dsn-password-secret@db.internal:5432/app",
+    "password=labeled-password-secret",
+    "ghp_abcdefghijklmnopqrstuvwxyz",
     "https://example.com/path?q=1",
     "y".repeat(800),
   ].join(" ");
   const detail = failureDetailText(text);
   for (const secret of [
     "contoso.openai.azure.com",
+    "myres.openai.azure.com",
     "westus.cognitiveservices.azure.com",
     "prod.azure.com",
+    "contoso.azure-api.net",
+    "contoso.openai.azure.us",
+    "contoso.openai.azure.cn",
+    "acct.blob.core.windows.net",
+    "api.openai.com",
     "sk-bearersecretvalue",
     "sk-baresecretvalue99",
     "json-secret-value",
     "query-secret-value",
     "header-secret-value",
     "kv-secret-value",
+    "mixed-case-secret",
+    "spaced-secret",
+    "newline-secret",
+    "encoded-secret",
     "ocp-secret-value",
+    "sub-key-secret",
+    "raw-auth-secret",
+    "raw-auth-eq-secret",
+    "basic-auth-secret",
+    "eyJhbGciOiJIUzI1NiJ9",
+    "AKIAABCDEFGHIJKLMNOP",
+    "account-key-secret",
+    "sas-signature-secret",
+    "dsn-password-secret",
+    "labeled-password-secret",
+    "ghp_abcdefghijklmnopqrstuvwxyz",
     "example.com",
   ])
     assert.equal(detail.includes(secret), false, secret);
   assert.ok(detail.length <= 500);
-  assert.match(detail, /\[redacted\]/);
+});
+
+test("failure text leaves benign wording unchanged", () => {
+  for (const benign of [
+    "signature mismatch in design=modern; apikeys rotated; the azure.com docs; risk-assessment",
+    "task-runner disk-usage ask-me",
+  ])
+    assert.equal(failureDetailText(benign), benign);
+});
+
+test("a chained cause is sanitized on the failed tick", async () => {
+  const x = setup();
+  const secret = "cause-host.openai.azure.com";
+  x.workflow.propose = async () => {
+    throw new Error("outer", { cause: new Error(`see ${secret} sk-causesecretvalue99`) });
+  };
+  const controller = x.controller();
+  const result = await controller.tick("classification");
+  assert.equal(result.state, "failed");
+  const rendered = JSON.stringify(result);
+  assert.match(result.detail ?? "", /outer/);
+  assert.equal(rendered.includes(secret), false);
+  assert.equal(rendered.includes("sk-causesecretvalue99"), false);
+});
+
+test("a sanitizer failure records a fixed message and not the raw text", async () => {
+  const x = setup();
+  const secret = "should-not-leak-secret";
+  const error = new Error("prefix");
+  Object.defineProperty(error, "message", {
+    get() {
+      throw new Error(secret);
+    },
+  });
+  x.workflow.propose = async () => {
+    throw error;
+  };
+  const controller = x.controller();
+  const result = await controller.tick("classification");
+  assert.equal(result.state, "failed");
+  assert.equal(result.detail, "[detail unavailable]");
+  assert.equal(JSON.stringify(result).includes(secret), false);
+  const stored = (await controller.getRun(result.runId!))?.data.detail;
+  assert.equal(stored, "[detail unavailable]");
 });

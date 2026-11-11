@@ -26,6 +26,7 @@ import {
   validateChange,
   validatePolicy,
 } from "./improvement-evidence.js";
+import { redactCapture } from "./integrations/privacy.js";
 import {
   cancellable,
   clone,
@@ -68,19 +69,26 @@ const DEFAULT_TICK_MS = 600_000;
 const MAX_STEP_MS = 7_200_000;
 const MAX_TICK_MS = 7_260_000;
 const FAILURE_DETAIL_MAX = 500;
+const FAILURE_DETAIL_UNAVAILABLE = "[detail unavailable]";
 
-/** Redact provider URLs, hosts, and credential material, then truncate. */
+/** Sanitize error text, then truncate. */
 export function failureDetailText(text: string): string {
-  const redacted = text
+  const captured = redactCapture(text);
+  const base = typeof captured === "string" ? captured : text;
+  const redacted = base
     .replace(/https?:\/\/[^\s"'<>]+/gi, "[redacted]")
+    .replace(/\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/@]*:[^\s/@]+@/g, "$1[redacted]@")
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[redacted]")
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted]")
     .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
     .replace(/\bsk-[A-Za-z0-9._~+/-]{8,}/gi, "[redacted]")
     .replace(
-      /\\?["']?(?:ocp-apim-subscription-key|x-api-key|api[_-]?key)\\?["']?\s*[:=]\s*\\?["']?[^\s"'&,}\\]+/gi,
+      /(?<![A-Za-z0-9_-])\\?["']?(?:ocp-apim-subscription-key|x-api-key|subscription-key|api[_-]?key|authorization|access[_-]?token|accountkey|token|code)\\?["']?\s*(?:=|:|%3d|%3a)\s*\\?["']?[^\s"'&,}\\]+/gi,
       "[redacted]",
     )
+    .replace(/(\bsig(?:\s*=\s*|%3d))(.*?)(?=%26|&|#|\s|$)/gi, "$1[redacted]")
     .replace(
-      /(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)+azure\.com(?![A-Za-z0-9.-])/gi,
+      /(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)+(?:azure-api\.net|azure\.(?:com|us|cn)|windows\.net|openai\.com)(?![A-Za-z0-9-]|\.[A-Za-z0-9])/gi,
       "[redacted]",
     )
     .trim();
@@ -88,11 +96,41 @@ export function failureDetailText(text: string): string {
   return `${redacted.slice(0, FAILURE_DETAIL_MAX - 3)}...`;
 }
 
-function failureDetailFrom(error: unknown): string | undefined {
-  const message = error instanceof Error ? error.message : "";
-  const text = failureDetailText(message);
-  return text ? text : undefined;
+function exceptionText(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  const visit = (value: unknown): void => {
+    if (value === null || value === undefined || seen.has(value)) return;
+    if (!(value instanceof Error)) return;
+    seen.add(value);
+    parts.push(value.message);
+    const nested = (value as { errors?: unknown }).errors;
+    if (Array.isArray(nested)) for (const item of nested) visit(item);
+    visit((value as { cause?: unknown }).cause);
+  };
+  visit(error);
+  return parts.join("\n");
 }
+
+function safeDetail(text: string): string {
+  try {
+    const clean = failureDetailText(text).trim();
+    return clean || FAILURE_DETAIL_UNAVAILABLE;
+  } catch {
+    return FAILURE_DETAIL_UNAVAILABLE;
+  }
+}
+
+function failureDetailFrom(error: unknown): string | undefined {
+  try {
+    const raw = exceptionText(error);
+    if (!raw.trim()) return undefined;
+    return safeDetail(raw);
+  } catch {
+    return FAILURE_DETAIL_UNAVAILABLE;
+  }
+}
+
 /** First pre-deployment timeout is retried. The next one ends the run as timed_out. */
 const STEP_TIMEOUT_ATTEMPTS = 2;
 const asJson = (x: unknown) => x as JsonObject;
@@ -1734,7 +1772,7 @@ export class ImprovementController {
       ...(run!.data.nextEligibleAt
         ? { nextEligibleAt: run!.data.nextEligibleAt }
         : {}),
-      ...(run!.data.detail ? { detail: run!.data.detail } : {}),
+      ...(run!.data.detail ? { detail: safeDetail(run!.data.detail) } : {}),
     };
   }
   private async evaluatePartition(
