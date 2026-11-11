@@ -1089,6 +1089,9 @@ test("failure text leaves benign wording unchanged", () => {
     "Basic validation failed",
     "read the docs on platform.openai.com before retrying",
     "token: 4096 exceeds limit",
+    "max_tokens=4096",
+    "token_type=Bearer",
+    "tokenizer=cl100k",
   ])
     assert.equal(failureDetailText(benign), benign);
 });
@@ -1104,6 +1107,14 @@ test("failure text finishes on a long unspaced input", () => {
   const detail = failureDetailText(input);
   assert.ok(performance.now() - started < 1000);
   assert.equal(detail.includes("early-secret"), false);
+});
+
+test("failure text finishes on a long scheme-like input", () => {
+  for (const input of ["a://".repeat(8192), "https://a:".repeat(3276)]) {
+    const started = performance.now();
+    failureDetailText(input);
+    assert.ok(performance.now() - started < 1000);
+  }
 });
 
 test("a chained cause is sanitized on the failed tick", async () => {

@@ -15,7 +15,7 @@ function redactText(value: string): string {
     .replace(/\bBearer\s+[A-Za-z0-9+/_.=~-]+/gi, "Bearer [REDACTED]")
     .replace(/\b[Bb][Aa][Ss][Ii][Cc]\s+(?![a-z]+\b)[A-Za-z0-9+/_.=~-]+/g, "Basic [REDACTED]")
     .replace(/\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/g, "[REDACTED]")
-    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[REDACTED]@")
+    .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1[REDACTED]@")
     .replace(/((?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*)[^\s&,;]+/gi, "$1[REDACTED]");
 }
 

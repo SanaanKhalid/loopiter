@@ -123,6 +123,74 @@
     {
       "input": "signature mismatch in design=modern; apikeys rotated; the azure.com docs; risk-assessment",
       "output": "signature mismatch in design=modern; apikeys rotated; the azure.com docs; risk-assessment"
+    },
+    {
+      "input": "token=abc123XYZopaqueSecret987",
+      "output": "token=[redacted]"
+    },
+    {
+      "input": "x-auth-token: abc123XYZopaqueSecret987",
+      "output": "x-auth-token: [redacted]"
+    },
+    {
+      "input": "token%3Dabc123XYZopaqueSecret987",
+      "output": "token%3D[redacted]"
+    },
+    {
+      "input": "/cb?code=4AbCdEfGhijklmn&state=x",
+      "output": "/cb?code=[redacted]&state=x"
+    },
+    {
+      "input": "Proxy-Authorization: Token proxy-auth-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "X-Authorization: Token x-auth-header-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "{'authorization': 'Token quoted-auth-secret'}",
+      "output": "{[redacted]}"
+    },
+    {
+      "input": "max_tokens=4096",
+      "output": "max_tokens=4096"
+    },
+    {
+      "input": "token_type=Bearer",
+      "output": "token_type=Bearer"
+    },
+    {
+      "input": "tokenizer=cl100k",
+      "output": "tokenizer=cl100k"
+    },
+    {
+      "input": "token: 4096",
+      "output": "token: 4096"
+    },
+    {
+      "input": "client_secret=client-secret-value",
+      "output": "[redacted]"
+    },
+    {
+      "input": "{\"client_secret\":\"json-client-secret\"}",
+      "output": "{[redacted]\"}"
+    },
+    {
+      "input": "Pwd=pwd-secret-value",
+      "output": "[redacted]"
+    },
+    {
+      "input": "SharedAccessKey=shared-access-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "AIzaSyDummyKeyValue1234567890abcd",
+      "output": "[redacted]"
+    },
+    {
+      "input": "xoxb-123456789012-abcdefghijklmnop",
+      "output": "[redacted]"
     }
   ]
 }

@@ -45,7 +45,9 @@ def _load_failure_rules():
     data = json.loads(raw)
     compiled = []
     for rule in data["rules"]:
-        flags = re.IGNORECASE if "i" in rule["flags"] else 0
+        flags = re.ASCII
+        if "i" in rule["flags"]:
+            flags |= re.IGNORECASE
         replacement = rule["replace"].replace("$", "\\")
         compiled.append((re.compile(rule["pattern"], flags), replacement))
     return data["inputMax"], data["outputMax"], tuple(compiled)
@@ -56,17 +58,22 @@ _FAILURE_INPUT_MAX, _FAILURE_OUTPUT_MAX, _FAILURE_RULES = _load_failure_rules()
 
 _DETAIL_UNAVAILABLE = "[detail unavailable]"
 _CAPTURE_PRIVATE_KEY = re.compile(
-    r"-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----"
+    r"-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----",
+    re.ASCII,
 )
-_CAPTURE_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9+/_.=~-]+", re.IGNORECASE)
-_CAPTURE_BASIC = re.compile(r"\b[Bb][Aa][Ss][Ii][Cc]\s+(?![a-z]+\b)[A-Za-z0-9+/_.=~-]+")
+_CAPTURE_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9+/_.=~-]+", re.IGNORECASE | re.ASCII)
+_CAPTURE_BASIC = re.compile(
+    r"\b[Bb][Aa][Ss][Ii][Cc]\s+(?![a-z]+\b)[A-Za-z0-9+/_.=~-]+",
+    re.ASCII,
+)
 _CAPTURE_TOKEN = re.compile(
-    r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b"
+    r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b",
+    re.ASCII,
 )
-_CAPTURE_USERINFO = re.compile(r"(https?://)[^\s/@]+:[^\s/@]+@", re.IGNORECASE)
+_CAPTURE_USERINFO = re.compile(r"(https?://)[^\s/@:]+:[^\s/@]+@", re.IGNORECASE | re.ASCII)
 _CAPTURE_LABELED = re.compile(
     r"((?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*)[^\s&,;]+",
-    re.IGNORECASE,
+    re.IGNORECASE | re.ASCII,
 )
 
 

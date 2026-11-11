@@ -859,6 +859,9 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             "Basic validation failed",
             "read the docs on platform.openai.com before retrying",
             "token: 4096 exceeds limit",
+            "max_tokens=4096",
+            "token_type=Bearer",
+            "tokenizer=cl100k",
         ):
             self.assertEqual(failure_detail_text(benign), benign)
 
@@ -875,6 +878,12 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         detail = failure_detail_text(text)
         self.assertLess(time.perf_counter() - started, 1)
         self.assertNotIn("early-secret", detail)
+
+    def test_failure_text_finishes_on_a_long_scheme_like_input(self):
+        for text in ("a://" * 8192, "https://a:" * 3276):
+            started = time.perf_counter()
+            failure_detail_text(text)
+            self.assertLess(time.perf_counter() - started, 1)
 
     async def test_chained_exception_text_is_sanitized(self):
         self.setup_workflow(FIXTURES["scenarios"][0])
