@@ -412,3 +412,68 @@ export function compare(
     sampleCount: n,
   };
 }
+
+/**
+ * Smallest fixed audit whose paired Hoeffding lower bound can exceed
+ * `minimumImprovement` for `gain`. Omit `gain` to use the full score range,
+ * which is the largest effect this bound can ever see. A smaller audit cannot
+ * certify that gain at the configured alpha, even when every unit improves.
+ */
+export function minimumCertifiableAuditUnits(
+  objective: {
+    minimumImprovement: number;
+    range: readonly [number, number];
+    alpha: number;
+  },
+  gain?: number,
+): number {
+  const [lo, hi] = objective.range;
+  const width = hi - lo;
+  finite(objective.minimumImprovement, "minimumImprovement", 0);
+  finite(objective.alpha, "alpha");
+  if (!(width > 0) || !(objective.alpha > 0 && objective.alpha < 1))
+    fail("invalid_policy", "Cannot size an audit for this objective.");
+  const effect = gain ?? width;
+  finite(effect, "gain", 0);
+  if (effect > width)
+    fail("invalid_policy", "Gain cannot exceed the declared score range.");
+  if (effect <= objective.minimumImprovement)
+    fail(
+      "invalid_policy",
+      "No audit size can certify a gain that does not exceed the minimum improvement.",
+    );
+  const gap = (effect - objective.minimumImprovement) / width;
+  let n =
+    Math.floor(
+      (2 * Math.log(1 / objective.alpha)) / (gap * gap) + 1e-9,
+    ) + 1;
+  const clears = (size: number) =>
+    effect -
+      width * Math.sqrt((2 * Math.log(1 / objective.alpha)) / size) >
+    objective.minimumImprovement;
+  while (!clears(n)) {
+    n += 1;
+    if (n > 100_000_000)
+      fail("invalid_policy", "Audit size needed to certify this gain is not usable.");
+  }
+  return n;
+}
+
+/** `minimumImprovement` is the bound a gain must clear. The no-gain size is the full-range floor, not that gain. */
+export function describeAuditFloor(objective: {
+  minimumImprovement: number;
+  range: readonly [number, number];
+  alpha: number;
+}): string {
+  const floor = minimumCertifiableAuditUnits(objective);
+  const samples = [0.05, 0.1, 0.2].map((gain) => {
+    const label = gain.toFixed(2);
+    try {
+      const units = minimumCertifiableAuditUnits(objective, gain);
+      return `a gain of ${label} needs ${units} units`;
+    } catch {
+      return `a gain of ${label} does not exceed the minimum improvement, so no sample size can certify it`;
+    }
+  });
+  return `minimumImprovement ${objective.minimumImprovement} is the lower bound a certified gain must clear, not a gain ${floor} units can certify. At least ${floor} units are required before even a full-range effect can pass. At alpha ${objective.alpha}, ${samples.join("; ")}.`;
+}

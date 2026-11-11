@@ -57,13 +57,14 @@ export interface RecordBase {
   createdAt: string;
   updatedAt: string;
 }
-export interface ArtifactVersions extends JsonObject {
+/** Intersection, not an interface: optional fields stay valid under skipLibCheck=false without exactOptionalPropertyTypes. */
+export type ArtifactVersions = JsonObject & {
   model?: string;
   prompt?: string;
   dataset?: string;
   router?: string;
   policy?: string;
-}
+};
 export interface RecordExecutionInput {
   id?: string;
   kind: ExecutionKind;

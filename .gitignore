@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .feedback-loop/
+.state/
 coverage/
 .DS_Store
 *.log

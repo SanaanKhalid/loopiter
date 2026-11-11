@@ -17,21 +17,24 @@ from . import _validation as v
 from .client import FeedbackLoop, _callback
 from .improvement_evidence import (
     compare,
+    minimum_certifiable_audit_units,
     passes_gates,
     prepare_dataset,
     validate_change,
     validate_policy,
 )
 
+TERMINAL = {"completed", "no_improvement", "failed", "timed_out", "rolled_back"}
+STATES = (
+    "waiting_for_evidence proposing evaluating selected deploying observing completed "
+    "no_improvement paused failed timed_out reconciliation_required rolling_back rolled_back"
+).split()
 DEFAULT_STEP_MS = 120_000
 DEFAULT_TICK_MS = 600_000
 MAX_STEP_MS = 3_600_000
 MAX_TICK_MS = 3_660_000
-TERMINAL = {"completed", "no_improvement", "failed", "rolled_back"}
-STATES = (
-    "waiting_for_evidence proposing evaluating selected deploying observing completed "
-    "no_improvement paused failed reconciliation_required rolling_back rolled_back"
-).split()
+# First pre-deployment timeout is retried. The next one ends the run as timed_out.
+STEP_TIMEOUT_ATTEMPTS = 2
 
 
 def _plus(time, ms):
@@ -72,6 +75,7 @@ class ImprovementController:
         mode="recommend",
         callback_timeout_ms=None,
         tick_timeout_ms=None,
+        step_timeout_ms=None,
         **obsolete,
     ):
         if obsolete:
@@ -82,11 +86,13 @@ class ImprovementController:
         if type(self_improving) is not bool:
             v.fail("invalid_input", "self_improving must be boolean.")
         v.enum(mode, ["observe", "recommend", "experiment", "autonomous"], "mode")
+        if step_timeout_ms is not None:
+            callback_timeout_ms = step_timeout_ms
         if callback_timeout_ms is None:
             callback_timeout_ms = DEFAULT_STEP_MS
         if tick_timeout_ms is None:
             tick_timeout_ms = max(DEFAULT_TICK_MS, callback_timeout_ms + 1000)
-        v.integer(callback_timeout_ms, "callback timeout")
+        v.integer(callback_timeout_ms, "step timeout")
         v.integer(tick_timeout_ms, "tick timeout")
         if callback_timeout_ms > MAX_STEP_MS or tick_timeout_ms > MAX_TICK_MS:
             v.fail("invalid_input", "Step timeout cannot exceed 1 hour.")
@@ -94,6 +100,7 @@ class ImprovementController:
             v.fail("invalid_input", "Tick timeout must cover the step timeout.")
         self.loop, self.self_improving, self.mode = loop, self_improving, mode
         self.callback_ms, self.tick_ms = callback_timeout_ms, tick_timeout_ms
+        self._retired_stale = False
         self.workflows, self.definitions = {}, {}
         if not workflows:
             v.fail("invalid_input", "Workflows required.")
@@ -156,6 +163,8 @@ class ImprovementController:
         if d.get("lease_owner") is not None:
             v.nonempty(d["lease_owner"], "lease owner")
         v.integer(d.get("proposal_calls"), "proposal calls", 0)
+        if "step_timeouts" in d:
+            v.integer(d["step_timeouts"], "step timeouts", 0)
         if type(d.get("candidate_ids")) is not list:
             v.fail("integrity_error", "Invalid candidate references.")
         for cid in d["candidate_ids"]:
@@ -239,7 +248,11 @@ class ImprovementController:
                     tx,
                     "coordination",
                     self._target(w),
-                    {**target["data"], "consecutive_failures": 0},
+                    {
+                        **target["data"],
+                        "consecutive_failures": 0,
+                        "consecutive_timeouts": 0,
+                    },
                 )
             await self.loop._event(tx, "improvement.administrative_resume", workflow_id)
 
@@ -344,6 +357,7 @@ class ImprovementController:
                 w = self._workflow(data["workflow_id"])
                 lock = await self._read(tx, "coordination", self._target(w))
                 if lock and lock["data"].get("active_run") == rid:
+                    timed_out = data["state"] == "timed_out"
                     await self._put(
                         tx,
                         "coordination",
@@ -353,7 +367,14 @@ class ImprovementController:
                             "active_run": None,
                             "consecutive_failures": 0
                             if data["state"] == "completed"
+                            else lock["data"].get("consecutive_failures", 0)
+                            if timed_out
                             else lock["data"].get("consecutive_failures", 0) + 1,
+                            "consecutive_timeouts": 0
+                            if data["state"] == "completed"
+                            else lock["data"].get("consecutive_timeouts", 0) + 1
+                            if timed_out
+                            else lock["data"].get("consecutive_timeouts", 0),
                             "previous_outcomes": [
                                 *lock["data"].get("previous_outcomes", []),
                                 {"state": data["state"], "reason": data["reason"]},
@@ -369,6 +390,13 @@ class ImprovementController:
         async with self._tx() as tx:
             current = await self._owned(tx, rid, owner, recovery)
             old = await self._read(tx, "operations", opid)
+            attempt = 0
+            while old and old["data"].get("status") == "timed_out":
+                attempt += 1
+                if attempt > STEP_TIMEOUT_ATTEMPTS:
+                    v.fail("timeout_retries_exhausted", "Step timeout retries are exhausted.")
+                opid = rid + ":" + kind + ":retry:" + str(attempt)
+                old = await self._read(tx, "operations", opid)
             if old:
                 if old["data"]["status"] == "completed":
                     if "result" not in old["data"]:
@@ -465,12 +493,121 @@ class ImprovementController:
                 )
             )
 
-        result = await _callback(invoke, self.callback_ms / 1000)
+        try:
+            result = await _callback(invoke, self.callback_ms / 1000)
+        except v.LoopiterError as exc:
+            # A timeout closes this attempt so a bounded retry can use a new id.
+            # Crash and cancellation stay pending and are never replayed or refunded.
+            if exc.code == "timeout":
+                try:
+                    async with self._tx() as tx:
+                        op = await self._read(tx, "operations", opid)
+                        if op and op["data"].get("status") == "pending":
+                            await self._put(
+                                tx, "operations", opid, {**op["data"], "status": "timed_out"}
+                            )
+                except Exception:
+                    pass
+            raise
         async with self._tx() as tx:
             await self._owned(tx, rid, owner, recovery)
             op = (await self._read(tx, "operations", opid))["data"]
             await self._put(tx, "operations", opid, {**op, "status": "completed", "result": result})
         return result
+
+    async def _note_timeout(self, w):
+        async with self._tx() as tx:
+            key = self._target(w)
+            lock = await self._read(tx, "coordination", key)
+            count = (lock["data"].get("consecutive_timeouts", 0) if lock else 0) + 1
+            v.integer(count, "consecutive timeouts", 0)
+            await self._put(
+                tx,
+                "coordination",
+                key,
+                {**(lock["data"] if lock else {}), "consecutive_timeouts": count},
+            )
+            return count
+
+    def _undecided(self, run):
+        data = run["data"]
+        return data["state"] == "timed_out" or (
+            data["state"] == "failed"
+            and data.get("reason") in ("cancelled", "timeout", "timed_out")
+        )
+
+    async def _retire_undecided(self, candidate_ids, reason):
+        v.nonempty(reason, "reason")
+        for cid in candidate_ids:
+            candidate = await self.loop.get_candidate(cid)
+            if candidate and candidate["status"] == "proposed":
+                await self.loop.reject_candidate(cid, reason=reason)
+
+    async def _retire_stale(self):
+        cursor = None
+        for _ in range(20):
+            page = await self.loop.list("candidates", limit=100, cursor=cursor)
+            for candidate in page["items"]:
+                if candidate["status"] != "proposed":
+                    continue
+                metadata = candidate.get("metadata") or {}
+                run_id = metadata.get("run_id") if isinstance(metadata, dict) else None
+                if not isinstance(run_id, str) or not run_id:
+                    continue
+                try:
+                    run = await self.get_run(run_id)
+                except Exception:
+                    continue
+                if not run or not self._undecided(run):
+                    continue
+                await self.loop.reject_candidate(candidate["id"], reason=run["data"]["reason"])
+            cursor = page.get("next_cursor")
+            if not cursor:
+                break
+
+    async def _record_step_timeout(self, rid, owner):
+        """Retry a pure step timeout once, then end the run without a failure strike."""
+        current = await self.get_run(rid)
+        if not current or current["data"].get("lease_owner") != owner:
+            return False
+        state = current["data"]["state"]
+        recovery = current["data"].get("pending_promotion") or state in (
+            "deploying",
+            "rolling_back",
+            "reconciliation_required",
+            "observing",
+        )
+        if recovery or state not in ("proposing", "evaluating", "selected"):
+            return False
+        attempts = current["data"].get("step_timeouts", 0) + 1
+        if attempts < STEP_TIMEOUT_ATTEMPTS:
+            await self._save(rid, owner, {"step_timeouts": attempts, "reason": "timed_out"}, True)
+            return True
+        saved = await self._save(
+            rid,
+            owner,
+            {"step_timeouts": attempts, "state": "timed_out", "reason": "timed_out"},
+            True,
+        )
+        await self._retire_undecided(saved["data"]["candidate_ids"], "timed_out")
+        return True
+
+    async def _consume_audit(self, run, owner, rows=None):
+        rid = run["id"]
+        async with self._tx() as tx:
+            await self._owned(tx, rid, owner)
+            for row in run["data"]["dataset"]["audit"] if rows is None else rows:
+                for identity in (
+                    "id:" + row["id"],
+                    "episode:" + row["episode_id"],
+                    "entity:" + row["entity_id"],
+                ):
+                    key = "audit:" + v.fingerprint(identity)
+                    prior = await self._read(tx, "coordination", key)
+                    if prior and prior["data"]["run_id"] != rid:
+                        v.fail("audit_consumed", "Fresh audit data required.")
+                    if not prior:
+                        await self._put(tx, "coordination", key, {"run_id": rid})
 
     async def tick(self, workflow_id, cancellation: asyncio.Event | None = None):
         # External event and task cancellation are cooperative; late results are ignored.
@@ -509,6 +646,9 @@ class ImprovementController:
         }
 
     async def _tick(self, workflow_id):
+        if not self._retired_stale:
+            await self._retire_stale()
+            self._retired_stale = True
         w, run, owner = self._workflow(workflow_id), None, str(uuid4())
         p = w.policy
         async with self._tx() as tx:
@@ -535,8 +675,17 @@ class ImprovementController:
                     return await self._idle(w, "workflow_paused", "paused")
                 if self.mode == "autonomous" and not self.self_improving:
                     return await self._idle(w, "self_improvement_disabled", "paused")
-                if lock.get("consecutive_failures", 0) >= p.get("maximum_consecutive_failures", 3):
+                if (
+                    self.mode == "autonomous"
+                    and "audit_method" not in p
+                    and p["minimum_audit_units"] < minimum_certifiable_audit_units(p["objective"])
+                ):
+                    return await self._idle(w, "audit_size_cannot_certify", "paused")
+                failure_cap = p.get("maximum_consecutive_failures", 3)
+                if lock.get("consecutive_failures", 0) >= failure_cap:
                     return await self._idle(w, "repeated_failures_require_review", "paused")
+                if lock.get("consecutive_timeouts", 0) >= failure_cap:
+                    return await self._idle(w, "repeated_timeouts_require_review", "paused")
                 if lock.get("next_eligible_at") and v.timestamp(
                     lock["next_eligible_at"]
                 ) > v.timestamp(self.loop.now()):
@@ -617,7 +766,13 @@ class ImprovementController:
                         },
                     )
         except Exception as exc:
-            return await self._idle(w, getattr(exc, "code", "callback_failed"))
+            code = getattr(exc, "code", "callback_failed")
+            if code == "timeout":
+                count = await self._note_timeout(w)
+                if count >= p.get("maximum_consecutive_failures", 3):
+                    return await self._idle(w, "repeated_timeouts_require_review", "paused")
+                return await self._idle(w, "timed_out")
+            return await self._idle(w, code)
         rid = run["id"]
         if run["data"]["workflow_id"] != w.id:
             return await self._idle(w, "target_owned_by_other_workflow")
@@ -720,7 +875,9 @@ class ImprovementController:
                     "run_id": rid,
                     "candidate_ids": run["data"]["candidate_ids"],
                 }
-            if code != "lease_lost":
+            if code == "timeout" and await self._record_step_timeout(rid, owner):
+                pass
+            elif code != "lease_lost":
                 current = await self.get_run(rid)
                 if current and current["data"]["lease_owner"] == owner:
                     state = current["data"]["state"]
@@ -732,7 +889,11 @@ class ImprovementController:
                         state = "reconciliation_required"
                     elif state != "observing" and code not in ("paused", "policy_changed"):
                         state = "failed"
-                    await self._save(rid, owner, {"state": state, "reason": code}, True)
+                    saved = await self._save(rid, owner, {"state": state, "reason": code}, True)
+                    if self._undecided(saved):
+                        await self._retire_undecided(
+                            saved["data"]["candidate_ids"], saved["data"]["reason"]
+                        )
         finally:
             async with self._tx() as tx:
                 row = await self._read(tx, "runs", rid)
@@ -861,20 +1022,9 @@ class ImprovementController:
         elif d["state"] == "selected":
             cid = d["selected_id"]
             candidate = await self.loop.get_candidate(cid)
-            async with self._tx() as tx:
-                await self._owned(tx, rid, owner)
-                for row in d["dataset"]["audit"]:
-                    for identity in (
-                        "id:" + row["id"],
-                        "episode:" + row["episode_id"],
-                        "entity:" + row["entity_id"],
-                    ):
-                        key = "audit:" + v.fingerprint(identity)
-                        prior = await self._read(tx, "coordination", key)
-                        if prior and prior["data"]["run_id"] != rid:
-                            v.fail("audit_consumed", "Fresh audit data required.")
-                        if not prior:
-                            await self._put(tx, "coordination", key, {"run_id": rid})
+            audit_rows = deepcopy(d["dataset"]["audit"])
+            # Reserve before the model sees the rows. A timeout must not free them for a later run.
+            await self._consume_audit(run, owner, audit_rows)
             audit = await self._operation(
                 run,
                 owner,
@@ -883,7 +1033,7 @@ class ImprovementController:
                     {
                         "baseline": deepcopy(d["baseline"]),
                         "change": candidate["proposed_change"],
-                        "examples": deepcopy(d["dataset"]["audit"]),
+                        "examples": audit_rows,
                         "partition": "audit",
                     },
                     c,

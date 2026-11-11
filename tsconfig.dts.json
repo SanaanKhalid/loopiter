@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": false,
+    "exactOptionalPropertyTypes": false,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "files": ["scripts/consumer-dts.ts"]
+}

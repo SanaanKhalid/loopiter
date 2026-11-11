@@ -18,7 +18,12 @@ from loopiter import (
     LoopiterError,
     assign_cohort,
 )
-from loopiter.improvement_evidence import compare, prepare_dataset, validate_change
+from loopiter.improvement_evidence import (
+    compare,
+    minimum_certifiable_audit_units,
+    prepare_dataset,
+    validate_change,
+)
 
 
 def snake(value):
@@ -606,3 +611,137 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             experiment_id="test", entity_id="customer-🌀", salt="private-salt", exposure=0.75
         )
         self.assertEqual(a["bucket"], b["bucket"])
+
+    async def test_step_timeout_and_uncertifiable_audit(self):
+        objective = {"minimum_improvement": 0.05, "range": [0, 1], "alpha": 0.05}
+        self.assertEqual(minimum_certifiable_audit_units(objective), 7)
+        self.assertGreater(minimum_certifiable_audit_units(objective, 0.2), 7)
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.workflow.policy["minimum_audit_units"] = 5
+        self.data["audit"] = self.data["audit"][:5]
+        report = {
+            "cases": [
+                {"id": row["id"], "baseline": 0, "candidate": 1} for row in self.data["audit"]
+            ],
+            "metrics": {"errors": 0},
+            "estimated_serving_cost": 0,
+        }
+        self.assertFalse(compare(report, self.data["audit"], self.workflow.policy, True)["passed"])
+        self.assertEqual(
+            (await self.controller().tick("classification"))["reason"], "audit_size_cannot_certify"
+        )
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.controller(step_timeout_ms=180000)
+        with self.assertRaises(LoopiterError):
+            self.controller(step_timeout_ms=3_600_001)
+
+        audit_calls = {"n": 0}
+
+        async def evaluate(data, context):
+            if data["partition"] == "audit":
+                audit_calls["n"] += 1
+                try:
+                    await asyncio.wait_for(context.cancellation.wait(), 2)
+                except TimeoutError:
+                    pass
+            return {
+                "cases": [
+                    {"id": row["id"], "baseline": 0, "candidate": 1} for row in data["examples"]
+                ],
+                "metrics": {"errors": 0},
+                "estimated_serving_cost": 0,
+            }
+
+        self.workflow = replace(self.workflow, evaluate=evaluate)
+        controller = self.controller(callback_timeout_ms=40)
+        result = await controller.tick("classification")
+        for _ in range(5):
+            if result["state"] == "timed_out":
+                break
+            result = await controller.tick("classification")
+        self.assertEqual(result["state"], "timed_out")
+        self.assertEqual(result["reason"], "timed_out")
+        run = await controller.get_run(result["run_id"])
+        coordination = (await self.loop.list("coordination", limit=1000))["items"]
+        self.assertTrue(any(row["id"].startswith("audit:") for row in coordination))
+        sent = audit_calls["n"]
+        self.data["version"] = "export-reuse"
+        self.data["optimization"] = [
+            {
+                **row,
+                "id": f"reuse-{row['id']}",
+                "episode_id": f"reuse-{row['episode_id']}",
+                "entity_id": f"reuse-{row['entity_id']}",
+            }
+            for row in self.data["optimization"]
+        ]
+        reused = await controller.tick("classification")
+        for _ in range(8):
+            if reused["reason"] == "audit_consumed":
+                break
+            reused = await controller.tick("classification")
+        self.assertEqual(reused["reason"], "audit_consumed")
+        self.assertEqual(audit_calls["n"], sent)
+        target = next(row for row in coordination if row["id"].startswith("target:"))
+        self.assertEqual(target["data"].get("consecutive_failures", 0), 0)
+        self.assertEqual(target["data"]["consecutive_timeouts"], 1)
+        for cid in run["data"]["candidate_ids"]:
+            self.assertEqual((await self.loop.get_candidate(cid))["status"], "rejected")
+        stale = await self.loop.create_candidate(
+            target=self.workflow.policy["target"],
+            proposed_change={"score": 0.4},
+            evidence={},
+            risk="low",
+            metadata={"run_id": run["id"]},
+        )
+        await self.controller().tick("classification")
+        self.assertEqual((await self.loop.get_candidate(stale["id"]))["status"], "rejected")
+        for cycle in (2, 3):
+            self.data["version"] = f"export-{cycle}"
+            self.data["optimization"] = [
+                {
+                    **row,
+                    "id": f"{cycle}-{row['id']}",
+                    "episode_id": f"{cycle}-{row['episode_id']}",
+                    "entity_id": f"{cycle}-{row['entity_id']}",
+                }
+                for row in self.data["optimization"]
+            ]
+            self.data["audit"] = [
+                {
+                    **row,
+                    "id": f"{cycle}-{row['id']}",
+                    "episode_id": f"{cycle}-{row['episode_id']}",
+                    "entity_id": f"{cycle}-{row['entity_id']}",
+                }
+                for row in self.data["audit"]
+            ]
+            result = await controller.tick("classification")
+            for _ in range(5):
+                if result["state"] == "timed_out":
+                    break
+                result = await controller.tick("classification")
+            self.assertEqual(result["state"], "timed_out")
+        self.data["version"] = "export-4"
+        self.data["optimization"] = [
+            {
+                **row,
+                "id": f"4-{row['id']}",
+                "episode_id": f"4-{row['episode_id']}",
+                "entity_id": f"4-{row['entity_id']}",
+            }
+            for row in self.data["optimization"]
+        ]
+        self.data["audit"] = [
+            {
+                **row,
+                "id": f"4-{row['id']}",
+                "episode_id": f"4-{row['episode_id']}",
+                "entity_id": f"4-{row['entity_id']}",
+            }
+            for row in self.data["audit"]
+        ]
+        self.assertEqual(
+            (await controller.tick("classification"))["reason"],
+            "repeated_timeouts_require_review",
+        )

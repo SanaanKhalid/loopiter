@@ -50,12 +50,13 @@ does not connect the real app or start a worker; `doctor` initially lists the
 missing integration decisions. A fresh plan is schemaVersion 2
 (`autonomous-default`): mode autonomous and self-improving on. Once the
 application-owned module is implemented and doctor and verify pass, run
-`python -m loopiter worker --module loopiter/application.py --enable --mode autonomous --once`.
+`python -m loopiter worker --module loopiter/application.py --enable --once`.
 `--enable` authorizes improvement work and provider spending inside the existing
 gates. It does not bypass audit, budgets, or rollback. Omit `--once` for a
 supervised foreground worker. `--mode recommend` stores proposals and does not
-apply. Omitting `--mode` still selects recommend. Constructing
-`ImprovementController` without a mode does the same.
+apply. Omitting `--mode` uses `plan.mode`; the flag overrides the plan.
+Constructing `ImprovementController` without a mode still recommends and does
+not apply. Non-interactive autonomous runs pass `--confirm-activation`.
 
 Read the installed guide with `python -m loopiter guide`, and reference code with
 `python -m loopiter reference`. The optional examples also ship under
