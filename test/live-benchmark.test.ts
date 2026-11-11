@@ -49,6 +49,7 @@ import {
   renderEstimate,
   shouldForceKill,
   reservedAttemptsPerCall,
+  renderLiveMarkdown,
   runLiveBenchmark,
   startProgressTicker,
   writeInterruptedReport,
@@ -1424,7 +1425,7 @@ test("a stalled provider and a stalled ledger stop on the attempt deadline", asy
   const watchdog = createStallWatchdog({
     intervalMs: 15,
     stallMs: 30,
-    lastActivity: () => Date.now() - 1_000,
+    lastActivity: () => performance.now() - 1_000,
     onStall: () => {
       stalled = true;
     },
@@ -2304,6 +2305,142 @@ test("estimate wall time uses the realistic pace, not the spend ceiling", () => 
     [LIVE_ENV.priceInput]: "0.75",
     [LIVE_ENV.priceOutput]: "4.5",
   })), /projected wall minutes: pacing off/);
+});
+
+test("a wall-clock jump does not stall when monotonic time is unchanged", async () => {
+  const realNow = Date.now;
+  let skew = 0;
+  Date.now = () => realNow() + skew;
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (line?: unknown) => {
+    lines.push(String(line));
+  };
+  const start = 5_000;
+  let mono = start;
+  let stalled = false;
+  try {
+    const paused = createStallWatchdog({
+      intervalMs: 10,
+      stallMs: 30,
+      lastActivity: () => start,
+      now: () => mono,
+      onStall: () => {
+        stalled = true;
+      },
+    });
+    skew = 11 * 60_000;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    paused.stop();
+    assert.equal(stalled, false);
+    assert.match(lines.join("\n"), /host paused ~660 s/);
+    mono = start + 31;
+    const expired = createStallWatchdog({
+      intervalMs: 10,
+      stallMs: 30,
+      lastActivity: () => start,
+      now: () => mono,
+      onStall: () => {
+        stalled = true;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expired.stop();
+    assert.equal(stalled, true);
+  } finally {
+    Date.now = realNow;
+    console.error = original;
+  }
+});
+
+test("aborting mid-callback reports cancelled", async () => {
+  const directory = await tempLedger();
+  const stop = new AbortController();
+  let calls = 0;
+  const report = await runLiveBenchmark({
+    seeds: [1],
+    smoke: false,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    prices: pricesOf(1, 1, 0),
+    totalCapUsd: 50,
+    invocationCapUsd: 50,
+    warnUsd: 40,
+    stopAtWarn: false,
+    ledgerPath: join(directory, "cancel.json"),
+    rowLimit: 7,
+    progressIntervalMs: 60_000,
+    maxTokensPerMinute: 0,
+    requestTimeoutMs: 5_000,
+    attemptDeadlineMs: 5_000,
+    signal: stop.signal,
+    fetch: async (_url, init) => {
+      calls += 1;
+      const body = String(init?.body ?? "");
+      if (!body.includes("bounded_prompt_revision"))
+        return completedResponse({ label: "incomplete" });
+      stop.abort(new Error("stop the run"));
+      const signal = init?.signal;
+      if (signal?.aborted) throw signal.reason ?? new Error("stop the run");
+      return await new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+  });
+  assert.equal(calls, 8);
+  assert.equal(report.perSeed[0]?.candidate?.state, "cancelled");
+  assert.equal(report.perSeed[0]?.candidate?.reason, "cancelled");
+  assert.equal(report.stopped?.reason, "cancelled");
+  assert.equal((report.stopped?.message ?? "").includes("callback_failed"), false);
+});
+
+test("a failed baseline candidate keeps redacted text and skips held-out scoring", async () => {
+  const directory = await tempLedger();
+  const endpoint = "https://secret-host.openai.azure.com/";
+  const key = "sk-live-secret-key-value";
+  let calls = 0;
+  const report = await runLiveBenchmark({
+    seeds: [1],
+    smoke: false,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    endpoint,
+    apiKey: key,
+    prices: pricesOf(1, 1, 0),
+    totalCapUsd: 50,
+    invocationCapUsd: 50,
+    warnUsd: 40,
+    stopAtWarn: false,
+    ledgerPath: join(directory, "detail.json"),
+    rowLimit: 7,
+    progressIntervalMs: 60_000,
+    maxTokensPerMinute: 0,
+    fetch: async (_url, init) => {
+      calls += 1;
+      const body = String(init?.body ?? "");
+      if (body.includes("bounded_prompt_revision")) {
+        throw new Error(
+          `proposal failed at ${endpoint} host ${new URL(endpoint).host} key ${key} api-key: ${key} ${"x".repeat(900)}`,
+        );
+      }
+      return completedResponse({ label: "incomplete" });
+    },
+  });
+  assert.equal(calls, 8);
+  assert.equal(report.perSeed[0]?.candidate?.state, "failed");
+  assert.equal(report.perSeed[0]?.candidate?.heldOutNote, "baseline not re-scored");
+  assert.equal(report.perSeed[0]?.candidate?.heldOut.complete, false);
+  const message = report.stopped?.message ?? "";
+  assert.match(message, /proposal failed/);
+  assert.equal(message.includes("Loop failed (callback_failed)"), false);
+  assert.equal(message.includes(key), false);
+  assert.equal(message.includes(endpoint), false);
+  assert.equal(message.includes("secret-host.openai.azure.com"), false);
+  assert.ok(message.length <= 500);
+  assert.match(renderLiveMarkdown(report), /baseline not re-scored/);
+  assert.equal(JSON.stringify(report).includes(key), false);
 });
 
 function completedResponse(

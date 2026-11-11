@@ -9,6 +9,7 @@ import {
   initializeSelfHosted,
   inspectSelfHostedSetup,
   parseStepTimeout,
+  autonomousActivationPrompt,
   readAgentGuide,
   readReference,
   readWorkerSettings,
@@ -407,6 +408,10 @@ test("doctor refuses an audit that cannot certify and plan.mode is honored", asy
     assert.match(guide, /not a gain that 7 units can certify/);
     assert.match(guide, /A gain of 0\.10 needs 2397 units/);
     assert.match(guide, /a gain of 0\.20 needs 267 units/);
+    assert.match(guide, /cannot exceed two hours/);
+    assert.match(guide, /effective budget on the application workflows/);
+    assert.match(autonomousActivationPrompt("app/shown"), /Namespace: app\/shown/);
+    assert.match(autonomousActivationPrompt("app/shown"), /Type activate to confirm/);
     const cli = new URL("../src/cli.js", import.meta.url);
     const entry = new URL("../src/index.js", import.meta.url).href;
     const policy = JSON.parse(
@@ -469,6 +474,13 @@ export async function createIntegration() {
     const again = run(["worker", "--module", module, "--enable", "--once"]);
     assert.equal(again.status, 0, again.stderr);
     assert.doesNotMatch(again.stderr, /one-time confirmation/);
+    const moduleText = await readFile(module, "utf8");
+    assert.equal(moduleText.includes('"tokens":1000'), true);
+    await writeFile(module, moduleText.replace('"tokens":1000', '"tokens":1001'));
+    const changedModuleBudget = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(changedModuleBudget.status, 1);
+    assert.match(changedModuleBudget.stderr, /one-time confirmation/);
+    await writeFile(module, moduleText);
     const stamp = JSON.parse(
       await readFile(join(root, ".state", "activation.json"), "utf8"),
     ) as {
@@ -656,6 +668,8 @@ test("step timeout accepts only decimal integers", async () => {
       assert.throws(() => parseStepTimeout(value), /decimal integer/);
     }
     assert.equal(parseStepTimeout("120000"), 120000);
+    assert.equal(parseStepTimeout("7200000"), 7_200_000);
+    assert.throws(() => parseStepTimeout("7200001"), /7200000/);
     const module = join(root, "application.mjs");
     await writeFile(module, "export {};\n");
     for (const literal of ["1e5", "120000.0"]) {
@@ -665,6 +679,139 @@ test("step timeout accepts only decimal integers", async () => {
       );
       assert.throws(() => readWorkerSettings(module), /decimal integer/);
     }
+    await writeFile(
+      join(root, "integration-plan.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        language: "node",
+        mode: "recommend",
+        selfImproving: false,
+        namespace: "app/dev",
+        stepTimeoutMs: 7200000,
+      }),
+    );
+    assert.equal(readWorkerSettings(module).stepTimeoutMs, 7_200_000);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("TTY activation prompt shows the effective namespace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-tty-"));
+  try {
+    const module = join(root, "application.mjs");
+    await writeFile(module, "throw new Error('imported too early');\n");
+    await writeFile(
+      join(root, "integration-plan.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        language: "node",
+        mode: "autonomous",
+        selfImproving: true,
+        namespace: "app/shown",
+        stepTimeoutMs: 120000,
+      }),
+    );
+    const cli = new URL("../src/cli.js", import.meta.url);
+    const script = `
+import os, pty, select, sys
+node = ${JSON.stringify(process.execPath)}
+argv = [node, ${JSON.stringify(cli.pathname)}, "worker", "--module", ${JSON.stringify(module)}, "--enable", "--once"]
+pid, fd = pty.fork()
+if pid == 0:
+    os.chdir(${JSON.stringify(root)})
+    os.execv(node, argv)
+data = b""
+while b"Type activate to confirm" not in data:
+    ready, _, _ = select.select([fd], [], [], 8)
+    if not ready:
+        break
+    chunk = os.read(fd, 4096)
+    if not chunk:
+        break
+    data += chunk
+os.write(fd, b"no\\n")
+while True:
+    ready, _, _ = select.select([fd], [], [], 1)
+    if not ready:
+        break
+    try:
+        extra = os.read(fd, 4096)
+    except OSError:
+        break
+    if not extra:
+        break
+    data += extra
+os.waitpid(pid, 0)
+sys.stdout.buffer.write(data)
+`;
+    const output = spawnSync("python3", ["-c", script], { encoding: "utf8" });
+    assert.equal(output.status, 0, output.stderr);
+    assert.match(output.stdout, /Namespace: app\/shown/);
+    assert.doesNotMatch(output.stdout, /imported too early/);
+    await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed first autonomous tick does not keep the activation stamp", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-fail-stamp-"));
+  try {
+    const module = join(root, "application.mjs");
+    const entry = new URL("../src/index.js", import.meta.url).href;
+    const policy = JSON.parse(
+      await readFile(
+        new URL("../../python/tests/fixtures/autonomy.json", import.meta.url),
+        "utf8",
+      ),
+    ).policy;
+    await writeFile(
+      join(root, "integration-plan.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        language: "node",
+        mode: "autonomous",
+        selfImproving: true,
+        namespace: "app/dev",
+        stepTimeoutMs: 120000,
+        audit: {
+          method: "paired-hoeffding",
+          minimumImprovement: 0.05,
+          range: [0, 1],
+          alpha: 0.05,
+          minimumUnits: 50,
+        },
+      }),
+    );
+    await writeFile(
+      module,
+      `
+import { FeedbackLoop, InMemoryStore } from ${JSON.stringify(entry)};
+export async function createIntegration() {
+ const loop = new FeedbackLoop({ store: new InMemoryStore(), namespace: 'cli/fail' });
+ const policy = ${JSON.stringify(policy)};
+ const rows = (prefix, count, day) => Array.from({length: count}, (_, i) => ({id: prefix+i, episodeId: prefix+i, entityId: prefix+i, occurredAt: '2026-01-0'+day+'T00:00:00Z', observedAt: '2026-01-0'+day+'T01:00:00Z', source: policy.trustedSources[0], input:'test', label:'yes'}));
+ const workflow = {id:'cli', version:'1', optimizerVersion:'1', evaluatorVersion:'1', policy,
+  artifact: async()=>({artifactVersion:'baseline',configurationHash:'fixed'}),
+  dataset: async()=>({version:'1',optimization:rows('o',3,1),validation:rows('v',20,2),audit:rows('a',50,3)}),
+  propose: async()=>{ throw new Error('callback boom'); },
+  evaluate: async()=>{ throw new Error('no'); },
+  deployment:{apply:async()=>{throw Error('no')},rollback:async()=>{throw Error('no')},inspect:async()=>({status:'unknown'})},
+  observe:async()=>{throw Error('no')}};
+ return {loop, workflows:[workflow], close:async()=>{await loop.close();}};
+}
+`,
+    );
+    const cli = new URL("../src/cli.js", import.meta.url);
+    const failed = spawnSync(
+      process.execPath,
+      [cli.pathname, "worker", "--module", module, "--enable", "--confirm-activation", "--once"],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(failed.status, 0, failed.stderr);
+    assert.match(failed.stdout, /callback_failed/);
+    await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

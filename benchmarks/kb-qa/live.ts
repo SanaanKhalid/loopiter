@@ -12,6 +12,7 @@ import {
   ImprovementController,
   InMemoryStore,
   LoopiterError,
+  failureDetailText,
   type CallbackContext,
   type DatasetRow,
   type DatasetSnapshot,
@@ -817,6 +818,8 @@ export interface LiveRunOptions {
   attemptDeadlineMs?: number;
   /** Exit if no attempt, ledger write, or retry records progress for this long. */
   stallTimeoutMs?: number;
+  /** Aborts the run. The controller tick receives this signal. */
+  signal?: AbortSignal;
   /** Replaces process.exit when leftover attempt I/O outlives the stall watchdog. */
   exit?: (code: number) => void;
   /** How long to wait before exiting on a still-running attempt. Tests use a short value. */
@@ -895,6 +898,8 @@ interface LiveSeed {
     reason: string;
     servedArtifactVersion: string;
     baselineArtifactVersion: string;
+    /** Set when held-out scoring was skipped because the failed run still serves the baseline. */
+    heldOutNote?: string;
   } | null;
 }
 
@@ -999,7 +1004,7 @@ export class LiveSession {
   readonly callbackTimeoutMs: number;
   readonly tickTimeoutMs: number;
   readonly attemptDeadlineMs: number;
-  lastActivityMs = Date.now();
+  lastActivityMs = performance.now();
   private inflight = 0;
   private retryQuietUntil = 0;
   private stopSignal: AbortSignal | null = null;
@@ -1105,7 +1110,12 @@ export class LiveSession {
   }
 
   touch(): void {
-    this.lastActivityMs = Date.now();
+    this.lastActivityMs = performance.now();
+  }
+
+  /** Stop signal for the in-flight controller tick, when the run has one. */
+  runSignal(): AbortSignal | undefined {
+    return this.stopSignal ?? undefined;
   }
 
   /** Last progress, or the end of a scheduled retry wait that is still inside its budget. */
@@ -1210,7 +1220,7 @@ export class LiveSession {
     this.chargeRetryWait(already, wait);
     this.activity = "waiting on retry";
     this.waitMs += wait;
-    this.retryQuietUntil = Date.now() + wait;
+    this.retryQuietUntil = performance.now() + wait;
     this.touch();
     try {
       await this.withDeadline(signal, (deadline) => abortableSleep(this.sleep, wait, deadline));
@@ -1416,6 +1426,12 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
   );
   const perSeed: LiveSeed[] = [];
   const runControl = new AbortController();
+  if (options.signal) {
+    const stop = options.signal;
+    const forward = () => runControl.abort(stop.reason);
+    if (stop.aborted) forward();
+    else stop.addEventListener("abort", forward, { once: true });
+  }
   session.bindStop(runControl.signal);
   const guard = createExitGuard(options.exit ?? forceExit, () => {
     runControl.abort(new Error("Live run is stopping."));
@@ -1477,10 +1493,12 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
       }
       const loop = await runCandidate(session, split, seed);
       if (loop.failure && !failure) failure = loop.failure;
+      const failedOnBaseline =
+        loop.state === "failed" && loop.servedVersion === loop.baselineVersion;
       const candidateScore =
-        loop.servedFragment && !ledger.stopReason
-          ? await scoreSplit(session, split.test, loop.servedFragment)
-          : emptyScore(split.test.length);
+        failedOnBaseline || !loop.servedFragment || ledger.stopReason
+          ? emptyScore(split.test.length)
+          : await scoreSplit(session, split.test, loop.servedFragment);
       if (ledger.stopReason && !failure) failure = stopView(ledger.stopReason);
       row.candidate = {
         heldOut: candidateScore,
@@ -1488,6 +1506,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
         reason: loop.reason,
         servedArtifactVersion: loop.servedVersion,
         baselineArtifactVersion: loop.baselineVersion,
+        ...(failedOnBaseline ? { heldOutNote: "baseline not re-scored" } : {}),
       };
       if (ledger.stopReason || loop.failure) break;
     }
@@ -1559,9 +1578,11 @@ export function renderLiveMarkdown(report: LiveReport): string {
     "| Seed | Baseline | Candidate | State |",
     "| ---: | ---: | ---: | --- |",
     ...report.perSeed.map((row) => {
-      const candidate = row.candidate
-        ? `${row.candidate.heldOut.rate.toFixed(4)} (${row.candidate.state})`
-        : "not started";
+      const candidate = !row.candidate
+        ? "not started"
+        : row.candidate.heldOutNote
+          ? `${row.candidate.heldOutNote} (${row.candidate.state})`
+          : `${row.candidate.heldOut.rate.toFixed(4)} (${row.candidate.state})`;
       const state = row.candidate?.state ?? (row.baseline.complete ? "baseline scored" : "partial");
       return `| ${row.seed} | ${row.baseline.rate.toFixed(4)} | ${candidate} | ${state} |`;
     }),
@@ -2349,7 +2370,7 @@ async function runCandidate(
     let sawObserving = false;
     for (let tick = 0; tick < 10_000; tick++) {
       if (session.ledger.stopReason || session.isStopping()) break;
-      result = await controller.tick(batched.id);
+      result = await controller.tick(batched.id, session.runSignal());
       if (TERMINAL.has(result.state) || result.reason === "spend_cap") break;
       if (result.state === "observing") {
         clock.now = new Date(clock.now.getTime() + (sawObserving ? 61_000 : 7_200_000));
@@ -2357,31 +2378,48 @@ async function runCandidate(
       }
     }
     const served = await registry.current();
-    const state = result?.state ?? "failed";
+    const stopping = session.isStopping() || result?.reason === "cancelled";
+    const state = stopping ? "cancelled" : (result?.state ?? "failed");
     const reason = session.ledger.stopReason
       ? "spend_cap"
-      : (result?.reason ?? "tick_limit");
+      : stopping
+        ? "cancelled"
+        : (result?.reason ?? "tick_limit");
     return {
       state,
       reason,
       servedFragment: fragmentOf(served.artifact),
       servedVersion: served.version,
       baselineVersion,
-      failure:
-        session.rateLimitExhausted
+      failure: stopping
+        ? { reason: "cancelled", message: recordedFailure(session, result, "cancelled") }
+        : session.rateLimitExhausted
           ? rateLimitFailure(session)
           : session.ledger.stopReason
             ? stopView(session.ledger.stopReason)
             : state === "failed"
               ? {
                   reason: "provider_error",
-                  message: session.lastError ?? `Loop failed (${reason}).`,
+                  message: recordedFailure(session, result, reason),
                 }
               : !result || !TERMINAL.has(result.state)
                 ? { reason: "tick_limit", message: "Loop did not finish." }
                 : null,
     };
   } catch (error) {
+    if (session.isStopping()) {
+      return {
+        state: "cancelled",
+        reason: "cancelled",
+        servedFragment: null,
+        servedVersion: baselineVersion,
+        baselineVersion,
+        failure: {
+          reason: "cancelled",
+          message: recordedFailure(session, undefined, "cancelled"),
+        },
+      };
+    }
     if (error instanceof LoopiterError && error.code === "spend_cap") {
       return {
         state: "failed",
@@ -2735,20 +2773,43 @@ export function startProgressTicker(intervalMs: number, emit: () => void): { sto
   return { stop: () => clearInterval(timer) };
 }
 
+const HOST_PAUSE_MS = 30_000;
+
 export function createStallWatchdog(input: {
   intervalMs: number;
   stallMs: number;
   lastActivity: () => number;
+  /** Monotonic clock. Defaults to performance.now so a wall-clock jump is not a stall. */
   now?: () => number;
   onStall: () => void;
 }): { stop: () => void } {
+  const monotonic = () => input.now?.() ?? performance.now();
+  let previousMono = monotonic();
+  let previousWall = Date.now();
   const timer = setInterval(() => {
-    const now = input.now?.() ?? Date.now();
-    if (now - input.lastActivity() < input.stallMs) return;
+    const mono = monotonic();
+    const wall = Date.now();
+    const ahead = wall - previousWall - (mono - previousMono);
+    previousMono = mono;
+    previousWall = wall;
+    if (Number.isFinite(ahead) && ahead > HOST_PAUSE_MS)
+      console.error(`host paused ~${Math.round(ahead / 1000)} s`);
+    if (mono - input.lastActivity() < input.stallMs) return;
     clearInterval(timer);
     input.onStall();
   }, input.intervalMs);
   return { stop: () => clearInterval(timer) };
+}
+
+function recordedFailure(
+  session: LiveSession,
+  result: TickResult | undefined,
+  reason: string,
+): string {
+  const text = result?.detail ?? session.lastError;
+  if (text) return failureDetailText(session.redact(text));
+  if (reason === "cancelled") return "Stopped.";
+  return `Loop failed (${reason}).`;
 }
 
 export async function writeInterruptedReport(input: {

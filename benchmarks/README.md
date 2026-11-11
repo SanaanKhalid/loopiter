@@ -290,7 +290,12 @@ each) plus the attempt deadline. A shorter value is refused, because a healthy
 pace wait plus one slow request would otherwise look like a stall. The progress
 ticker stays referenced so a quiet socket cannot leave it unscheduled. A stall
 or signal aborts the run before another attempt starts, and that partial report
-is the only report written.
+is the only report written. The stall clock is monotonic. If wall time jumps more
+than about 30 seconds ahead of it, the harness logs `host paused ~N s` and does
+not count that jump as a stall. Stopping the run reports the candidate as
+cancelled. A callback failure keeps a redacted, truncated message. A failed
+candidate that is still serving the baseline is not scored again on the held-out
+split; the report says `baseline not re-scored`.
 Every attempt, including those retries, is checked against the spend caps and
 added to the ledger. The pre-call spend check still uses the worst-case
 ceiling (one input token per request byte plus the output bound). If the

@@ -27,7 +27,7 @@ REFERENCES = {
     "classification": "reviewed_loop.py",
 }
 MODES = ("observe", "recommend", "experiment", "autonomous")
-MAX_STEP_MS = 3_600_000
+MAX_STEP_MS = 7_200_000
 
 
 def read_agent_guide():
@@ -96,7 +96,7 @@ def read_worker_settings(
     )
     if not _valid_step_timeout(resolved_timeout):
         raise ValueError(
-            "Step timeout must be an integer number of milliseconds from 1 to 3600000."
+            "Step timeout must be an integer number of milliseconds from 1 to 7200000."
         )
     resolved_timeout_source = (
         (step_timeout_source or "option")
@@ -149,6 +149,7 @@ def autonomy_plan_hash(plan, mode=None, environment=None):
         else "recommend"
     )
     # --step-timeout-ms is intentionally absent; the plan's stepTimeoutMs is included.
+    # Workflow daily limits and callback reservations are stored beside this hash.
     return fingerprint(
         {
             "schemaVersion": plan.get("schemaVersion"),
@@ -206,7 +207,36 @@ def autonomous_activation_current(module_path, mode=None):
     )
 
 
-def record_autonomous_activation(module_path, actor=None, mode=None):
+def autonomous_activation_prompt(namespace):
+    return (
+        "Autonomous mode can spend provider budget and deploy a candidate that passes validation and audit.\n"
+        f"Namespace: {namespace}\n"
+        "Type activate to confirm: "
+    )
+
+
+def effective_budget_fingerprint(workflows):
+    """Daily limits and per-callback reservations the worker will actually enforce."""
+    return fingerprint(
+        [
+            {
+                "id": workflow.id,
+                "daily": workflow.policy.get("daily"),
+                "callback_reservation": workflow.policy.get("callback_reservation"),
+            }
+            for workflow in workflows
+        ]
+    )
+
+
+def activation_budget_current(module_path, budget_hash):
+    plan = _load_plan(module_path)
+    namespace = effective_namespace(plan)
+    stamp = _activation_entries(module_path).get(namespace)
+    return isinstance(stamp, dict) and stamp.get("budgetHash") == budget_hash
+
+
+def record_autonomous_activation(module_path, actor=None, mode=None, budget_hash=None):
     plan = _load_plan(module_path) or {}
     effective_mode = (
         mode
@@ -217,13 +247,40 @@ def record_autonomous_activation(module_path, actor=None, mode=None):
     )
     namespace = effective_namespace(plan)
     entries = _activation_entries(module_path)
-    entries[namespace] = {
+    entry = {
         "planHash": autonomy_plan_hash(plan, effective_mode),
         "mode": effective_mode,
         "confirmedBy": (actor or activation_actor()).strip() or "unknown",
         "confirmedAt": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
     }
+    if budget_hash:
+        entry["budgetHash"] = budget_hash
+    entries[namespace] = entry
     path = _activation_path(module_path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps({"schemaVersion": 1, "entries": entries}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
+def clear_autonomous_activation(module_path):
+    plan = _load_plan(module_path)
+    namespace = effective_namespace(plan)
+    entries = _activation_entries(module_path)
+    if namespace not in entries:
+        return
+    del entries[namespace]
+    path = _activation_path(module_path)
+    if not entries:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
     temporary.write_text(
@@ -368,7 +425,7 @@ This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and
 
 After doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
 
-On a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it and when. The stamp is a consent record, not a security boundary: it is not signed and it is not bound to a machine. Its hash covers the effective mode, self-improving, the effective namespace (LOOPITER_NAMESPACE when set, otherwise the plan namespace), the plan step timeout, audit sizing, and the plan's policy and budget. A one-off --step-timeout-ms is not part of the hash. The stamp records the effective mode that ran. A later run reuses the stamp. A new namespace or a change to those settings asks again. The flag does not bypass audit, budget, or rollback gates. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
+On a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it and when. The stamp is a consent record, not a security boundary: it is not signed and it is not bound to a machine. Its hash covers the effective mode, self-improving, the effective namespace (LOOPITER_NAMESPACE when set, otherwise the plan namespace), the plan step timeout, audit sizing, the plan's policy and budget, and the effective budget on the application workflows (daily limits and the per-callback reservation). A one-off --step-timeout-ms is not part of the hash. The stamp records the effective mode that ran. A later run reuses the stamp. A new namespace or a change to those settings asks again. The flag does not bypass audit, budget, or rollback gates. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
 
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --once
 
@@ -436,7 +493,7 @@ def inspect_self_hosted_setup(directory, environment=None):
             missing.append(f"Set {name} through your secret manager or process environment.")
     if "stepTimeoutMs" in plan and not _valid_step_timeout(plan["stepTimeoutMs"]):
         raise ValueError(
-            "stepTimeoutMs must be an integer number of milliseconds from 1 to 3600000."
+            "stepTimeoutMs must be an integer number of milliseconds from 1 to 7200000."
         )
     audit = _audit_plan_messages(plan)
     warnings = [audit["warning"]] if audit.get("warning") else []
@@ -516,6 +573,7 @@ async def run_self_hosted_worker(
     cancellation=None,
     on_tick=None,
     record_activation=False,
+    confirm_budget=None,
 ):
     if self_improving is not True:
         raise ValueError(
@@ -566,8 +624,24 @@ async def run_self_hosted_worker(
             if settings["mode"] == "autonomous":
                 raise ValueError(message)
             print("warning: " + message, file=sys.stderr)
+        budget_hash = effective_budget_fingerprint(integration["workflows"])
+        if (
+            settings["mode"] == "autonomous"
+            and self_improving is True
+            and not activation_budget_current(module_path, budget_hash)
+        ):
+            if not record_activation:
+                accepted = confirm_budget() if confirm_budget else False
+                if not accepted:
+                    raise ValueError(
+                        "Autonomous activation needs a one-time confirmation for this namespace and plan. "
+                        "Pass --confirm-activation or --yes when stdin is not a terminal."
+                    )
+                record_activation = True
         if record_activation:
-            record_autonomous_activation(module_path, mode=settings["mode"])
+            record_autonomous_activation(
+                module_path, mode=settings["mode"], budget_hash=budget_hash
+            )
         controller = ImprovementController(
             integration["loop"],
             workflows=integration["workflows"],
@@ -576,11 +650,16 @@ async def run_self_hosted_worker(
             step_timeout_ms=settings["step_timeout_ms"],
         )
         results = []
+        activation_open = record_activation
         while not cancellation.is_set():
             for workflow in integration["workflows"]:
                 if cancellation.is_set():
                     break
                 result = await controller.tick(workflow.id, cancellation)
+                if activation_open:
+                    activation_open = False
+                    if result.get("state") == "failed" or result.get("reason") == "callback_failed":
+                        clear_autonomous_activation(module_path)
                 if once:
                     results.append(result)
                 if on_tick:
@@ -636,7 +715,8 @@ def main(argv=None):
         action="store_true",
         help=(
             "Record the one-time autonomous confirmation for this namespace and plan. "
-            "Later runs reuse it until mode, namespace, audit, policy, or budget changes. "
+            "Later runs reuse it until mode, namespace, audit, policy, plan budget, "
+            "or the application workflow budget changes. "
             "The stamp is a consent record, not a signed or machine-bound check."
         ),
     )
@@ -671,23 +751,35 @@ def main(argv=None):
             already = settings["mode"] == "autonomous" and autonomous_activation_current(
                 args.module, settings["mode"]
             )
-            if args.enable and settings["mode"] == "autonomous" and not already and not granted:
+
+            def ask_activation():
                 if not sys.stdin.isatty():
+                    return False
+                print(
+                    autonomous_activation_prompt(effective_namespace(_load_plan(args.module))),
+                    end="",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if input("").strip() != "activate":
+                    raise ValueError("Autonomous activation was not confirmed.")
+                return True
+
+            if args.enable and settings["mode"] == "autonomous" and not already and not granted:
+                if not ask_activation():
                     raise ValueError(
                         "Autonomous activation needs a one-time confirmation for this namespace and plan. "
                         "Pass --confirm-activation or --yes when stdin is not a terminal."
                     )
-                print(
-                    "Autonomous mode can spend provider budget and deploy a candidate "
-                    "that passes validation and audit.",
-                    file=sys.stderr,
-                )
-                answer = input("Type activate to confirm: ")
-                if answer.strip() != "activate":
-                    raise ValueError("Autonomous activation was not confirmed.")
+                granted = True
             record_activation = bool(
                 args.enable and settings["mode"] == "autonomous" and (granted or not already)
             )
+
+            def confirm_budget():
+                if granted:
+                    return True
+                return ask_activation()
 
             async def run():
                 cancellation = asyncio.Event()
@@ -712,6 +804,7 @@ def main(argv=None):
                         cancellation=cancellation,
                         on_tick=lambda result: print(json.dumps(result), flush=True),
                         record_activation=record_activation,
+                        confirm_budget=confirm_budget,
                     )
                 finally:
                     for signum in installed:

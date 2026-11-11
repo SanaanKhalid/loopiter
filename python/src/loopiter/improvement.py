@@ -5,6 +5,7 @@ fence expected versions and inspect ambiguous operations; database leases do not
 """
 
 import asyncio
+import re
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
@@ -31,10 +32,35 @@ STATES = (
 ).split()
 DEFAULT_STEP_MS = 120_000
 DEFAULT_TICK_MS = 600_000
-MAX_STEP_MS = 3_600_000
-MAX_TICK_MS = 3_660_000
+MAX_STEP_MS = 7_200_000
+MAX_TICK_MS = 7_260_000
+FAILURE_DETAIL_MAX = 500
 # First pre-deployment timeout is retried. The next one ends the run as timed_out.
 STEP_TIMEOUT_ATTEMPTS = 2
+_FAILURE_URL = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_FAILURE_API_KEY = re.compile(
+    r"api-key\\?\"?\s*[:=]\s*\\?\"?[^\s\"\\,}]+",
+    re.IGNORECASE,
+)
+_FAILURE_AUTHORIZATION = re.compile(
+    r"authorization\\?\"?\s*[:=]\s*\\?\"?(?:bearer\s+)?[^\s\"\\,}]+",
+    re.IGNORECASE,
+)
+
+
+def _failure_detail(exc):
+    """Drop endpoint URLs, their hosts, and credential headers, then truncate."""
+    message = str(exc) if isinstance(exc, BaseException) else ""
+    redacted = _FAILURE_AUTHORIZATION.sub(
+        "authorization:[redacted]",
+        _FAILURE_API_KEY.sub(
+            "api-key:[redacted]",
+            _FAILURE_URL.sub("[redacted]", message),
+        ),
+    ).strip()
+    if len(redacted) <= FAILURE_DETAIL_MAX:
+        return redacted
+    return redacted[: FAILURE_DETAIL_MAX - 3] + "..."
 
 
 def _plus(time, ms):
@@ -95,7 +121,7 @@ class ImprovementController:
         v.integer(callback_timeout_ms, "step timeout")
         v.integer(tick_timeout_ms, "tick timeout")
         if callback_timeout_ms > MAX_STEP_MS or tick_timeout_ms > MAX_TICK_MS:
-            v.fail("invalid_input", "Step timeout cannot exceed 1 hour.")
+            v.fail("invalid_input", "Step timeout cannot exceed 2 hours.")
         if tick_timeout_ms < callback_timeout_ms:
             v.fail("invalid_input", "Tick timeout must cover the step timeout.")
         self.loop, self.self_improving, self.mode = loop, self_improving, mode
@@ -351,6 +377,12 @@ class ImprovementController:
         async with self._tx() as tx:
             run = await self._owned(tx, rid, owner, recovery)
             data = {**run["data"], **deepcopy(patch)}
+            if (
+                "detail" not in patch
+                and data.get("state") != "failed"
+                and data.get("reason") not in ("callback_failed", "cancelled")
+            ):
+                data.pop("detail", None)
             row = await self._put(tx, "runs", rid, data)
             await self.loop._event(tx, "improvement." + data["state"], rid, reason=data["reason"])
             if data["state"] in TERMINAL:
@@ -772,7 +804,11 @@ class ImprovementController:
                 if count >= p.get("maximum_consecutive_failures", 3):
                     return await self._idle(w, "repeated_timeouts_require_review", "paused")
                 return await self._idle(w, "timed_out")
-            return await self._idle(w, code)
+            result = await self._idle(w, code)
+            detail = _failure_detail(exc)
+            if detail:
+                result["detail"] = detail
+            return result
         rid = run["id"]
         if run["data"]["workflow_id"] != w.id:
             return await self._idle(w, "target_owned_by_other_workflow")
@@ -869,12 +905,16 @@ class ImprovementController:
                 if isinstance(exc, asyncio.CancelledError)
                 else getattr(exc, "code", "callback_failed")
             )
+            detail = _failure_detail(exc)
             if code == "run_busy":
-                return {
+                busy = {
                     **await self._idle(w, code),
                     "run_id": rid,
                     "candidate_ids": run["data"]["candidate_ids"],
                 }
+                if detail:
+                    busy["detail"] = detail
+                return busy
             if code == "timeout" and await self._record_step_timeout(rid, owner):
                 pass
             elif code != "lease_lost":
@@ -889,7 +929,10 @@ class ImprovementController:
                         state = "reconciliation_required"
                     elif state != "observing" and code not in ("paused", "policy_changed"):
                         state = "failed"
-                    saved = await self._save(rid, owner, {"state": state, "reason": code}, True)
+                    patch = {"state": state, "reason": code}
+                    if detail:
+                        patch["detail"] = detail
+                    saved = await self._save(rid, owner, patch, True)
                     if self._undecided(saved):
                         await self._retire_undecided(
                             saved["data"]["candidate_ids"], saved["data"]["reason"]
@@ -906,11 +949,14 @@ class ImprovementController:
                     )
         run = await self.get_run(rid)
         d = run["data"]
-        return {
+        result = {
             **await self._idle(w, d["reason"], d["state"], d.get("next_eligible_at")),
             "run_id": rid,
             "candidate_ids": d["candidate_ids"],
         }
+        if d.get("detail"):
+            result["detail"] = d["detail"]
+        return result
 
     async def _advance(self, run, owner, w, paused):
         rid, d, p = run["id"], run["data"], w.policy

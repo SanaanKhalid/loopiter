@@ -67,6 +67,27 @@ const DEFAULT_STEP_MS = 120_000;
 const DEFAULT_TICK_MS = 600_000;
 const MAX_STEP_MS = 7_200_000;
 const MAX_TICK_MS = 7_260_000;
+const FAILURE_DETAIL_MAX = 500;
+
+/** Drop endpoint URLs, their hosts, and credential headers, then truncate. */
+export function failureDetailText(text: string): string {
+  const redacted = text
+    .replace(/https?:\/\/[^\s"'<>]+/gi, "[redacted]")
+    .replace(/api-key\\?"?\s*[:=]\s*\\?"?[^"\\\s,}]+/gi, "api-key:[redacted]")
+    .replace(
+      /authorization\\?"?\s*[:=]\s*\\?"?(?:bearer\s+)?[^"\\\s,}]+/gi,
+      "authorization:[redacted]",
+    )
+    .trim();
+  if (redacted.length <= FAILURE_DETAIL_MAX) return redacted;
+  return `${redacted.slice(0, FAILURE_DETAIL_MAX - 3)}...`;
+}
+
+function failureDetailFrom(error: unknown): string | undefined {
+  const message = error instanceof Error ? error.message : "";
+  const text = failureDetailText(message);
+  return text ? text : undefined;
+}
 /** First pre-deployment timeout is retried. The next one ends the run as timed_out. */
 const STEP_TIMEOUT_ATTEMPTS = 2;
 const asJson = (x: unknown) => x as JsonObject;
@@ -440,6 +461,13 @@ export class ImprovementController {
     return this.loop.store.transaction(this.loop.namespace, async (tx) => {
       const run = await this.owned(tx, runId, owner, allowPaused),
         data = { ...run.data, ...clone(patch) };
+      if (
+        !Object.hasOwn(patch, "detail") &&
+        data.state !== "failed" &&
+        data.reason !== "callback_failed" &&
+        data.reason !== "cancelled"
+      )
+        delete data.detail;
       const row = await this.put(tx, "runs", runId, data);
       const event = {
         id: id("event"),
@@ -917,13 +945,15 @@ export class ImprovementController {
           : signal2.aborted
             ? "cancelled"
             : "callback_failed";
+      const detail = failureDetailFrom(error);
       if (reason === "timeout") {
         const count = await this.noteTimeout(w);
         if (count >= (w.policy.maximumConsecutiveFailures ?? 3))
           return idle("repeated_timeouts_require_review", "paused");
         return idle("timed_out");
       }
-      return idle(reason);
+      const idleResult = await idle(reason);
+      return detail ? { ...idleResult, detail } : idleResult;
     }
     const rid = run.id;
     // A different workflow may own this target; it must be resumed by its own definition.
@@ -1640,11 +1670,13 @@ export class ImprovementController {
             : signal2.aborted
               ? "cancelled"
               : "callback_failed";
+      const detail = failureDetailFrom(error);
       if (code === "run_busy")
         return {
           ...(await idle(code)),
           runId: rid,
           candidateIds: run?.data.candidateIds ?? [],
+          ...(detail ? { detail } : {}),
         };
       if (code === "timeout" && (await this.recordStepTimeout(rid, owner))) {
         // Retry or terminal timed_out. Not a consecutive-failure strike.
@@ -1668,6 +1700,7 @@ export class ImprovementController {
                   ? current.data.state
                   : "failed",
               reason: code,
+              ...(detail ? { detail } : {}),
             },
             true,
           ).catch(() => current);
@@ -1696,6 +1729,7 @@ export class ImprovementController {
       ...(run!.data.nextEligibleAt
         ? { nextEligibleAt: run!.data.nextEligibleAt }
         : {}),
+      ...(run!.data.detail ? { detail: run!.data.detail } : {}),
     };
   }
   private async evaluatePartition(

@@ -632,8 +632,9 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         )
         self.setup_workflow(FIXTURES["scenarios"][0])
         self.controller(step_timeout_ms=180000)
+        self.controller(step_timeout_ms=7_200_000)
         with self.assertRaises(LoopiterError):
-            self.controller(step_timeout_ms=3_600_001)
+            self.controller(step_timeout_ms=7_200_001)
 
         audit_calls = {"n": 0}
 
@@ -745,3 +746,28 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             (await controller.tick("classification"))["reason"],
             "repeated_timeouts_require_review",
         )
+
+    async def test_callback_failure_keeps_redacted_detail(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        host = "https://secret.example.openai.azure.com/openai"
+        key = "sk-test-secret-value"
+
+        async def propose(_data, _context):
+            raise RuntimeError(
+                f"proposal exploded at {host} api-key: {key} authorization: Bearer {key} "
+                + ("y" * 800)
+            )
+
+        self.workflow = replace(self.workflow, propose=propose)
+        controller = self.controller()
+        result = await controller.tick("classification")
+        self.assertEqual(result["reason"], "callback_failed")
+        self.assertEqual(result["state"], "failed")
+        detail = result["detail"]
+        self.assertIn("proposal exploded", detail)
+        self.assertNotIn(host, detail)
+        self.assertNotIn("secret.example.openai.azure.com", detail)
+        self.assertNotIn(key, detail)
+        self.assertLessEqual(len(detail), 500)
+        run = await controller.get_run(result["run_id"])
+        self.assertEqual(run["data"]["detail"], detail)

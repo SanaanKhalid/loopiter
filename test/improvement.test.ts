@@ -879,6 +879,7 @@ test("step timeout can be raised and a timed-out audit is not reused", async () 
   );
   const x = setup();
   assert.doesNotThrow(() => x.controller({ stepTimeoutMs: 180000 }));
+  assert.doesNotThrow(() => x.controller({ stepTimeoutMs: 7_200_000 }));
   assert.throws(() => x.controller({ stepTimeoutMs: 7_200_001 }), {
     code: "invalid_input",
   });
@@ -972,4 +973,26 @@ test("step timeout can be raised and a timed-out audit is not reused", async () 
     (await controller.tick("classification")).reason,
     "repeated_timeouts_require_review",
   );
+});
+
+test("callback failure keeps a redacted truncated detail", async () => {
+  const x = setup();
+  const host = "https://secret.example.openai.azure.com/openai";
+  const key = "sk-test-secret-value";
+  x.workflow.propose = async () => {
+    throw new Error(
+      `proposal exploded at ${host} api-key: ${key} authorization: Bearer ${key} ${"y".repeat(800)}`,
+    );
+  };
+  const controller = x.controller();
+  const result = await controller.tick("classification");
+  assert.equal(result.reason, "callback_failed");
+  assert.equal(result.state, "failed");
+  const detail = result.detail ?? "";
+  assert.match(detail, /proposal exploded/);
+  assert.equal(detail.includes(host), false);
+  assert.equal(detail.includes("secret.example.openai.azure.com"), false);
+  assert.equal(detail.includes(key), false);
+  assert.ok(detail.length <= 500);
+  assert.equal((await controller.getRun(result.runId!))?.data.detail, detail);
 });
