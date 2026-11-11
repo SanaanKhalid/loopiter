@@ -1,12 +1,21 @@
 import { postPath, type Post } from './posts';
-import { absoluteUrl, githubUrl, siteName, siteUrl } from './site';
+import {
+  absoluteUrl,
+  githubUrl,
+  npmPackageUrl,
+  pypiPackageUrl,
+  siteName,
+  siteUrl,
+} from './site';
 
 const organizationId = `${siteUrl}/#organization`;
 const websiteId = `${siteUrl}/#website`;
 const softwareId = `${siteUrl}/#software`;
 
+const packageUrls = [npmPackageUrl, pypiPackageUrl];
+
 const softwareDescription =
-  'A lightweight, model-agnostic feedback loop for production AI systems. MIT-licensed TypeScript and Python libraries that capture executions and feedback, evaluate immutable candidates, and coordinate deployment or rollback through application-owned adapters.';
+  'A lightweight, model-agnostic feedback loop for production AI systems. MIT-licensed TypeScript and Python libraries that capture executions and feedback, evaluate immutable candidates, and coordinate deployment or rollback through application-owned adapters. A fresh self-hosted init records autonomous mode and self-improving on. The worker spends only with --enable and follows plan.mode unless --mode is set. Constructing ImprovementController without a mode stays on recommend.';
 
 export const siteGraph = {
   '@context': 'https://schema.org',
@@ -18,7 +27,7 @@ export const siteGraph = {
       url: siteUrl,
       description:
         'Loopiter maintains an MIT-licensed SDK for feedback-driven improvement of production AI systems. The hosted platform is in development.',
-      sameAs: [githubUrl],
+      sameAs: [githubUrl, ...packageUrls],
     },
     {
       '@type': 'WebSite',
@@ -44,6 +53,7 @@ export const siteGraph = {
       programmingLanguage: ['TypeScript', 'Python'],
       runtimePlatform: ['Node.js', 'Python'],
       codeRepository: githubUrl,
+      sameAs: packageUrls,
       license: 'https://opensource.org/licenses/MIT',
       isAccessibleForFree: true,
       author: { '@id': organizationId },
@@ -73,7 +83,7 @@ export function blogJsonLd(items: readonly Post[]) {
   };
 }
 
-export function articleJsonLd(post: Post) {
+export function articleJsonLd(post: Post, dateModified: string) {
   const url = absoluteUrl(postPath(post.slug));
   return {
     '@context': 'https://schema.org',
@@ -82,7 +92,7 @@ export function articleJsonLd(post: Post) {
     headline: post.title,
     description: post.description,
     datePublished: post.date,
-    dateModified: post.date,
+    dateModified,
     inLanguage: 'en',
     mainEntityOfPage: url,
     url,
@@ -93,5 +103,33 @@ export function articleJsonLd(post: Post) {
       name: 'Loopiter blog',
       url: absoluteUrl('/blog'),
     },
+  };
+}
+
+export function breadcrumbJsonLd(post: Post) {
+  const url = absoluteUrl(postPath(post.slug));
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Home',
+        item: absoluteUrl('/'),
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Blog',
+        item: absoluteUrl('/blog'),
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name: post.title,
+        item: url,
+      },
+    ],
   };
 }

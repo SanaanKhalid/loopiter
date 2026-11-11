@@ -7,6 +7,14 @@ export type Post = {
 
 export const posts: readonly Post[] = [
   {
+    slug: 'graduated-autonomy-for-self-improving-ai-agents',
+    title:
+      'Graduated autonomy for self-improving AI agents: observe, recommend, experiment, autonomous',
+    description:
+      'How the observe, recommend, experiment, and autonomous modes differ in the Loopiter SDKs, why a fresh init records autonomous mode, and what still gates deployment and rollback.',
+    date: '2026-11-11',
+  },
+  {
     slug: 'self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate',
     title: 'Self-improving AI agents need a feedback loop you can evaluate',
     description:

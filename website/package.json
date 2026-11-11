@@ -10,8 +10,11 @@
     "build": "vinext build",
     "deploy:cloudflare": "npm run build && wrangler deploy --config dist/server/wrangler.json",
     "start": "wrangler dev --config dist/server/wrangler.json",
+    "prelint": "node scripts/write-lastmod.mjs",
     "lint": "oxlint",
+    "pretypecheck": "node scripts/write-lastmod.mjs",
     "typecheck": "tsc --noEmit --incremental false",
+    "prebuild": "node scripts/write-lastmod.mjs",
     "format": "oxfmt"
   },
   "dependencies": {

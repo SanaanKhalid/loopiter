@@ -41,6 +41,7 @@ export default function BlogIndex() {
           <Link className="text-link" href="/">Loopiter home <span aria-hidden="true">↗</span></Link>
           <Link className="text-link" href="/manifesto">Read the manifesto <span aria-hidden="true">↗</span></Link>
           <a className="text-link" href={docUrl('overview')}>Read the documentation <span aria-hidden="true">↗</span></a>
+          <a className="text-link" href={docUrl('autonomous')}>Autonomy modes in the documentation <span aria-hidden="true">↗</span></a>
         </div>
       </main>
       </SiteFrame>

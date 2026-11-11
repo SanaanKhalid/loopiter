@@ -1,11 +1,13 @@
 import Link from 'next/link';
 import { docUrl } from '../lib/docs-links';
 import { publishedLabel, type Post } from '../lib/posts';
+import { PostBreadcrumb } from './post-breadcrumb';
 
 export function FeedbackLoopArticle({ post }: { post: Post }) {
   return (
     <article aria-labelledby="post-title">
       <header className="manifesto-heading">
+        <PostBreadcrumb title={post.title} />
         <p className="eyebrow">Blog</p>
         <h1 id="post-title">{post.title}</h1>
         <p className="manifesto-deck">
@@ -71,10 +73,10 @@ export function FeedbackLoopArticle({ post }: { post: Post }) {
         <section aria-labelledby="how-loopiter">
           <h2 id="how-loopiter">How Loopiter approaches the loop</h2>
           <p>
-            Loopiter, in this repository, is an MIT-licensed library for that loop. The alpha is <code>0.3.0-alpha.1</code> on npm and <code>0.3.0a1</code> on PyPI, for Node.js 22 or 24 and Python 3.11+. It is not a hosted product, a model, or a trainer. The core has no runtime dependencies and sends no telemetry. You bring storage, model calls, evaluation, scheduling, and deployment. Canonical documentation is in the <a className="inline-link" href={docUrl('overview')}>overview</a> and the <a className="inline-link" href={docUrl('supported')}>capability matrix</a>.
+            Loopiter, in this repository, is an MIT-licensed library for that loop. The published alpha is <code>0.3.0-alpha.1</code> on npm and <code>0.3.0a1</code> on PyPI, for Node.js 22 or 24 and Python 3.11+. Those published archives predate the self-hosted init and worker in this source tree. It is a library. A hosted product, a model, and a trainer are outside this package. The core has no runtime dependencies and sends no telemetry. You bring storage, model calls, evaluation, scheduling, and deployment. Canonical documentation is in the <a className="inline-link" href={docUrl('overview')}>overview</a> and the <a className="inline-link" href={docUrl('supported')}>capability matrix</a>.
           </p>
           <p>
-            The path the SDK coordinates is the one the overview names: capture an execution, attach verified feedback, analyze scored segments, propose a bounded change, evaluate it, and then approve, deploy, observe, and roll back only if you explicitly enable that. The <Link className="inline-link" href="/">landing page</Link> describes the product direction, including prompt and knowledge changes that go live when they pass. The SDK that is in the repo is narrower than that sentence. Read the limits below before treating the page as a feature list.
+            The path the SDK coordinates is the one the overview names: capture an execution, attach verified feedback, analyze scored segments, propose a bounded change, and evaluate it. Approval, deployment, observation, and rollback run when the mode and the policy allow them. A fresh self-hosted init in this repository records autonomous mode and self-improving on. Installing a package does not start a worker. The <Link className="inline-link" href="/">landing page</Link> describes the product direction, including prompt and knowledge changes that go live when they pass. The SDK that is in the repo is narrower than that sentence. Read the limits below before treating the page as a feature list.
           </p>
           <h3>Capture is not a label</h3>
           <p>
@@ -95,15 +97,15 @@ export function FeedbackLoopArticle({ post }: { post: Post }) {
           <p>
             Candidate content and evidence are hashed. An approval is tied to the exact passing evaluation of that content. The evaluator is a versioned callback you provide. Loopiter stores the evidence and protects the lifecycle transition. It does not invent the task.
           </p>
-          <h3>The default is a recommendation</h3>
+          <h3>What a fresh setup records</h3>
           <p>
-            <code>ImprovementController</code> modes are <code>observe</code>, <code>recommend</code>, <code>experiment</code>, and <code>autonomous</code>. Recommend is the default: it can store bounded proposals and does not approve or deploy them. Observe inspects evidence without proposing. Experiment compares candidates and can audit them without deployment. Autonomous deployment needs <code>selfImproving: true</code> (Python: <code>self_improving=True</code>), <code>mode</code> set to <code>autonomous</code>, and a complete policy. Setting the flag alone does nothing. The application calls <code>tick</code>. The <a className="inline-link" href={docUrl('autonomous')}>autonomous guide</a> says there is no hosted scheduler and no daemon in the core.
+            <code>ImprovementController</code> modes are <code>observe</code>, <code>recommend</code>, <code>experiment</code>, and <code>autonomous</code>. A fresh <code>init</code> writes schemaVersion 2 with preset <code>autonomous-default</code>: mode <code>autonomous</code> and self-improving on, in Node and in Python. The plan starts incomplete. Constructing the controller without a mode stays on <code>recommend</code> with self-improving off: it can store bounded proposals and does not approve or deploy them. Observe inspects evidence without proposing. Experiment compares candidates and can audit them without deployment. Autonomous approval and deployment need <code>selfImproving: true</code> (Python: <code>self_improving=True</code>), <code>mode</code> set to <code>autonomous</code>, and a complete policy. Setting the flag alone does nothing. The application calls <code>tick</code>. There is no hosted scheduler and no daemon in the core. <Link className="inline-link" href="/blog/graduated-autonomy-for-self-improving-ai-agents">Graduated autonomy for self-improving agents</Link> walks through the modes, and the <a className="inline-link" href={docUrl('autonomous')}>autonomy modes in the documentation</a> are the longer reference.
           </p>
           <p>
-            The optional self-hosted worker is a process you start. Node: <code>loopiter worker --module ./loopiter/application.mjs --enable</code>. Python: <code>python -m loopiter worker --module loopiter/application.py --enable</code>. Without <code>--enable</code> it refuses to run. Its default mode is still <code>recommend</code>. It calls <code>tick</code> on the workflows your module returns, on an interval you set, in that process. Installing the package does not enable autonomous production changes.
+            The self-hosted worker is a process you start. After doctor and verify, the init recipe omits <code>--mode</code>, so <code>plan.mode</code> controls it. Node: <code>npx --no-install loopiter worker --module ./loopiter/application.mjs --enable --once</code>. Python: <code>python -m loopiter worker --module loopiter/application.py --enable --once</code>. Without <code>--enable</code> the worker refuses to run. <code>--mode</code> overrides the plan. With no integration plan, the worker uses <code>recommend</code>. The first autonomous run asks you to type activate on a terminal, or to pass <code>--confirm-activation</code> or <code>--yes</code> when stdin is not a terminal. Later runs reuse that consent record until the hashed plan settings change. Installing the package does not start the worker.
           </p>
           <p>
-            A cycle stops at the policy’s caps on proposal calls and candidates. The controller’s fallback is three of each. Callback and tick deadlines default to two and ten minutes, and longer deadlines are rejected. The policy has to set daily ceilings for model requests, tokens, and deployments. There is no unlimited fallback. Callbacks run in your process, with your credentials. Cancellation is cooperative. This is not a sandbox.
+            A cycle stops at the policy’s caps on proposal calls and candidates. The controller’s fallback is three of each, and three consecutive unsuccessful cycles stop proposals unless the policy sets another cap. The step timeout defaults to 120000 milliseconds and cannot exceed 3600000. The tick timeout defaults to 600000 milliseconds, or longer when the step needs it, and cannot exceed 3660000. The policy has to set daily ceilings for model requests, tokens, and deployments. There is no unlimited fallback. Callbacks run in your process, with your credentials. Cancellation is cooperative.
           </p>
           <h3>Deployment stays an adapter</h3>
           <p>
@@ -123,7 +125,7 @@ export function FeedbackLoopArticle({ post }: { post: Post }) {
             There is no Reflexion buffer and no MemGPT-style memory manager. Both SDKs include <code>InMemoryStore</code> as a development store for records, not as agent memory and not as the production write path. <code>JsonFileStore</code> is Node-only single-process development storage. Python does not include it. <code>replaceGuidance</code> (Python: <code>replace_guidance</code>) inserts a released guidance block into system or developer messages and strips the previous block. That is prompt assembly for a version you already chose. It is not a learned memory. Optional OpenAI wrappers can capture calls in both SDKs. The Vercel AI SDK wrapper is Node-only. Feedback, and the choice of what to release, stay in your code. The OpenTelemetry exporter (<code>loopiter/integrations/otel</code>) is Node-only. A trace does not authorize an improvement, and it is not a replay of the application.
           </p>
           <p>
-            The practical starting point is <code>recommend</code> or <code>experiment</code>. Write the evaluator against cases the proposer does not control. Keep a previous artifact you can restore. Turn on autonomous changes for an allowed target only when the policy, the audit split, and the adapter’s inspect and rollback paths are real. The <a className="inline-link" href={docUrl('selfImprovement')}>governed self-improvement notes</a> describe the older recipe API and point forward to that controller. A run can end with no candidate passed. The fine-tuning notes call that a normal outcome.
+            Write the evaluator against cases the proposer does not control. Keep a previous artifact you can restore. Autonomous mode fails closed without an audit partition, a budget, and <code>--enable</code>. The policy validator accepts observation timeout and failure only as rollback. The <a className="inline-link" href={docUrl('selfImprovement')}>governed self-improvement notes</a> describe the older recipe API and point forward to that controller. A run can end with no candidate passed. The fine-tuning notes call that a normal outcome.
           </p>
         </section>
 
@@ -148,6 +150,8 @@ export function FeedbackLoopArticle({ post }: { post: Post }) {
       <div className="manifesto-next">
         <Link className="text-link" href="/">Loopiter home <span aria-hidden="true">↗</span></Link>
         <Link className="text-link" href="/manifesto">Read the manifesto <span aria-hidden="true">↗</span></Link>
+        <Link className="text-link" href="/blog/graduated-autonomy-for-self-improving-ai-agents">Graduated autonomy for self-improving agents <span aria-hidden="true">↗</span></Link>
+        <a className="text-link" href={docUrl('autonomous')}>Autonomy modes in the documentation <span aria-hidden="true">↗</span></a>
         <a className="text-link" href={docUrl('overview')}>Read the documentation <span aria-hidden="true">↗</span></a>
       </div>
     </article>
