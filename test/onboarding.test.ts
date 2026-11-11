@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -8,8 +8,10 @@ import { spawnSync } from "node:child_process";
 import {
   initializeSelfHosted,
   inspectSelfHostedSetup,
+  parseStepTimeout,
   readAgentGuide,
   readReference,
+  readWorkerSettings,
   runSelfHostedWorker,
   verifySelfHostedInstallation,
 } from "../src/onboarding.js";
@@ -33,6 +35,7 @@ test("self-hosted init never overwrites user files or follows an existing destin
     assert.equal(plan.selfImproving, true);
     assert.deepEqual(Object.keys(plan).sort(), [
       "applicationModule",
+      "audit",
       "language",
       "mode",
       "namespace",
@@ -41,13 +44,21 @@ test("self-hosted init never overwrites user files or follows an existing destin
       "reviewed",
       "schemaVersion",
       "selfImproving",
+      "stepTimeoutMs",
       "storage",
     ]);
     assert.equal(setup.mode, "autonomous");
     assert.equal(setup.selfImproving, true);
     const readme = await readFile(join(destination, "README.md"), "utf8");
-    assert.match(readme, /--enable --mode autonomous --once/);
+    assert.match(readme, /--enable --once/);
     assert.match(readme, /--enable --mode recommend --once/);
+    const recipe = readme
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.includes("loopiter worker") && !line.includes("--mode"));
+    assert.ok(recipe);
+    assert.match(recipe, /--enable --once/);
+    assert.doesNotMatch(recipe, /--mode/);
     assert.match(
       readme,
       /--enable authorizes improvement work and provider spending/,
@@ -56,19 +67,14 @@ test("self-hosted init never overwrites user files or follows an existing destin
       readme,
       /fails closed without an audit partition, a budget, or --enable/,
     );
-    assert.match(readme, /Omitting --mode on the worker still selects recommend/);
+    assert.match(readme, /The recipe above omits --mode, so plan.mode controls it/);
+    assert.match(readme, /The --mode flag still overrides the plan/);
     const confirmation =
       "Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.";
     assert.ok(readme.includes(confirmation));
     assert.ok((await readAgentGuide()).includes(confirmation));
-    assert.ok(
-      readme.indexOf(confirmation) <
-        readme.indexOf("--enable --mode autonomous --once"),
-    );
-    assert.ok(
-      readme.indexOf("--enable --mode autonomous --once") <
-        readme.indexOf("--enable --mode recommend --once"),
-    );
+    assert.ok(readme.indexOf(confirmation) < readme.indexOf(recipe!));
+    assert.ok(readme.indexOf(recipe!) < readme.indexOf("--enable --mode recommend --once"));
     await writeFile(join(destination, "user-owned.txt"), "preserve me");
     await assert.rejects(initializeSelfHosted(destination), { code: "EEXIST" });
     assert.equal(
@@ -81,6 +87,39 @@ test("self-hosted init never overwrites user files or follows an existing destin
     const dangling = join(root, "dangling");
     await symlink(join(root, "must-not-be-created"), dangling, "dir");
     await assert.rejects(initializeSelfHosted(dangling), { code: "EEXIST" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("init appends .state/ to an existing gitignore once", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-gitignore-"));
+  try {
+    const repoIgnore = await readFile(new URL("../../.gitignore", import.meta.url), "utf8");
+    assert.match(repoIgnore, /^\.state\/$/m);
+    const destination = join(root, "existing");
+    await mkdir(destination);
+    await writeFile(join(destination, ".gitignore"), "dist");
+    await writeFile(join(destination, "user-owned.txt"), "keep");
+    await assert.rejects(initializeSelfHosted(destination), { code: "EEXIST" });
+    const once = await readFile(join(destination, ".gitignore"), "utf8");
+    assert.equal(once, "dist\n.state/\n");
+    await assert.rejects(initializeSelfHosted(destination), { code: "EEXIST" });
+    assert.equal(await readFile(join(destination, ".gitignore"), "utf8"), once);
+    assert.equal(await readFile(join(destination, "user-owned.txt"), "utf8"), "keep");
+    const already = join(root, "already");
+    await mkdir(already);
+    await writeFile(join(already, ".gitignore"), "# .state/\n!.state/\n/.state/\n");
+    await assert.rejects(initializeSelfHosted(already), { code: "EEXIST" });
+    assert.equal(
+      await readFile(join(already, ".gitignore"), "utf8"),
+      "# .state/\n!.state/\n/.state/\n",
+    );
+    const commented = join(root, "commented");
+    await mkdir(commented);
+    await writeFile(join(commented, ".gitignore"), "# .state/\n");
+    await assert.rejects(initializeSelfHosted(commented), { code: "EEXIST" });
+    assert.equal(await readFile(join(commented, ".gitignore"), "utf8"), "# .state/\n.state/\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -302,6 +341,330 @@ test("CLI errors do not turn an unfinished setup into a successful connection", 
       run("worker", "--module", "absent.mjs", "--mode", "autonomous").status,
       1,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor refuses an audit that cannot certify and plan.mode is honored", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-audit-mode-"));
+  try {
+    const destination = join(root, "setup");
+    await initializeSelfHosted(destination);
+    const path = join(destination, "integration-plan.json");
+    const plan = JSON.parse(await readFile(path, "utf8"));
+    Object.assign(plan, {
+      namespace: "app/dev",
+      storage: "postgres",
+      requiredEnvironment: [],
+      reviewed: Object.fromEntries(
+        Object.keys(plan.reviewed).map((key) => [key, true]),
+      ),
+    });
+    await writeFile(join(destination, "application.mjs"), "export {};\n");
+    plan.audit.minimumUnits = 5;
+    await writeFile(path, JSON.stringify(plan));
+    const blocked = await inspectSelfHostedSetup(destination, {});
+    assert.equal(blocked.configured, false);
+    assert.match(blocked.missing.join("\n"), /At least 7 units are required/);
+    assert.match(blocked.missing.join("\n"), /not a gain 7 units can certify/);
+    assert.match(blocked.missing.join("\n"), /a gain of 0\.05 does not exceed/);
+    assert.match(blocked.missing.join("\n"), /a gain of 0\.10 needs 2397 units/);
+    assert.match(blocked.missing.join("\n"), /a gain of 0\.20 needs 267 units/);
+    plan.mode = "recommend";
+    await writeFile(path, JSON.stringify(plan));
+    const warned = await inspectSelfHostedSetup(destination, {});
+    assert.equal(warned.configured, true);
+    assert.match(warned.warnings.join("\n"), /At least 7 units are required/);
+    const module = join(root, "application.mjs");
+    await writeFile(
+      join(root, "integration-plan.json"),
+      JSON.stringify({
+        ...plan,
+        mode: "autonomous",
+        audit: { ...plan.audit, minimumUnits: 50 },
+        stepTimeoutMs: 180000,
+      }),
+    );
+    await writeFile(module, "export {};\n");
+    const fromPlan = readWorkerSettings(module);
+    assert.equal(fromPlan.mode, "autonomous");
+    assert.equal(fromPlan.modeSource, "plan");
+    assert.equal(fromPlan.stepTimeoutMs, 180000);
+    assert.equal(fromPlan.stepTimeoutSource, "plan");
+    const flagged = readWorkerSettings(module, {
+      mode: "recommend",
+      modeSource: "flag",
+      stepTimeoutMs: 90000,
+      stepTimeoutSource: "flag",
+    });
+    assert.equal(flagged.mode, "recommend");
+    assert.equal(flagged.modeSource, "flag");
+    assert.equal(flagged.stepTimeoutMs, 90000);
+    const guide = await readAgentGuide();
+    assert.match(guide, /stepTimeoutMs >= 1000/);
+    assert.match(guide, /minimumCertifiableAuditUnits/);
+    assert.match(guide, /not a gain that 7 units can certify/);
+    assert.match(guide, /A gain of 0\.10 needs 2397 units/);
+    assert.match(guide, /a gain of 0\.20 needs 267 units/);
+    const cli = new URL("../src/cli.js", import.meta.url);
+    const entry = new URL("../src/index.js", import.meta.url).href;
+    const policy = JSON.parse(
+      await readFile(
+        new URL("../../python/tests/fixtures/autonomy.json", import.meta.url),
+        "utf8",
+      ),
+    ).policy;
+    await writeFile(
+      module,
+      `
+import { FeedbackLoop, InMemoryStore } from ${JSON.stringify(entry)};
+export async function createIntegration() {
+ const loop = new FeedbackLoop({ store: new InMemoryStore(), namespace: 'cli/confirm' });
+ const policy = ${JSON.stringify(policy)};
+ const rows = (prefix, count, day) => Array.from({length: count}, (_, i) => ({id: prefix+i, episodeId: prefix+i, entityId: prefix+i, occurredAt: '2026-01-0'+day+'T00:00:00Z', observedAt: '2026-01-0'+day+'T01:00:00Z', source: policy.trustedSources[0], input:'test', label:'yes'}));
+ const workflow = {id:'cli', version:'1', optimizerVersion:'1', evaluatorVersion:'1', policy,
+  artifact: async()=>({artifactVersion:'baseline',configurationHash:'fixed'}),
+  dataset: async()=>({version:'1',optimization:rows('o',3,1),validation:rows('v',20,2),audit:rows('a',50,3)}),
+  propose: async()=>[{score:1}],
+  evaluate: async({examples})=>({cases:examples.map((row)=>({id:row.id,baseline:0,candidate:1})),metrics:{errors:0},estimatedServingCost:0}),
+  deployment:{apply:async()=>{throw Error('not this test')},rollback:async()=>{throw Error('no')},inspect:async()=>({status:'unknown'})},
+  observe:async()=>{throw Error('no')}};
+ return {loop, workflows:[workflow], close:async()=>{await loop.close();}};
+}
+`,
+    );
+    const run = (args: string[], env: NodeJS.ProcessEnv = {}) =>
+      spawnSync(process.execPath, [cli.pathname, ...args], {
+        cwd: root,
+        encoding: "utf8",
+        input: "",
+        env: { ...process.env, ...env },
+      });
+    const denied = run([
+      "worker",
+      "--module",
+      module,
+      "--enable",
+      "--mode",
+      "autonomous",
+      "--once",
+    ]);
+    assert.equal(denied.status, 1);
+    assert.match(denied.stderr, /--confirm-activation or --yes/);
+    const allowed = run([
+      "worker",
+      "--module",
+      module,
+      "--enable",
+      "--confirm-activation",
+      "--once",
+      "--step-timeout-ms",
+      "180000",
+    ]);
+    assert.equal(allowed.status, 0, allowed.stderr);
+    assert.match(allowed.stderr, /effective mode autonomous \(source: plan\)/);
+    assert.match(allowed.stderr, /effective step timeout 180000ms \(source: flag\)/);
+    assert.match(allowed.stdout, /"state":"evaluating"/);
+    const again = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(again.status, 0, again.stderr);
+    assert.doesNotMatch(again.stderr, /one-time confirmation/);
+    const stamp = JSON.parse(
+      await readFile(join(root, ".state", "activation.json"), "utf8"),
+    ) as {
+      entries: Record<
+        string,
+        { planHash: string; confirmedBy: string; confirmedAt: string; mode: string }
+      >;
+    };
+    assert.match(stamp.entries["app/dev"]!.confirmedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.ok(stamp.entries["app/dev"]!.confirmedBy.trim());
+    assert.equal(stamp.entries["app/dev"]!.planHash.length, 64);
+    assert.equal(stamp.entries["app/dev"]!.mode, "autonomous");
+    const otherTimeout = run([
+      "worker",
+      "--module",
+      module,
+      "--enable",
+      "--once",
+      "--step-timeout-ms",
+      "60000",
+    ]);
+    assert.equal(otherTimeout.status, 0, otherTimeout.stderr);
+    assert.doesNotMatch(otherTimeout.stderr, /one-time confirmation/);
+    const shifted = run(["worker", "--module", module, "--enable", "--once"], {
+      LOOPITER_NAMESPACE: "env/other",
+    });
+    assert.equal(shifted.status, 1);
+    assert.match(shifted.stderr, /one-time confirmation/);
+    assert.equal(
+      JSON.parse(await readFile(join(root, ".state", "activation.json"), "utf8")).entries[
+        "env/other"
+      ],
+      undefined,
+    );
+    const planPath = join(root, "integration-plan.json");
+    const storedPlan = JSON.parse(await readFile(planPath, "utf8"));
+    storedPlan.budget = { tokens: 1000 };
+    await writeFile(planPath, JSON.stringify(storedPlan));
+    const changedBudget = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(changedBudget.status, 1);
+    assert.match(changedBudget.stderr, /one-time confirmation/);
+    delete storedPlan.budget;
+    storedPlan.namespace = "app/other";
+    await writeFile(planPath, JSON.stringify(storedPlan));
+    const freshNamespace = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(freshNamespace.status, 1);
+    assert.match(freshNamespace.stderr, /one-time confirmation/);
+    storedPlan.namespace = "app/dev";
+    storedPlan.audit.minimumUnits = 60;
+    await writeFile(planPath, JSON.stringify(storedPlan));
+    const changedAudit = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(changedAudit.status, 1);
+    assert.match(changedAudit.stderr, /one-time confirmation/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("documented worker recipe follows plan.mode recommend", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-recipe-"));
+  try {
+    const destination = join(root, "setup");
+    await initializeSelfHosted(destination);
+    const readme = await readFile(join(destination, "README.md"), "utf8");
+    const recipe = readme
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.includes("loopiter worker") && !line.includes("--mode"));
+    assert.ok(recipe);
+    assert.match(recipe, /--enable --once/);
+    assert.doesNotMatch(recipe, /--mode/);
+    const planPath = join(destination, "integration-plan.json");
+    const plan = JSON.parse(await readFile(planPath, "utf8"));
+    plan.mode = "recommend";
+    plan.namespace = "app/dev";
+    await writeFile(planPath, JSON.stringify(plan));
+    const module = join(destination, "application.mjs");
+    await writeFile(module, "export {};\n");
+    const cli = new URL("../src/cli.js", import.meta.url);
+    const result = spawnSync(
+      process.execPath,
+      [cli.pathname, "worker", "--module", module, "--enable", "--once"],
+      { cwd: destination, encoding: "utf8", input: "" },
+    );
+    assert.match(result.stderr, /effective mode recommend \(source: plan\)/);
+    assert.doesNotMatch(result.stderr, /effective mode autonomous/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("failed autonomous preflight does not record confirmation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-preflight-"));
+  try {
+    const module = join(root, "application.mjs");
+    const entry = new URL("../src/index.js", import.meta.url).href;
+    await writeFile(
+      join(root, "integration-plan.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        language: "node",
+        mode: "autonomous",
+        selfImproving: true,
+        namespace: "app/dev",
+        stepTimeoutMs: 120000,
+        audit: {
+          method: "paired-hoeffding",
+          minimumImprovement: 0.05,
+          range: [0, 1],
+          alpha: 0.05,
+          minimumUnits: 50,
+        },
+      }),
+    );
+    await writeFile(
+      module,
+      `
+import { FeedbackLoop, InMemoryStore } from ${JSON.stringify(entry)};
+export async function createIntegration() {
+  if (!process.env.DATABASE_URL) throw Error("DATABASE_URL is required.");
+  if (process.env.DATABASE_URL !== "postgres://reachable") throw Error("registry unreachable");
+  const loop = new FeedbackLoop({ store: new InMemoryStore(), namespace: "app/dev" });
+  return { loop, workflows: [], close: async () => { await loop.close(); } };
+}
+`,
+    );
+    const cli = new URL("../src/cli.js", import.meta.url);
+    const baseEnv = { ...process.env };
+    delete baseEnv.DATABASE_URL;
+    const run = (env: NodeJS.ProcessEnv) =>
+      spawnSync(
+        process.execPath,
+        [
+          cli.pathname,
+          "worker",
+          "--module",
+          module,
+          "--enable",
+          "--confirm-activation",
+          "--once",
+        ],
+        { cwd: root, encoding: "utf8", input: "", env: { ...baseEnv, ...env } },
+      );
+    const missing = run({});
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /DATABASE_URL is required/);
+    await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
+    const unreachable = run({ DATABASE_URL: "postgres://down" });
+    assert.equal(unreachable.status, 1);
+    assert.match(unreachable.stderr, /registry unreachable/);
+    await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
+    const ready = run({ DATABASE_URL: "postgres://reachable" });
+    assert.equal(ready.status, 1, ready.stderr);
+    const stamp = JSON.parse(await readFile(join(root, ".state", "activation.json"), "utf8")) as {
+      entries: Record<string, { mode: string }>;
+    };
+    assert.equal(stamp.entries["app/dev"]?.mode, "autonomous");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("step timeout accepts only decimal integers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-timeout-"));
+  const cli = new URL("../src/cli.js", import.meta.url);
+  const run = (args: string[]) =>
+    spawnSync(process.execPath, [cli.pathname, ...args], {
+      cwd: root,
+      encoding: "utf8",
+      input: "",
+    });
+  try {
+    for (const value of ["1e5", "120000.0", "0x1e240"]) {
+      const result = run([
+        "worker",
+        "--module",
+        "missing.mjs",
+        "--enable",
+        "--step-timeout-ms",
+        value,
+        "--once",
+      ]);
+      assert.equal(result.status, 1, value);
+      assert.match(result.stderr, /decimal integer/);
+      assert.throws(() => parseStepTimeout(value), /decimal integer/);
+    }
+    assert.equal(parseStepTimeout("120000"), 120000);
+    const module = join(root, "application.mjs");
+    await writeFile(module, "export {};\n");
+    for (const literal of ["1e5", "120000.0"]) {
+      await writeFile(
+        join(root, "integration-plan.json"),
+        `{"schemaVersion":2,"language":"node","mode":"recommend","selfImproving":false,"namespace":"app/dev","stepTimeoutMs":${literal}}\n`,
+      );
+      assert.throws(() => readWorkerSettings(module), /decimal integer/);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

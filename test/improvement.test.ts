@@ -7,6 +7,7 @@ import {
   ImprovementController,
   prepareDataset,
   compare,
+  minimumCertifiableAuditUnits,
   type AutonomyPolicy,
   type DatasetSnapshot,
   type ImprovementWorkflow,
@@ -186,11 +187,18 @@ function setup(
       metrics: { errors: s.productionErrors ?? 0 },
     }),
   };
-  const controller = () =>
+  const controller = (
+    extra: {
+      callbackTimeoutMs?: number;
+      stepTimeoutMs?: number;
+      tickTimeoutMs?: number;
+    } = {},
+  ) =>
     new ImprovementController(loop, {
       mode: "autonomous",
       selfImproving: true,
       workflows: [workflow],
+      ...extra,
     });
   return {
     loop,
@@ -686,8 +694,8 @@ test("callback timeout ignores late results and retains spending", async () => {
   const r = await c.tick("classification");
   finish();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(r.state, "failed");
-  assert.equal(r.reason, "timeout");
+  assert.equal(r.state, "proposing");
+  assert.equal(r.reason, "timed_out");
   assert.equal(r.budget.tokens, 100);
   assert.equal((await c.getRun(r.runId!))!.data.candidateIds.length, 0);
 });
@@ -816,4 +824,152 @@ test("batch configuration is pinned and invalid batch sizes are rejected", () =>
   const x = setup();
   x.workflow.evaluationBatchSize = 33;
   assert.throws(() => x.controller(), { code: "invalid_input" });
+});
+test("step timeout can be raised and a timed-out audit is not reused", async () => {
+  const objective = {
+    minimumImprovement: 0.05,
+    range: [0, 1] as [number, number],
+    alpha: 0.05,
+  };
+  assert.equal(minimumCertifiableAuditUnits(objective), 7);
+  assert.ok(minimumCertifiableAuditUnits(objective, 0.2) > 7);
+  const sized = setup();
+  sized.workflow.policy.minimumAuditUnits = 7;
+  sized.data.audit = sized.data.audit.slice(0, 7);
+  assert.equal(
+    compare(
+      {
+        cases: sized.data.audit.map((row) => ({
+          id: row.id,
+          baseline: 0,
+          candidate: 1,
+        })),
+        metrics: { errors: 0 },
+        estimatedServingCost: 0,
+      },
+      sized.data.audit,
+      sized.workflow.policy,
+      true,
+    ).passed,
+    true,
+  );
+  const impossible = setup();
+  impossible.workflow.policy.minimumAuditUnits = 5;
+  impossible.data.audit = impossible.data.audit.slice(0, 5);
+  assert.equal(
+    compare(
+      {
+        cases: impossible.data.audit.map((row) => ({
+          id: row.id,
+          baseline: 0,
+          candidate: 1,
+        })),
+        metrics: { errors: 0 },
+        estimatedServingCost: 0,
+      },
+      impossible.data.audit,
+      impossible.workflow.policy,
+      true,
+    ).passed,
+    false,
+  );
+  assert.equal(
+    (await impossible.controller().tick("classification")).reason,
+    "audit_size_cannot_certify",
+  );
+  const x = setup();
+  assert.doesNotThrow(() => x.controller({ stepTimeoutMs: 180000 }));
+  assert.throws(() => x.controller({ stepTimeoutMs: 3_600_001 }), {
+    code: "invalid_input",
+  });
+  const original = x.workflow.evaluate;
+  let auditCalls = 0;
+  x.workflow.evaluate = async (input, context) => {
+    if (input.partition === "audit") {
+      auditCalls += 1;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 1000);
+        context.signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
+    return original(input, context);
+  };
+  const controller = x.controller({ callbackTimeoutMs: 40 });
+  let result = await controller.tick("classification");
+  for (let i = 0; i < 5 && result.state !== "timed_out"; i++)
+    result = await controller.tick("classification");
+  assert.equal(result.state, "timed_out");
+  assert.equal(result.reason, "timed_out");
+  const run = (await controller.getRun(result.runId!))!;
+  const coordination = await x.loop.list("coordination", { limit: 1000 });
+  assert.equal(
+    coordination.items.some((row) => row.id.startsWith("audit:")),
+    true,
+  );
+  const sent = auditCalls;
+  x.data.version = "export-reuse";
+  x.data.optimization = x.data.optimization.map((row) => ({
+    ...row,
+    id: `reuse-${row.id}`,
+    episodeId: `reuse-${row.episodeId}`,
+    entityId: `reuse-${row.entityId}`,
+  }));
+  let reused = await controller.tick("classification");
+  for (let i = 0; i < 8 && reused.reason !== "audit_consumed"; i++)
+    reused = await controller.tick("classification");
+  assert.equal(reused.reason, "audit_consumed");
+  assert.equal(auditCalls, sent);
+  const target = coordination.items.find((row) => row.id.startsWith("target:"));
+  assert.equal(target?.data.consecutiveFailures ?? 0, 0);
+  assert.equal(target?.data.consecutiveTimeouts, 1);
+  for (const id of run.data.candidateIds)
+    assert.equal((await x.loop.getCandidate(id))?.status, "rejected");
+  const stale = await x.loop.createCandidate({
+    target: x.workflow.policy.target,
+    proposedChange: { score: 0.4 },
+    evidence: {},
+    risk: "low",
+    metadata: { runId: run.id },
+  });
+  await x.controller().tick("classification");
+  assert.equal((await x.loop.getCandidate(stale.id))?.status, "rejected");
+  for (let cycle = 2; cycle <= 3; cycle++) {
+    x.data.version = `export-${cycle}`;
+    x.data.optimization = x.data.optimization.map((row) => ({
+      ...row,
+      id: `${cycle}-${row.id}`,
+      episodeId: `${cycle}-${row.episodeId}`,
+      entityId: `${cycle}-${row.entityId}`,
+    }));
+    x.data.audit = x.data.audit.map((row) => ({
+      ...row,
+      id: `${cycle}-${row.id}`,
+      episodeId: `${cycle}-${row.episodeId}`,
+      entityId: `${cycle}-${row.entityId}`,
+    }));
+    result = await controller.tick("classification");
+    for (let i = 0; i < 5 && result.state !== "timed_out"; i++)
+      result = await controller.tick("classification");
+    assert.equal(result.state, "timed_out");
+  }
+  x.data.version = "export-4";
+  x.data.optimization = x.data.optimization.map((row) => ({
+    ...row,
+    id: `4-${row.id}`,
+    episodeId: `4-${row.episodeId}`,
+    entityId: `4-${row.entityId}`,
+  }));
+  x.data.audit = x.data.audit.map((row) => ({
+    ...row,
+    id: `4-${row.id}`,
+    episodeId: `4-${row.episodeId}`,
+    entityId: `4-${row.entityId}`,
+  }));
+  assert.equal(
+    (await controller.tick("classification")).reason,
+    "repeated_timeouts_require_review",
+  );
 });

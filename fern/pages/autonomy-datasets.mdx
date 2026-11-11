@@ -142,6 +142,14 @@ lower = favorable_mean_difference - width * sqrt(2 * ln(1 / alpha) / n)
 Audit passes only if sample count and all independent guardrails pass and
 `lower > minimumImprovement`. A tie is not acceptance.
 
+The smallest audit that can ever clear a minimum improvement `M` at confidence `alpha` is the size where even a perfect gain of the full range width `W` still has a lower bound above `M`:
+
+```text
+n > 2 * ln(1 / alpha) / (1 - M / W)^2
+```
+
+`minimumCertifiableAuditUnits` (Python: `minimum_certifiable_audit_units`) returns that count, or the count for a smaller gain you pass in. For `M` 0.05, width 1 and alpha 0.05, five units cannot certify any gain; at least 7 are required. Doctor and an autonomous worker refuse a configured audit below that floor. The comparison stays strict and the confidence threshold is not lowered. A custom audit method is not sized by this formula.
+
 For illustration, width 1, alpha 0.05 and 500 units give a penalty of about 0.1095.
 An observed gain of 0.10 therefore would not establish a positive lower bound under
 this conservative method. If the required minimum is 0.03, an observed 0.15 gain would

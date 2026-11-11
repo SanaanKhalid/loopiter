@@ -50,11 +50,12 @@ and recovery. A fresh plan is schemaVersion 2 (`autonomous-default`): mode
 `autonomous` and self-improving on, and it still starts incomplete. `doctor`
 checks declared configuration; `verify` tests isolated simulated SDK mechanics.
 Your agent must still verify the real application. After both succeed, the
-emitted worker recipe is `--enable --mode autonomous`. `--enable` authorizes
-improvement work and provider spending inside the existing gates; it does not
-bypass audit, budgets, or rollback. `--mode recommend` stores proposals and
-does not apply. Omitting `--mode` on the worker, or constructing
-`ImprovementController` without a mode, still selects recommend. Existing
+emitted worker recipe is `--enable` without `--mode`, so `plan.mode` controls
+that command. `--enable` authorizes improvement work and provider spending
+inside the existing gates; it does not bypass audit, budgets, or rollback.
+`--mode recommend` stores proposals and does not apply. Omitting `--mode`
+follows `plan.mode`. Constructing `ImprovementController` without a mode still
+selects recommend. Existing
 schemaVersion 1 plans are left unchanged. No platform login or Loopiter project
 key is involved; you pay your own model/judge, database and hosting providers.
 
@@ -68,9 +69,9 @@ Release versions: `loopiter@0.3.0-alpha.1` and Python `loopiter==0.3.0a1`.
 It adds policy-bounded `ImprovementController` APIs in both languages, durable
 experiments, single-winner selection, production observation and recovery.
 Constructing the controller without a mode still recommends and does not apply.
-A fresh self-hosted init records autonomous mode and self-improving on; the
-worker spends only with `--enable`, and every audit, budget, and rollback gate
-remains. Installation never starts a worker or spends by itself.
+A fresh self-hosted init records autonomous mode and self-improving on. The
+worker follows `plan.mode` unless `--mode` is set, spends only with `--enable`,
+and every audit, budget, and rollback gate remains. Installation never starts a worker or spends by itself.
 
 See [autonomy guide source](fern/pages/autonomous.mdx), [migration](docs/autonomy-migration.md),
 [simulation workflows](examples/autonomous/README.md), and the

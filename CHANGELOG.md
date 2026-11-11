@@ -4,8 +4,18 @@
 
 ### Minor
 
+- The controller step timeout is configurable from the controller, `stepTimeoutMs` in the integration plan, and `--step-timeout-ms`. The default remains 120 seconds and the deadline cannot exceed one hour. A step that fails only by timeout is recorded as `timed_out`. Audit rows already sent to the model stay reserved, and the timeout does not increment the consecutive-failure stop. It is retried once; a second timeout ends that run. Repeated timeouts pause separately from real failures and still cannot deploy.
+- Doctor and an autonomous worker refuse an audit size that cannot certify the configured gain at the configured confidence. The paired Hoeffding minimum is `minimumCertifiableAuditUnits` / `minimum_certifiable_audit_units`. Fresh plans record an audit size that can pass. Confidence thresholds are unchanged.
+- The worker uses `plan.mode` when `--mode` is omitted. The flag overrides the plan, and the effective mode and step timeout are logged with their source.
+- The starter Postgres registry can update a setup's configuration hash without replacing the artifact version.
+- Candidates left proposed by a timed-out or cancelled run are rejected when the run ends, and stale ones are rejected on startup.
+- The first `--enable` run in autonomous mode asks for the one-time activation confirmation. The stamp is written only after integration preflight succeeds, in `.state/activation.json`, with who confirmed it, when, and the effective mode that ran. Its hash uses `LOOPITER_NAMESPACE` when set, otherwise the plan namespace, plus the plan's policy, budget, and step timeout. A one-off `--step-timeout-ms` is not part of the hash. A failed start does not record confirmation. The worker recipe omits `--mode` so `plan.mode` controls it.
+- Audit rows are reserved when they are sent to the model. A timed-out audit cannot be reused by a later run.
+- Doctor describes `minimumImprovement` as the certification floor. For the default objective, 7 units is the full-range floor; a gain of 0.05 cannot be certified, while gains of 0.10 and 0.20 need 2397 and 267 units.
+- Node `--step-timeout-ms` and `stepTimeoutMs` in the plan accept only decimal integers. Scientific notation, hex, and trailing `.0` are rejected, matching Python.
+
 - Fresh self-hosted `init` writes onboarding plan schemaVersion 2, preset `autonomous-default`, in Node and Python: `mode` autonomous and self-improving on. Doctor still accepts schemaVersion 1 plans and does not rewrite them.
-- `ImprovementController` constructed without a mode still recommends and does not apply. The worker still requires `--enable` before spending. New setup recipes pass `--enable --mode autonomous` after doctor and verify. `--mode recommend` remains one flag away, and omitting `--mode` still selects recommend.
+- `ImprovementController` constructed without a mode still recommends and does not apply. The worker still requires `--enable` before spending. New setup recipes pass `--enable --mode autonomous` after doctor and verify. `--mode recommend` remains one flag away. Omitting `--mode` follows `plan.mode`.
 - `--enable` authorizes improvement work and provider spending inside the existing gates. Autonomous mode still fails closed without an audit partition, a budget, or that flag. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks are unchanged. No storage migration.
 - Before the first `--enable --mode autonomous` run, the agent guide and init recipe require one-time explicit confirmation from the human. A checklist, doctor report, or plan output is not that confirmation. Later autonomous runs do not add per-candidate approval.
 

@@ -97,3 +97,39 @@ test(
     }
   },
 );
+
+test(
+  "starter registry can update a setup configuration hash",
+  { skip: !process.env.LOOPITER_TEST_DATABASE_URL },
+  async () => {
+    const pool = new Pool({
+        connectionString: process.env.LOOPITER_TEST_DATABASE_URL,
+      }),
+      namespace = `config-hash/${randomUUID()}`,
+      registry = new PostgresArtifactRegistry(pool, namespace, {
+        kind: "prompt",
+        key: "classifier",
+      });
+    try {
+      await migrateArtifactRegistry(pool);
+      await registry.initialize({ fragment: "v1" }, "hash-a");
+      const before = await registry.current();
+      await registry.updateConfiguration("hash-b");
+      const after = await registry.current();
+      assert.equal(after.version, before.version);
+      assert.equal(after.configurationHash, "hash-b");
+      assert.deepEqual(after.artifact, { fragment: "v1" });
+      await registry.updateConfiguration("hash-b");
+      assert.equal((await registry.current()).configurationHash, "hash-b");
+      await assert.rejects(registry.updateConfiguration("  "), /configurationHash/);
+    } finally {
+      for (const table of [
+        "loopiter_example_receipts",
+        "loopiter_example_targets",
+        "loopiter_example_artifacts",
+      ])
+        await pool.query(`DELETE FROM ${table} WHERE scope=$1`, [registry.scope]);
+      await pool.end();
+    }
+  },
+);

@@ -88,8 +88,9 @@ lease checks. Autonomous mode fails closed without an audit partition, a budget,
 or `--enable`. Omit `--enable` and the worker refuses to start.
 
 `--mode recommend` stores proposals and does not apply a candidate. Omitting
-`--mode` still selects recommend, as does constructing the controller without a
-mode. One tick advances one durable phase. Omit `--once` for a foreground worker
+`--mode` uses `plan.mode`; the flag overrides the plan. Constructing the
+controller without a mode still recommends and does not apply. One tick advances
+one durable phase. Omit `--once` for a foreground worker
 ticking every 30 seconds, and supervise it with your deployment's process
 manager. SDK budgets, leases, independent audit, observation and rollback gates
 remain in force. Inspect pending outcomes before any retries.

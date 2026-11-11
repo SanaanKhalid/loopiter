@@ -84,6 +84,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run typecheck:dts
       - run: npm run test:mock-support
       - run: npm run test:package
       - run: npm run test:docs

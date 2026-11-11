@@ -333,3 +333,63 @@ def compare(result, rows, p, audit=False):
         "lower": lower,
         "sample_count": n,
     }
+
+
+def minimum_certifiable_audit_units(objective, gain=None):
+    """Smallest fixed audit whose paired Hoeffding bound can clear the minimum.
+
+    Omit gain to use the full score range, the largest effect this bound can see.
+    A smaller audit cannot certify that gain at the configured alpha.
+    """
+    lo, hi = objective["range"]
+    width = hi - lo
+    minimum = objective["minimum_improvement"]
+    alpha = objective["alpha"]
+    v.finite(minimum, "minimum improvement", 0)
+    v.finite(alpha, "alpha")
+    if not width > 0 or not 0 < alpha < 1:
+        v.fail("invalid_policy", "Cannot size an audit for this objective.")
+    effect = width if gain is None else gain
+    v.finite(effect, "gain", 0)
+    if effect > width:
+        v.fail("invalid_policy", "Gain cannot exceed the declared score range.")
+    if effect <= minimum:
+        v.fail(
+            "invalid_policy",
+            "No audit size can certify a gain that does not exceed the minimum improvement.",
+        )
+    gap = (effect - minimum) / width
+    n = math.floor(2 * math.log(1 / alpha) / (gap * gap) + 1e-9) + 1
+
+    def clears(size):
+        return effect - width * math.sqrt(2 * math.log(1 / alpha) / size) > minimum
+
+    while not clears(n):
+        n += 1
+        if n > 100_000_000:
+            v.fail("invalid_policy", "Audit size needed to certify this gain is not usable.")
+    return n
+
+
+def describe_audit_floor(objective):
+    """Explain that minimum_improvement is a floor, and size a few gains above it."""
+    floor = minimum_certifiable_audit_units(objective)
+    samples = []
+    for gain in (0.05, 0.1, 0.2):
+        label = f"{gain:.2f}"
+        try:
+            units = minimum_certifiable_audit_units(objective, gain)
+        except v.LoopiterError:
+            samples.append(
+                f"a gain of {label} does not exceed the minimum improvement, "
+                "so no sample size can certify it"
+            )
+        else:
+            samples.append(f"a gain of {label} needs {units} units")
+    minimum = objective["minimum_improvement"]
+    alpha = objective["alpha"]
+    return (
+        f"minimumImprovement {minimum} is the lower bound a certified gain must clear, "
+        f"not a gain {floor} units can certify. At least {floor} units are required before "
+        f"even a full-range effect can pass. At alpha {alpha}, {'; '.join(samples)}."
+    )

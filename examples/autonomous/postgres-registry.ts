@@ -63,6 +63,32 @@ export class PostgresArtifactRegistry implements ArtifactRegistry {
       c.release(discard);
     }
   }
+  /**
+   * Record a serving-configuration change that keeps the current artifact version.
+   * Call this only when no improvement run is active. An in-flight run fences the
+   * previous hash and fails closed instead of deploying onto the new configuration.
+   */
+  async updateConfiguration(configurationHash: string) {
+    nonempty(configurationHash, "configurationHash");
+    await this.transaction(async (c) => {
+      const active = (
+        await c.query(
+          "SELECT version,configuration_hash FROM loopiter_example_targets WHERE scope=$1 FOR UPDATE",
+          [this.scope],
+        )
+      ).rows[0];
+      if (!active)
+        fail(
+          "not_found",
+          "Explicitly initialize the application registry first.",
+        );
+      if (active.configuration_hash === configurationHash) return;
+      await c.query(
+        "UPDATE loopiter_example_targets SET configuration_hash=$2 WHERE scope=$1",
+        [this.scope, configurationHash],
+      );
+    });
+  }
   /** Explicit initial seed only. Never overwrite an existing serving artifact. */
   async initialize(artifact: JsonValue, configurationHash: string) {
     nonempty(configurationHash, "configurationHash");
