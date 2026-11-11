@@ -149,7 +149,7 @@ export default function Home() {
           </div>
           <div className="mode-list">
             <div className="mode-row"><span>01</span><strong>OBSERVE</strong><p>Inspect eligible evidence without proposing a change.</p><b>NO MUTATION</b></div>
-            <div className="mode-row"><span>02</span><strong>RECOMMEND</strong><p>Store bounded proposals. Nothing is approved or deployed.</p><b>OMIT MODE</b></div>
+            <div className="mode-row"><span>02</span><strong>RECOMMEND</strong><p>Store bounded proposals. Nothing is approved or deployed.</p><b>CONTROLLER DEFAULT</b></div>
             <div className="mode-row"><span>03</span><strong>EXPERIMENT</strong><p>Compare candidates and audit them. Callbacks run in your process.</p><b>AUDIT ONLY</b></div>
             <div className="mode-row selected"><span>04</span><strong>AUTONOMOUS</strong><p>Fresh init records this mode. Approve, apply, observe, retain, or roll back inside the policy.</p><b>FRESH INIT</b></div>
           </div>
