@@ -69,14 +69,19 @@ const MAX_STEP_MS = 7_200_000;
 const MAX_TICK_MS = 7_260_000;
 const FAILURE_DETAIL_MAX = 500;
 
-/** Drop endpoint URLs, their hosts, and credential headers, then truncate. */
+/** Redact provider URLs, hosts, and credential material, then truncate. */
 export function failureDetailText(text: string): string {
   const redacted = text
     .replace(/https?:\/\/[^\s"'<>]+/gi, "[redacted]")
-    .replace(/api-key\\?"?\s*[:=]\s*\\?"?[^"\\\s,}]+/gi, "api-key:[redacted]")
+    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/\bsk-[A-Za-z0-9._~+/-]{8,}/gi, "[redacted]")
     .replace(
-      /authorization\\?"?\s*[:=]\s*\\?"?(?:bearer\s+)?[^"\\\s,}]+/gi,
-      "authorization:[redacted]",
+      /\\?["']?(?:ocp-apim-subscription-key|x-api-key|api[_-]?key)\\?["']?\s*[:=]\s*\\?["']?[^\s"'&,}\\]+/gi,
+      "[redacted]",
+    )
+    .replace(
+      /(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)+azure\.com(?![A-Za-z0-9.-])/gi,
+      "[redacted]",
     )
     .trim();
   if (redacted.length <= FAILURE_DETAIL_MAX) return redacted;

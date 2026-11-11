@@ -18,6 +18,7 @@ from loopiter import (
     LoopiterError,
     assign_cohort,
 )
+from loopiter.improvement import failure_detail_text
 from loopiter.improvement_evidence import (
     compare,
     minimum_certifiable_audit_units,
@@ -771,3 +772,55 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(detail), 500)
         run = await controller.get_run(result["run_id"])
         self.assertEqual(run["data"]["detail"], detail)
+
+    def test_failure_text_redacts_hosts_and_credential_material(self):
+        text = " ".join(
+            [
+                "contoso.openai.azure.com",
+                "westus.cognitiveservices.azure.com",
+                "prod.azure.com",
+                "Bearer sk-bearersecretvalue",
+                "sk-baresecretvalue99",
+                '{"api_key":"json-secret-value"}',
+                "?api-key=query-secret-value&x=1",
+                "x-api-key: header-secret-value",
+                "apiKey=kv-secret-value",
+                "Ocp-Apim-Subscription-Key=ocp-secret-value",
+                "https://example.com/path?q=1",
+                "y" * 800,
+            ]
+        )
+        detail = failure_detail_text(text)
+        for secret in (
+            "contoso.openai.azure.com",
+            "westus.cognitiveservices.azure.com",
+            "prod.azure.com",
+            "sk-bearersecretvalue",
+            "sk-baresecretvalue99",
+            "json-secret-value",
+            "query-secret-value",
+            "header-secret-value",
+            "kv-secret-value",
+            "ocp-secret-value",
+            "example.com",
+        ):
+            self.assertNotIn(secret, detail, secret)
+        self.assertLessEqual(len(detail), 500)
+        self.assertIn("[redacted]", detail)
+
+    async def test_chained_exception_text_is_sanitized(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+
+        async def propose(_data, _context):
+            raise RuntimeError("wrapper") from RuntimeError(
+                "contoso.openai.azure.com sk-nestedsecretvalue api_key=nested-json-secret"
+            )
+
+        self.workflow = replace(self.workflow, propose=propose)
+        result = await self.controller().tick("classification")
+        detail = result["detail"]
+        self.assertIn("wrapper", detail)
+        self.assertIn("[redacted]", detail)
+        self.assertNotIn("contoso.openai.azure.com", detail)
+        self.assertNotIn("sk-nestedsecretvalue", detail)
+        self.assertNotIn("nested-json-secret", detail)

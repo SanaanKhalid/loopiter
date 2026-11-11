@@ -203,10 +203,29 @@ export function effectiveBudgetFingerprint(
   );
 }
 
+function writeActivationEntries(
+  modulePath: string,
+  entries: Record<string, ActivationStamp>,
+): void {
+  const path = activationFile(modulePath);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 1, entries }, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  renameSync(temporary, path);
+}
+
 export function activationBudgetCurrent(modulePath: string, budgetHash: string): boolean {
   const namespace = effectiveNamespace(loadIntegrationPlan(modulePath));
-  const stamp = readActivationEntries(modulePath)[namespace];
-  return !!stamp && stamp.budgetHash === budgetHash;
+  const entries = readActivationEntries(modulePath);
+  const stamp = entries[namespace];
+  if (!stamp) return false;
+  if (stamp.budgetHash === budgetHash) return true;
+  if (typeof stamp.budgetHash === "string" && stamp.budgetHash.length > 0) return false;
+  entries[namespace] = { ...stamp, budgetHash };
+  writeActivationEntries(modulePath, entries);
+  return true;
 }
 
 export function recordAutonomousActivation(
@@ -227,13 +246,7 @@ export function recordAutonomousActivation(
     confirmedBy: actor.trim() || "unknown",
     confirmedAt: new Date().toISOString(),
   };
-  const path = activationFile(modulePath);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 1, entries }, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  renameSync(temporary, path);
+  writeActivationEntries(modulePath, entries);
 }
 
 export function clearAutonomousActivation(modulePath: string): void {
@@ -245,17 +258,14 @@ export function clearAutonomousActivation(modulePath: string): void {
   if (Object.keys(entries).length === 0) {
     try {
       unlinkSync(path);
-    } catch {
-      // Already removed.
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return;
+      throw error;
     }
     return;
   }
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 1, entries }, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  renameSync(temporary, path);
+  writeActivationEntries(modulePath, entries);
 }
 
 export function readWorkerSettings(
@@ -667,13 +677,6 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
         recordActivation = true;
       }
     }
-    if (recordActivation)
-      recordAutonomousActivation(
-        options.module,
-        activationActor(),
-        settings.mode,
-        budgetHash,
-      );
     const controller = new ImprovementController(integration.loop, {
       workflows: integration.workflows,
       mode: settings.mode,
@@ -681,15 +684,20 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
       stepTimeoutMs: settings.stepTimeoutMs,
     });
     const results: TickResult[] = [];
-    let activationOpen = recordActivation;
+    let pendingActivation = recordActivation;
     do {
       for (const workflow of integration.workflows) {
         if (options.signal?.aborted) break;
         const result = await controller.tick(workflow.id, options.signal);
-        if (activationOpen) {
-          activationOpen = false;
-          if (result.state === "failed" || result.reason === "callback_failed")
-            clearAutonomousActivation(options.module);
+        if (pendingActivation) {
+          pendingActivation = false;
+          if (result.state !== "failed" && result.reason !== "callback_failed")
+            recordAutonomousActivation(
+              options.module,
+              activationActor(),
+              settings.mode,
+              budgetHash,
+            );
         }
         if (options.once) results.push(result);
         options.onTick?.(result);

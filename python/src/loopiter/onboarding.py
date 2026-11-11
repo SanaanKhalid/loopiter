@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import errno
 import getpass
 import importlib
 import importlib.resources
@@ -229,11 +230,33 @@ def effective_budget_fingerprint(workflows):
     )
 
 
+def _write_activation_entries(module_path, entries):
+    path = _activation_path(module_path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps({"schemaVersion": 1, "entries": entries}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
 def activation_budget_current(module_path, budget_hash):
     plan = _load_plan(module_path)
     namespace = effective_namespace(plan)
-    stamp = _activation_entries(module_path).get(namespace)
-    return isinstance(stamp, dict) and stamp.get("budgetHash") == budget_hash
+    entries = _activation_entries(module_path)
+    stamp = entries.get(namespace)
+    if not isinstance(stamp, dict):
+        return False
+    recorded = stamp.get("budgetHash")
+    if recorded == budget_hash:
+        return True
+    if isinstance(recorded, str) and recorded:
+        return False
+    entries[namespace] = {**stamp, "budgetHash": budget_hash}
+    _write_activation_entries(module_path, entries)
+    return True
 
 
 def record_autonomous_activation(module_path, actor=None, mode=None, budget_hash=None):
@@ -256,15 +279,7 @@ def record_autonomous_activation(module_path, actor=None, mode=None, budget_hash
     if budget_hash:
         entry["budgetHash"] = budget_hash
     entries[namespace] = entry
-    path = _activation_path(module_path)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps({"schemaVersion": 1, "entries": entries}, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
+    _write_activation_entries(module_path, entries)
 
 
 def clear_autonomous_activation(module_path):
@@ -278,17 +293,12 @@ def clear_autonomous_activation(module_path):
     if not entries:
         try:
             path.unlink()
-        except OSError:
-            pass
+        except OSError as error:
+            if error.errno == errno.ENOENT:
+                return
+            raise
         return
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps({"schemaVersion": 1, "entries": entries}, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
+    _write_activation_entries(module_path, entries)
 
 
 def _audit_plan_messages(plan):
@@ -638,10 +648,6 @@ async def run_self_hosted_worker(
                         "Pass --confirm-activation or --yes when stdin is not a terminal."
                     )
                 record_activation = True
-        if record_activation:
-            record_autonomous_activation(
-                module_path, mode=settings["mode"], budget_hash=budget_hash
-            )
         controller = ImprovementController(
             integration["loop"],
             workflows=integration["workflows"],
@@ -650,16 +656,21 @@ async def run_self_hosted_worker(
             step_timeout_ms=settings["step_timeout_ms"],
         )
         results = []
-        activation_open = record_activation
+        pending_activation = record_activation
         while not cancellation.is_set():
             for workflow in integration["workflows"]:
                 if cancellation.is_set():
                     break
                 result = await controller.tick(workflow.id, cancellation)
-                if activation_open:
-                    activation_open = False
-                    if result.get("state") == "failed" or result.get("reason") == "callback_failed":
-                        clear_autonomous_activation(module_path)
+                if pending_activation:
+                    pending_activation = False
+                    if (
+                        result.get("state") != "failed"
+                        and result.get("reason") != "callback_failed"
+                    ):
+                        record_autonomous_activation(
+                            module_path, mode=settings["mode"], budget_hash=budget_hash
+                        )
                 if once:
                     results.append(result)
                 if on_tick:

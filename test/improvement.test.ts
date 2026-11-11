@@ -5,6 +5,7 @@ import {
   FeedbackLoop,
   InMemoryStore,
   ImprovementController,
+  failureDetailText,
   prepareDataset,
   compare,
   minimumCertifiableAuditUnits,
@@ -995,4 +996,38 @@ test("callback failure keeps a redacted truncated detail", async () => {
   assert.equal(detail.includes(key), false);
   assert.ok(detail.length <= 500);
   assert.equal((await controller.getRun(result.runId!))?.data.detail, detail);
+});
+
+test("failure text redacts provider hosts and credential material", () => {
+  const text = [
+    "contoso.openai.azure.com",
+    "westus.cognitiveservices.azure.com",
+    "prod.azure.com",
+    "Bearer sk-bearersecretvalue",
+    "sk-baresecretvalue99",
+    '{"api_key":"json-secret-value"}',
+    "?api-key=query-secret-value&x=1",
+    "x-api-key: header-secret-value",
+    "apiKey=kv-secret-value",
+    "Ocp-Apim-Subscription-Key=ocp-secret-value",
+    "https://example.com/path?q=1",
+    "y".repeat(800),
+  ].join(" ");
+  const detail = failureDetailText(text);
+  for (const secret of [
+    "contoso.openai.azure.com",
+    "westus.cognitiveservices.azure.com",
+    "prod.azure.com",
+    "sk-bearersecretvalue",
+    "sk-baresecretvalue99",
+    "json-secret-value",
+    "query-secret-value",
+    "header-secret-value",
+    "kv-secret-value",
+    "ocp-secret-value",
+    "example.com",
+  ])
+    assert.equal(detail.includes(secret), false, secret);
+  assert.ok(detail.length <= 500);
+  assert.match(detail, /\[redacted\]/);
 });

@@ -1,14 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { chmodSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
+  autonomyPlanHash,
+  clearAutonomousActivation,
   initializeSelfHosted,
   inspectSelfHostedSetup,
   parseStepTimeout,
+  recordAutonomousActivation,
   autonomousActivationPrompt,
   readAgentGuide,
   readReference,
@@ -634,10 +638,7 @@ export async function createIntegration() {
     await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
     const ready = run({ DATABASE_URL: "postgres://reachable" });
     assert.equal(ready.status, 1, ready.stderr);
-    const stamp = JSON.parse(await readFile(join(root, ".state", "activation.json"), "utf8")) as {
-      entries: Record<string, { mode: string }>;
-    };
-    assert.equal(stamp.entries["app/dev"]?.mode, "autonomous");
+    await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -812,7 +813,124 @@ export async function createIntegration() {
     assert.equal(failed.status, 0, failed.stderr);
     assert.match(failed.stdout, /callback_failed/);
     await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
+    const again = spawnSync(
+      process.execPath,
+      [cli.pathname, "worker", "--module", module, "--enable", "--once"],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(again.status, 1);
+    assert.match(again.stderr, /one-time confirmation/);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a legacy activation stamp is kept and gains the current budget hash", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-legacy-stamp-"));
+  try {
+    const module = join(root, "application.mjs");
+    const entry = new URL("../src/index.js", import.meta.url).href;
+    const policy = JSON.parse(
+      await readFile(
+        new URL("../../python/tests/fixtures/autonomy.json", import.meta.url),
+        "utf8",
+      ),
+    ).policy;
+    const plan = {
+      schemaVersion: 2,
+      language: "node",
+      mode: "autonomous",
+      selfImproving: true,
+      namespace: "app/dev",
+      stepTimeoutMs: 120000,
+      audit: {
+        method: "paired-hoeffding",
+        minimumImprovement: 0.05,
+        range: [0, 1],
+        alpha: 0.05,
+        minimumUnits: 50,
+      },
+    };
+    await writeFile(join(root, "integration-plan.json"), JSON.stringify(plan));
+    await writeFile(
+      module,
+      `
+import { FeedbackLoop, InMemoryStore } from ${JSON.stringify(entry)};
+export async function createIntegration() {
+ const loop = new FeedbackLoop({ store: new InMemoryStore(), namespace: 'cli/legacy' });
+ const policy = ${JSON.stringify(policy)};
+ const rows = (prefix, count, day) => Array.from({length: count}, (_, i) => ({id: prefix+i, episodeId: prefix+i, entityId: prefix+i, occurredAt: '2026-01-0'+day+'T00:00:00Z', observedAt: '2026-01-0'+day+'T01:00:00Z', source: policy.trustedSources[0], input:'test', label:'yes'}));
+ const workflow = {id:'cli', version:'1', optimizerVersion:'1', evaluatorVersion:'1', policy,
+  artifact: async()=>({artifactVersion:'baseline',configurationHash:'fixed'}),
+  dataset: async()=>({version:'1',optimization:rows('o',3,1),validation:rows('v',20,2),audit:rows('a',50,3)}),
+  propose: async()=>[{score:1}],
+  evaluate: async({examples})=>({cases:examples.map((row)=>({id:row.id,baseline:0,candidate:1})),metrics:{errors:0},estimatedServingCost:0}),
+  deployment:{apply:async()=>{throw Error('no')},rollback:async()=>{throw Error('no')},inspect:async()=>({status:'unknown'})},
+  observe:async()=>{throw Error('no')}};
+ return {loop, workflows:[workflow], close:async()=>{await loop.close();}};
+}
+`,
+    );
+    const confirmedAt = "2026-01-01T00:00:00.000Z";
+    await mkdir(join(root, ".state"), { recursive: true });
+    await writeFile(
+      join(root, ".state", "activation.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: {
+          "app/dev": {
+            planHash: autonomyPlanHash(plan, { namespace: "app/dev", mode: "autonomous" }),
+            mode: "autonomous",
+            confirmedBy: "legacy",
+            confirmedAt,
+          },
+        },
+      }),
+    );
+    const cli = new URL("../src/cli.js", import.meta.url);
+    const run = (args: string[]) =>
+      spawnSync(process.execPath, [cli.pathname, ...args], { cwd: root, encoding: "utf8" });
+    const first = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(first.status, 0, first.stderr);
+    const stamp = JSON.parse(await readFile(join(root, ".state", "activation.json"), "utf8")) as {
+      entries: Record<string, { budgetHash?: string; confirmedAt: string; confirmedBy: string }>;
+    };
+    assert.equal(stamp.entries["app/dev"]?.confirmedAt, confirmedAt);
+    assert.equal(stamp.entries["app/dev"]?.confirmedBy, "legacy");
+    assert.match(stamp.entries["app/dev"]?.budgetHash ?? "", /^[a-f0-9]{64}$/);
+    const again = run(["worker", "--module", module, "--enable", "--once"]);
+    assert.equal(again.status, 0, again.stderr);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("clearing a stamp surfaces a removal error and ignores a missing file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-clear-stamp-"));
+  const module = join(root, "application.mjs");
+  const state = join(root, ".state");
+  try {
+    await writeFile(module, "export {};\n");
+    await writeFile(
+      join(root, "integration-plan.json"),
+      JSON.stringify({ schemaVersion: 2, mode: "autonomous", namespace: "app/dev" }),
+    );
+    recordAutonomousActivation(module, "tester", "autonomous", "abc");
+    chmodSync(state, 0o500);
+    assert.throws(() => clearAutonomousActivation(module));
+    chmodSync(state, 0o700);
+    const stamp = JSON.parse(await readFile(join(state, "activation.json"), "utf8")) as {
+      entries: Record<string, { confirmedBy: string }>;
+    };
+    assert.equal(stamp.entries["app/dev"]?.confirmedBy, "tester");
+    await rm(join(state, "activation.json"));
+    clearAutonomousActivation(module);
+  } finally {
+    try {
+      chmodSync(state, 0o700);
+    } catch {
+      // The directory may already be writable.
+    }
     await rm(root, { recursive: true, force: true });
   }
 });

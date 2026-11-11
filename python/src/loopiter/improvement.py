@@ -38,29 +38,55 @@ FAILURE_DETAIL_MAX = 500
 # First pre-deployment timeout is retried. The next one ends the run as timed_out.
 STEP_TIMEOUT_ATTEMPTS = 2
 _FAILURE_URL = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
-_FAILURE_API_KEY = re.compile(
-    r"api-key\\?\"?\s*[:=]\s*\\?\"?[^\s\"\\,}]+",
+_FAILURE_BEARER = re.compile(r"\bBearer\s+\S+", re.IGNORECASE)
+_FAILURE_SK = re.compile(r"\bsk-[A-Za-z0-9._~+/-]{8,}", re.IGNORECASE)
+_FAILURE_KEY = re.compile(
+    r"\\?[\"']?(?:ocp-apim-subscription-key|x-api-key|api[_-]?key)\\?[\"']?"
+    r"\s*[:=]\s*\\?[\"']?[^\s\"'&,}\\]+",
     re.IGNORECASE,
 )
-_FAILURE_AUTHORIZATION = re.compile(
-    r"authorization\\?\"?\s*[:=]\s*\\?\"?(?:bearer\s+)?[^\s\"\\,}]+",
+_FAILURE_HOST = re.compile(
+    r"(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)+azure\.com(?![A-Za-z0-9.-])",
     re.IGNORECASE,
 )
 
 
-def _failure_detail(exc):
-    """Drop endpoint URLs, their hosts, and credential headers, then truncate."""
-    message = str(exc) if isinstance(exc, BaseException) else ""
-    redacted = _FAILURE_AUTHORIZATION.sub(
-        "authorization:[redacted]",
-        _FAILURE_API_KEY.sub(
-            "api-key:[redacted]",
-            _FAILURE_URL.sub("[redacted]", message),
+def failure_detail_text(text):
+    """Redact provider URLs, hosts, and credential material, then truncate."""
+    redacted = _FAILURE_HOST.sub(
+        "[redacted]",
+        _FAILURE_KEY.sub(
+            "[redacted]",
+            _FAILURE_SK.sub(
+                "[redacted]",
+                _FAILURE_BEARER.sub(
+                    "Bearer [redacted]",
+                    _FAILURE_URL.sub("[redacted]", text),
+                ),
+            ),
         ),
     ).strip()
     if len(redacted) <= FAILURE_DETAIL_MAX:
         return redacted
     return redacted[: FAILURE_DETAIL_MAX - 3] + "..."
+
+
+def _exception_text(exc):
+    """Full text Python can carry, including a cause, before sanitizing."""
+    parts = []
+    seen = set()
+    current = exc
+    while isinstance(current, BaseException) and id(current) not in seen:
+        seen.add(id(current))
+        parts.append(str(current))
+        current = current.__cause__ if current.__cause__ is not None else current.__context__
+    return "\n".join(part for part in parts if part)
+
+
+def _failure_detail(exc):
+    if not isinstance(exc, BaseException):
+        return ""
+    return failure_detail_text(_exception_text(exc))
 
 
 def _plus(time, ms):

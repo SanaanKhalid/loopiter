@@ -694,7 +694,7 @@ test("pacing and HTTP 429 retries stay on the fake server", async () => {
       totalCapUsd: 50,
       invocationCapUsd: 50,
       warnUsd: 40,
-      rowLimit: 1,
+      rowLimit: 2,
       seeds: [1],
       maxTokensPerMinute: 1,
       now: clock.now,
@@ -1079,7 +1079,7 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
     totalCapUsd: 50,
     invocationCapUsd: 50,
     warnUsd: 40,
-    rowLimit: 1,
+    rowLimit: 2,
     seeds: [1],
     requestTimeoutMs: 40,
     max429Retries: 1,
@@ -2390,8 +2390,11 @@ test("aborting mid-callback reports cancelled", async () => {
     },
   });
   assert.equal(calls, 8);
+  assert.equal(report.perSeed[0]?.baseline.complete, true);
   assert.equal(report.perSeed[0]?.candidate?.state, "cancelled");
   assert.equal(report.perSeed[0]?.candidate?.reason, "cancelled");
+  assert.equal(report.perSeed[0]?.candidate?.heldOut.scored, 0);
+  assert.equal(report.perSeed[0]?.candidate?.heldOutNote, "held-out not scored");
   assert.equal(report.stopped?.reason, "cancelled");
   assert.equal((report.stopped?.message ?? "").includes("callback_failed"), false);
 });

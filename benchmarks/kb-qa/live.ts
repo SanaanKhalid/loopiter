@@ -1493,10 +1493,20 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
       }
       const loop = await runCandidate(session, split, seed);
       if (loop.failure && !failure) failure = loop.failure;
+      const candidateFinished =
+        loop.state === "completed" ||
+        loop.state === "no_improvement" ||
+        loop.state === "rolled_back";
       const failedOnBaseline =
         loop.state === "failed" && loop.servedVersion === loop.baselineVersion;
+      const skipHeldOut =
+        session.isStopping() ||
+        !baselineScore.complete ||
+        !candidateFinished ||
+        !loop.servedFragment ||
+        !!ledger.stopReason;
       const candidateScore =
-        failedOnBaseline || !loop.servedFragment || ledger.stopReason
+        skipHeldOut || !loop.servedFragment
           ? emptyScore(split.test.length)
           : await scoreSplit(session, split.test, loop.servedFragment);
       if (ledger.stopReason && !failure) failure = stopView(ledger.stopReason);
@@ -1506,7 +1516,11 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
         reason: loop.reason,
         servedArtifactVersion: loop.servedVersion,
         baselineArtifactVersion: loop.baselineVersion,
-        ...(failedOnBaseline ? { heldOutNote: "baseline not re-scored" } : {}),
+        ...(skipHeldOut
+          ? {
+              heldOutNote: failedOnBaseline ? "baseline not re-scored" : "held-out not scored",
+            }
+          : {}),
       };
       if (ledger.stopReason || loop.failure) break;
     }

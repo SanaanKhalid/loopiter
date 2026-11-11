@@ -14,11 +14,14 @@ from unittest.mock import patch
 
 from loopiter.onboarding import (
     autonomous_activation_prompt,
+    autonomy_plan_hash,
+    clear_autonomous_activation,
     initialize_self_hosted,
     inspect_self_hosted_setup,
     read_agent_guide,
     read_reference,
     read_worker_settings,
+    record_autonomous_activation,
     run_self_hosted_worker,
     verify_self_hosted_installation,
 )
@@ -684,8 +687,7 @@ async def create_integration(*, cancellation):
             self.assertFalse((root_path / ".state" / "activation.json").exists())
             ready = run({"DATABASE_URL": "postgres://reachable"})
             self.assertNotEqual(ready.returncode, 0, ready.stderr)
-            stamp = json.loads((root_path / ".state" / "activation.json").read_text())
-            self.assertEqual(stamp["entries"]["app/dev"]["mode"], "autonomous")
+            self.assertFalse((root_path / ".state" / "activation.json").exists())
 
     def test_step_timeout_rejects_non_decimal_integers(self):
         with tempfile.TemporaryDirectory() as root:
@@ -855,6 +857,155 @@ async def create_integration(*, cancellation):
             self.assertEqual(failed.returncode, 0, failed.stderr)
             self.assertIn("callback_failed", failed.stdout)
             self.assertFalse((Path(root) / ".state" / "activation.json").exists())
+            again = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(again.returncode, 1)
+            self.assertIn("one-time confirmation", again.stderr)
+
+    def test_legacy_stamp_gains_current_budget_hash(self):
+        policy = snake_policy(
+            json.loads((ROOT / "python/tests/fixtures/autonomy.json").read_text())["policy"]
+        )
+        plan = {
+            "schemaVersion": 2,
+            "language": "python",
+            "mode": "autonomous",
+            "selfImproving": True,
+            "namespace": "app/dev",
+            "stepTimeoutMs": 120000,
+            "audit": {
+                "method": "paired-hoeffding",
+                "minimumImprovement": 0.05,
+                "range": [0, 1],
+                "alpha": 0.05,
+                "minimumUnits": 50,
+            },
+        }
+        with tempfile.TemporaryDirectory() as root:
+            module = Path(root) / "application.py"
+            (Path(root) / "integration-plan.json").write_text(json.dumps(plan))
+            module.write_text(
+                "import json\nfrom loopiter import FeedbackLoop, InMemoryStore, ImprovementWorkflow\n"
+                "async def create_integration(*, cancellation):\n"
+                "    loop = FeedbackLoop(store=InMemoryStore(), namespace='cli/legacy')\n"
+                f"    policy = json.loads({json.dumps(json.dumps(policy))})\n"
+                "    def rows(prefix, count, day):\n"
+                "        return [dict(id=prefix+str(i), episode_id=prefix+str(i), entity_id=prefix+str(i),"
+                " occurred_at=f'2026-01-0{day}T00:00:00Z', observed_at=f'2026-01-0{day}T01:00:00Z',"
+                " source=policy['trusted_sources'][0], input='test', label='yes') for i in range(count)]\n"
+                "    async def artifact(context):\n"
+                "        return dict(artifact_version='baseline', configuration_hash='fixed')\n"
+                "    async def dataset(context):\n"
+                "        return dict(version='1', optimization=rows('o',3,1), validation=rows('v',20,2), audit=rows('a',50,3))\n"
+                "    async def propose(data, context): return [dict(score=1)]\n"
+                "    async def evaluate(data, context):\n"
+                "        return dict(cases=[dict(id=row['id'], baseline=0, candidate=1) for row in data['examples']],"
+                " metrics=dict(errors=0), estimated_serving_cost=0)\n"
+                "    class Registry:\n"
+                "        async def apply(self, request): raise AssertionError('no')\n"
+                "        async def rollback(self, request): raise AssertionError('no')\n"
+                "        async def inspect(self, request): return dict(status='unknown')\n"
+                "    async def observe(data, context): raise AssertionError('no')\n"
+                "    workflow = ImprovementWorkflow(id='cli', version='1', optimizer_version='1', evaluator_version='1',"
+                " policy=policy, dataset=dataset, artifact=artifact, propose=propose, evaluate=evaluate,"
+                " deployment=Registry(), observe=observe)\n"
+                "    return dict(loop=loop, workflows=[workflow], close=loop.close)\n"
+            )
+            confirmed_at = "2026-01-01T00:00:00.000Z"
+            state = Path(root) / ".state"
+            state.mkdir()
+            (state / "activation.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "entries": {
+                            "app/dev": {
+                                "planHash": autonomy_plan_hash(plan, "autonomous"),
+                                "mode": "autonomous",
+                                "confirmedBy": "legacy",
+                                "confirmedAt": confirmed_at,
+                            }
+                        },
+                    }
+                )
+            )
+            first = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            stamp = json.loads((state / "activation.json").read_text())["entries"]["app/dev"]
+            self.assertEqual(stamp["confirmedAt"], confirmed_at)
+            self.assertEqual(stamp["confirmedBy"], "legacy")
+            self.assertRegex(stamp["budgetHash"], r"^[a-f0-9]{64}$")
+            again = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--enable",
+                    "--once",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(again.returncode, 0, again.stderr)
+
+    def test_clearing_a_stamp_surfaces_a_removal_error(self):
+        with tempfile.TemporaryDirectory() as root:
+            module = Path(root) / "application.py"
+            module.write_text("raise RuntimeError('unused')\n")
+            (Path(root) / "integration-plan.json").write_text(
+                json.dumps({"schemaVersion": 2, "mode": "autonomous", "namespace": "app/dev"})
+            )
+            record_autonomous_activation(
+                module, actor="tester", mode="autonomous", budget_hash="abc"
+            )
+            state = Path(root) / ".state"
+            os.chmod(state, 0o500)
+            try:
+                with self.assertRaises(OSError):
+                    clear_autonomous_activation(module)
+            finally:
+                os.chmod(state, 0o700)
+            stamp = json.loads((state / "activation.json").read_text())
+            self.assertEqual(stamp["entries"]["app/dev"]["confirmedBy"], "tester")
+            (state / "activation.json").unlink()
+            clear_autonomous_activation(module)
 
 
 def snake_policy(value):
