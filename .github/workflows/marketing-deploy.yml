@@ -24,6 +24,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          # The site build dates pages from git log. A depth-1 checkout omits
+          # history for files the tip commit did not touch.
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
