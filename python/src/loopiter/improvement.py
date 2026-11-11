@@ -54,6 +54,7 @@ def _load_failure_rules():
 
 
 _FAILURE_INPUT_MAX, _FAILURE_OUTPUT_MAX, _FAILURE_RULES = _load_failure_rules()
+_FAILURE_SPACE = re.compile("[\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]")
 
 
 _DETAIL_UNAVAILABLE = "[detail unavailable]"
@@ -89,7 +90,7 @@ def _capture_redact_text(value):
 
 def failure_detail_text(text):
     """Sanitize error text, then truncate."""
-    bounded = text[:_FAILURE_INPUT_MAX]
+    bounded = _FAILURE_SPACE.sub(" ", text[:_FAILURE_INPUT_MAX])
     redacted = _capture_redact_text(bounded)
     for pattern, replacement in _FAILURE_RULES:
         redacted = pattern.sub(replacement, redacted)

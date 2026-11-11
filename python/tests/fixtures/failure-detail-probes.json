@@ -191,6 +191,22 @@
     {
       "input": "xoxb-123456789012-abcdefghijklmnop",
       "output": "[redacted]"
+    },
+    {
+      "input": "api_key =nbsp-api-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "Bearer nbsp-bearer-secret",
+      "output": "Bearer [redacted]"
+    },
+    {
+      "input": "password =nbsp-password-secret",
+      "output": "password =[REDACTED]"
+    },
+    {
+      "input": "sig =nbsp-sig-secret",
+      "output": "sig =[redacted]"
     }
   ]
 }

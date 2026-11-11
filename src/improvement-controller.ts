@@ -83,6 +83,8 @@ const failureDetailRuleFile = JSON.parse(
 const failureDetailRules = failureDetailRuleFile.rules.map(
   (rule) => [new RegExp(rule.pattern, rule.flags), rule.replace] as const,
 );
+const failureDetailSpace =
+  /[\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/g;
 
 /** Sanitize error text, then truncate. */
 export function failureDetailText(text: string): string {
@@ -90,8 +92,9 @@ export function failureDetailText(text: string): string {
     text.length > failureDetailRuleFile.inputMax
       ? text.slice(0, failureDetailRuleFile.inputMax)
       : text;
-  const captured = redactCapture(bounded);
-  const base = typeof captured === "string" ? captured : bounded;
+  const normalized = bounded.replace(failureDetailSpace, " ");
+  const captured = redactCapture(normalized);
+  const base = typeof captured === "string" ? captured : normalized;
   const redacted = failureDetailRules
     .reduce((value, [pattern, replace]) => value.replace(pattern, replace), base)
     .trim();
