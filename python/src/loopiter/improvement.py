@@ -5,11 +5,13 @@ fence expected versions and inspect ambiguous operations; database leases do not
 """
 
 import asyncio
+import json
 import re
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
@@ -34,37 +36,30 @@ DEFAULT_STEP_MS = 120_000
 DEFAULT_TICK_MS = 600_000
 MAX_STEP_MS = 7_200_000
 MAX_TICK_MS = 7_260_000
-FAILURE_DETAIL_MAX = 500
 # First pre-deployment timeout is retried. The next one ends the run as timed_out.
 STEP_TIMEOUT_ATTEMPTS = 2
-_FAILURE_URL = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
-_FAILURE_USERINFO = re.compile(
-    r"\b([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@]*:[^\s/@]+@",
-)
-_FAILURE_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
-_FAILURE_AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
-_FAILURE_BEARER = re.compile(r"\bBearer\s+\S+", re.IGNORECASE)
-_FAILURE_SK = re.compile(r"\bsk-[A-Za-z0-9._~+/-]{8,}", re.IGNORECASE)
-_FAILURE_KEY = re.compile(
-    r"(?<![A-Za-z0-9_-])\\?[\"']?(?:ocp-apim-subscription-key|x-api-key|subscription-key|"
-    r"api[_-]?key|authorization|access[_-]?token|accountkey|token|code)\\?[\"']?"
-    r"\s*(?:=|:|%3d|%3a)\s*\\?[\"']?[^\s\"'&,}\\]+",
-    re.IGNORECASE,
-)
-_FAILURE_SIG = re.compile(r"(\bsig(?:\s*=\s*|%3d))(.*?)(?=%26|&|#|\s|$)", re.IGNORECASE)
-_FAILURE_HOST = re.compile(
-    r"(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)+"
-    r"(?:azure-api\.net|azure\.(?:com|us|cn)|windows\.net|openai\.com)"
-    r"(?![A-Za-z0-9-]|\.[A-Za-z0-9])",
-    re.IGNORECASE,
-)
+
+
+def _load_failure_rules():
+    raw = Path(__file__).with_name("failure_detail_rules.json").read_text(encoding="utf-8")
+    data = json.loads(raw)
+    compiled = []
+    for rule in data["rules"]:
+        flags = re.IGNORECASE if "i" in rule["flags"] else 0
+        replacement = rule["replace"].replace("$", "\\")
+        compiled.append((re.compile(rule["pattern"], flags), replacement))
+    return data["inputMax"], data["outputMax"], tuple(compiled)
+
+
+_FAILURE_INPUT_MAX, _FAILURE_OUTPUT_MAX, _FAILURE_RULES = _load_failure_rules()
 
 
 _DETAIL_UNAVAILABLE = "[detail unavailable]"
 _CAPTURE_PRIVATE_KEY = re.compile(
     r"-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----"
 )
-_CAPTURE_AUTH = re.compile(r"\b(Bearer|Basic)\s+[A-Za-z0-9+/_.=~-]+", re.IGNORECASE)
+_CAPTURE_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9+/_.=~-]+", re.IGNORECASE)
+_CAPTURE_BASIC = re.compile(r"\b[Bb][Aa][Ss][Ii][Cc]\s+(?![a-z]+\b)[A-Za-z0-9+/_.=~-]+")
 _CAPTURE_TOKEN = re.compile(
     r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b"
 )
@@ -78,7 +73,8 @@ _CAPTURE_LABELED = re.compile(
 def _capture_redact_text(value):
     """Apply capture redaction before the error-text rules."""
     value = _CAPTURE_PRIVATE_KEY.sub("[REDACTED]", value)
-    value = _CAPTURE_AUTH.sub(r"\1 [REDACTED]", value)
+    value = _CAPTURE_BEARER.sub("Bearer [REDACTED]", value)
+    value = _CAPTURE_BASIC.sub("Basic [REDACTED]", value)
     value = _CAPTURE_TOKEN.sub("[REDACTED]", value)
     value = _CAPTURE_USERINFO.sub(r"\1[REDACTED]@", value)
     return _CAPTURE_LABELED.sub(r"\1[REDACTED]", value)
@@ -86,35 +82,14 @@ def _capture_redact_text(value):
 
 def failure_detail_text(text):
     """Sanitize error text, then truncate."""
-    base = _capture_redact_text(text)
-    redacted = _FAILURE_HOST.sub(
-        "[redacted]",
-        _FAILURE_SIG.sub(
-            r"\1[redacted]",
-            _FAILURE_KEY.sub(
-                "[redacted]",
-                _FAILURE_AKIA.sub(
-                    "[redacted]",
-                    _FAILURE_JWT.sub(
-                        "[redacted]",
-                        _FAILURE_USERINFO.sub(
-                            r"\1[redacted]@",
-                            _FAILURE_SK.sub(
-                                "[redacted]",
-                                _FAILURE_BEARER.sub(
-                                    "Bearer [redacted]",
-                                    _FAILURE_URL.sub("[redacted]", base),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        ),
-    ).strip()
-    if len(redacted) <= FAILURE_DETAIL_MAX:
+    bounded = text[:_FAILURE_INPUT_MAX]
+    redacted = _capture_redact_text(bounded)
+    for pattern, replacement in _FAILURE_RULES:
+        redacted = pattern.sub(replacement, redacted)
+    redacted = redacted.strip()
+    if len(redacted) <= _FAILURE_OUTPUT_MAX:
         return redacted
-    return redacted[: FAILURE_DETAIL_MAX - 3] + "..."
+    return redacted[: _FAILURE_OUTPUT_MAX - 3] + "..."
 
 
 def _exception_text(exc):

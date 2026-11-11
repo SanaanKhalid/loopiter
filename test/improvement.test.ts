@@ -17,6 +17,13 @@ import {
 import { Registry } from "./helpers.js";
 import { assignCohort, validateChange } from "../src/index.js";
 
+const failureDetailProbes = JSON.parse(
+  await readFile(
+    new URL("../../python/tests/fixtures/failure-detail-probes.json", import.meta.url),
+    "utf8",
+  ),
+) as { cases: { input: string; output: string }[] };
+
 const fixtures = JSON.parse(
   await readFile(
     new URL("../../python/tests/fixtures/autonomy.json", import.meta.url),
@@ -1077,8 +1084,26 @@ test("failure text leaves benign wording unchanged", () => {
   for (const benign of [
     "signature mismatch in design=modern; apikeys rotated; the azure.com docs; risk-assessment",
     "task-runner disk-usage ask-me",
+    "status code: 429",
+    "code=context_length_exceeded",
+    "Basic validation failed",
+    "read the docs on platform.openai.com before retrying",
+    "token: 4096 exceeds limit",
   ])
     assert.equal(failureDetailText(benign), benign);
+});
+
+test("failure text matches the shared probe corpus", () => {
+  for (const item of failureDetailProbes.cases)
+    assert.equal(failureDetailText(item.input), item.output);
+});
+
+test("failure text finishes on a long unspaced input", () => {
+  const input = `api_key=early-secret ${"a.".repeat(100_000)}`;
+  const started = performance.now();
+  const detail = failureDetailText(input);
+  assert.ok(performance.now() - started < 1000);
+  assert.equal(detail.includes("early-secret"), false);
 });
 
 test("a chained cause is sanitized on the failed tick", async () => {

@@ -1,0 +1,128 @@
+{
+  "cases": [
+    {
+      "input": "Authorization: Token tok-secret-value",
+      "output": "[redacted]"
+    },
+    {
+      "input": "{\"Authorization\": \"Token json-token-secret\"}",
+      "output": "{[redacted]}"
+    },
+    {
+      "input": "Authorization=SharedKey acct:shared-key-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "Authorization: Digest username=\"alice\", response=\"digest-secret-value\"",
+      "output": "[redacted]"
+    },
+    {
+      "input": "Authorization: AWS4-HMAC-SHA256 Credential=ASIAABCDEFGHIJKLMNOP/20220101/us-east-1/s3/aws4_request, Signature=aws-sig-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "Authorization: Custom custom-scheme-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "authorization%3Dencoded-auth-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "authorization%253Ddouble-auth-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "%26sig%3Dencoded-sig-secret%26sv=1",
+      "output": "%26sig%3D[redacted]%26sv=1"
+    },
+    {
+      "input": "%26sig%253Ddouble-sig-secret%26sv=1",
+      "output": "%26sig%253D[redacted]%26sv=1"
+    },
+    {
+      "input": "api-key%253Ddouble-encoded-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "subscription-key%253Ddouble-sub-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "%26api-key%3Dquery-encoded-secret",
+      "output": "%26[redacted]"
+    },
+    {
+      "input": "refresh_token=refresh-token-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "id_token=id-token-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "aws_secret_access_key=aws-secret-value",
+      "output": "[redacted]"
+    },
+    {
+      "input": "ASIAABCDEFGHIJKLMNOP",
+      "output": "[redacted]"
+    },
+    {
+      "input": "status code: 429",
+      "output": "status code: 429"
+    },
+    {
+      "input": "code=context_length_exceeded",
+      "output": "code=context_length_exceeded"
+    },
+    {
+      "input": "Basic validation failed",
+      "output": "Basic validation failed"
+    },
+    {
+      "input": "read the docs on platform.openai.com before retrying",
+      "output": "read the docs on platform.openai.com before retrying"
+    },
+    {
+      "input": "token: 4096 exceeds limit",
+      "output": "token: 4096 exceeds limit"
+    },
+    {
+      "input": "api.openai.com refused",
+      "output": "[redacted] refused"
+    },
+    {
+      "input": "platform.openai.com/v1/chat refused",
+      "output": "[redacted]/v1/chat refused"
+    },
+    {
+      "input": "postgres://admin:dsn-password-secret@db.internal:5432/app",
+      "output": "postgres://[redacted]@db.internal:5432/app"
+    },
+    {
+      "input": "Bearer sk-bearersecretvalue",
+      "output": "Bearer [redacted]"
+    },
+    {
+      "input": "password=labeled-password-secret",
+      "output": "password=[REDACTED]"
+    },
+    {
+      "input": "api_key:\nnewline-secret",
+      "output": "[redacted]"
+    },
+    {
+      "input": "{\"api_key\":\"json-secret-value\"}",
+      "output": "{[redacted]\"}"
+    },
+    {
+      "input": "myres.openai.azure.com.",
+      "output": "[redacted]."
+    },
+    {
+      "input": "signature mismatch in design=modern; apikeys rotated; the azure.com docs; risk-assessment",
+      "output": "signature mismatch in design=modern; apikeys rotated; the azure.com docs; risk-assessment"
+    }
+  ]
+}

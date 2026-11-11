@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { FeedbackLoop } from "./feedback-loop.js";
 import type {
   ControlRecord,
@@ -68,32 +69,34 @@ const DEFAULT_STEP_MS = 120_000;
 const DEFAULT_TICK_MS = 600_000;
 const MAX_STEP_MS = 7_200_000;
 const MAX_TICK_MS = 7_260_000;
-const FAILURE_DETAIL_MAX = 500;
 const FAILURE_DETAIL_UNAVAILABLE = "[detail unavailable]";
+
+interface FailureDetailRuleFile {
+  inputMax: number;
+  outputMax: number;
+  rules: { pattern: string; flags: string; replace: string }[];
+}
+
+const failureDetailRuleFile = JSON.parse(
+  readFileSync(new URL("./failure-detail-rules.json", import.meta.url), "utf8"),
+) as FailureDetailRuleFile;
+const failureDetailRules = failureDetailRuleFile.rules.map(
+  (rule) => [new RegExp(rule.pattern, rule.flags), rule.replace] as const,
+);
 
 /** Sanitize error text, then truncate. */
 export function failureDetailText(text: string): string {
-  const captured = redactCapture(text);
-  const base = typeof captured === "string" ? captured : text;
-  const redacted = base
-    .replace(/https?:\/\/[^\s"'<>]+/gi, "[redacted]")
-    .replace(/\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/@]*:[^\s/@]+@/g, "$1[redacted]@")
-    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[redacted]")
-    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[redacted]")
-    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
-    .replace(/\bsk-[A-Za-z0-9._~+/-]{8,}/gi, "[redacted]")
-    .replace(
-      /(?<![A-Za-z0-9_-])\\?["']?(?:ocp-apim-subscription-key|x-api-key|subscription-key|api[_-]?key|authorization|access[_-]?token|accountkey|token|code)\\?["']?\s*(?:=|:|%3d|%3a)\s*\\?["']?[^\s"'&,}\\]+/gi,
-      "[redacted]",
-    )
-    .replace(/(\bsig(?:\s*=\s*|%3d))(.*?)(?=%26|&|#|\s|$)/gi, "$1[redacted]")
-    .replace(
-      /(?<![A-Za-z0-9.-])(?:[A-Za-z0-9-]+\.)+(?:azure-api\.net|azure\.(?:com|us|cn)|windows\.net|openai\.com)(?![A-Za-z0-9-]|\.[A-Za-z0-9])/gi,
-      "[redacted]",
-    )
+  const bounded =
+    text.length > failureDetailRuleFile.inputMax
+      ? text.slice(0, failureDetailRuleFile.inputMax)
+      : text;
+  const captured = redactCapture(bounded);
+  const base = typeof captured === "string" ? captured : bounded;
+  const redacted = failureDetailRules
+    .reduce((value, [pattern, replace]) => value.replace(pattern, replace), base)
     .trim();
-  if (redacted.length <= FAILURE_DETAIL_MAX) return redacted;
-  return `${redacted.slice(0, FAILURE_DETAIL_MAX - 3)}...`;
+  if (redacted.length <= failureDetailRuleFile.outputMax) return redacted;
+  return `${redacted.slice(0, failureDetailRuleFile.outputMax - 3)}...`;
 }
 
 function exceptionText(error: unknown): string {

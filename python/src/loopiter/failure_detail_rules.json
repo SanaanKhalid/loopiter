@@ -1,0 +1,56 @@
+{
+  "inputMax": 32768,
+  "outputMax": 500,
+  "rules": [
+    {
+      "pattern": "https?:\\/\\/[^\\s\"'<>]+",
+      "flags": "gi",
+      "replace": "[redacted]"
+    },
+    {
+      "pattern": "\\b([A-Za-z][A-Za-z0-9+.-]{0,31}:\\/\\/)(?=[^\\s@]*:)([^\\s@]+)@",
+      "flags": "g",
+      "replace": "$1[redacted]@"
+    },
+    {
+      "pattern": "\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\b",
+      "flags": "g",
+      "replace": "[redacted]"
+    },
+    {
+      "pattern": "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b",
+      "flags": "g",
+      "replace": "[redacted]"
+    },
+    {
+      "pattern": "\\bBearer\\s+\\S+",
+      "flags": "gi",
+      "replace": "Bearer [redacted]"
+    },
+    {
+      "pattern": "\\bsk-[A-Za-z0-9._~+/-]{8,}",
+      "flags": "gi",
+      "replace": "[redacted]"
+    },
+    {
+      "pattern": "(?<![A-Za-z_-])\\\\?\"?authorization\\\\?\"?\\s*(?:=|:|%253d|%253a|%3d|%3a)\\s*(?:\\\\?\"(?:\\\\.|[^\"\\\\\\n])*\\\\?\"|[^\\n]*)",
+      "flags": "gi",
+      "replace": "[redacted]"
+    },
+    {
+      "pattern": "(?<![A-Za-z_-])\\\\?[\"']?(?:ocp-apim-subscription-key|aws[_-]?secret[_-]?access[_-]?key|x-api-key|subscription-key|refresh[_-]?token|id[_-]?token|access[_-]?token|api[_-]?key|accountkey)\\\\?[\"']?\\s*(?:=|:|%253d|%253a|%3d|%3a)\\s*\\\\?[\"']?[^\\s\"'&,}\\\\]+",
+      "flags": "gi",
+      "replace": "[redacted]"
+    },
+    {
+      "pattern": "((?<![A-Za-z])sig(?:\\s*=\\s*|%253d|%3d))((?:[^%&#\\s]|%(?!26))*)",
+      "flags": "gi",
+      "replace": "$1[redacted]"
+    },
+    {
+      "pattern": "(?<![A-Za-z0-9.-])(?!platform\\.openai\\.com(?![:/?]))(?:[A-Za-z0-9-]+\\.)+(?:azure-api\\.net|azure\\.(?:com|us|cn)|windows\\.net|openai\\.com)(?![A-Za-z0-9-]|\\.[A-Za-z0-9])",
+      "flags": "gi",
+      "replace": "[redacted]"
+    }
+  ]
+}

@@ -8,6 +8,7 @@
 - The live stall watchdog uses a monotonic clock. A host pause that jumps wall time ahead of that clock is logged and is not treated as a stall. Stopping a live run reports the candidate as cancelled. A callback failure keeps a redacted, truncated error instead of a generic failure code. Held-out scoring is skipped when a failed candidate is still serving the baseline.
 - The autonomous activation prompt names the effective namespace. A first tick that fails or returns `callback_failed` does not keep the confirmation stamp. A change to the application workflow budget (daily limits or the per-callback reservation) asks for confirmation again. A legacy activation stamp adopts the current budget once on upgrade, and later budget changes re-prompt. Callback failures store that same redacted, truncated text on the improvement run in both SDKs.
 - Strengthen error-text sanitizing for stored failure detail in both SDKs.
+- Tighten error-text sanitizing for stored failure detail in both SDKs.
 - Doctor and an autonomous worker refuse an audit size that cannot certify the configured gain at the configured confidence. The paired Hoeffding minimum is `minimumCertifiableAuditUnits` / `minimum_certifiable_audit_units`. Fresh plans record an audit size that can pass. Confidence thresholds are unchanged.
 - The worker uses `plan.mode` when `--mode` is omitted. The flag overrides the plan, and the effective mode and step timeout are logged with their source.
 - The starter Postgres registry can update a setup's configuration hash without replacing the artifact version.

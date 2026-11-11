@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import time
 import unittest
 from copy import deepcopy
 from dataclasses import replace
@@ -853,8 +854,27 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         for benign in (
             "signature mismatch in design=modern; apikeys rotated; the azure.com docs; risk-assessment",
             "task-runner disk-usage ask-me",
+            "status code: 429",
+            "code=context_length_exceeded",
+            "Basic validation failed",
+            "read the docs on platform.openai.com before retrying",
+            "token: 4096 exceeds limit",
         ):
             self.assertEqual(failure_detail_text(benign), benign)
+
+    def test_failure_text_matches_the_shared_probe_corpus(self):
+        probes = json.loads(
+            (Path(__file__).parent / "fixtures/failure-detail-probes.json").read_text()
+        )
+        for item in probes["cases"]:
+            self.assertEqual(failure_detail_text(item["input"]), item["output"])
+
+    def test_failure_text_finishes_on_a_long_unspaced_input(self):
+        text = "api_key=early-secret " + ("a." * 100_000)
+        started = time.perf_counter()
+        detail = failure_detail_text(text)
+        self.assertLess(time.perf_counter() - started, 1)
+        self.assertNotIn("early-secret", detail)
 
     async def test_chained_exception_text_is_sanitized(self):
         self.setup_workflow(FIXTURES["scenarios"][0])

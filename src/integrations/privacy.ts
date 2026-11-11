@@ -12,7 +12,8 @@ const credentialKey = /^(?:authorization|proxy-authorization|cookie|set-cookie|p
 function redactText(value: string): string {
   return value
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, "[REDACTED]")
-    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_.=~-]+/gi, "$1 [REDACTED]")
+    .replace(/\bBearer\s+[A-Za-z0-9+/_.=~-]+/gi, "Bearer [REDACTED]")
+    .replace(/\b[Bb][Aa][Ss][Ii][Cc]\s+(?![a-z]+\b)[A-Za-z0-9+/_.=~-]+/g, "Basic [REDACTED]")
     .replace(/\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/g, "[REDACTED]")
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[REDACTED]@")
     .replace(/((?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*)[^\s&,;]+/gi, "$1[REDACTED]");
