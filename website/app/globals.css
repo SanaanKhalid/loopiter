@@ -504,6 +504,14 @@ section[id] { scroll-margin-top: 110px; }
 .manifesto-body h2 { margin: 0 0 16px; font-size: clamp(1.7rem, 3vw, 2.3rem); line-height: 1.15; letter-spacing: -.04em; font-weight: 560; }
 .manifesto-body h3 { margin: 28px 0 10px; font-size: 1.05rem; letter-spacing: -.02em; }
 .manifesto-body code { font-family: var(--font-geist-mono), ui-monospace, monospace; font-size: .86em; color: var(--signal); }
+.manifesto-body pre { margin: 0 0 18px; padding: 16px 18px; overflow: auto; background: #090b09; border: 1px solid #363a34; box-shadow: 8px 8px 0 #050605; color: #c9ccc4; font: 500 .8rem/1.65 var(--font-geist-mono), ui-monospace, monospace; }
+.manifesto-body pre code { color: inherit; font: inherit; white-space: pre; }
+.post-crumb { margin: 0 0 18px; }
+.post-crumb ol { display: flex; flex-wrap: wrap; gap: 0; margin: 0; padding: 0; list-style: none; color: #b7bbb3; font: 600 .72rem/1.4 var(--font-geist-mono), monospace; letter-spacing: .08em; }
+.post-crumb li { display: inline-flex; align-items: center; min-width: 0; }
+.post-crumb li + li::before { content: "/"; margin: 0 10px; color: #686b65; }
+.post-crumb a { color: var(--signal); }
+.post-crumb li[aria-current="page"] { color: #d1d4cd; letter-spacing: 0; font-size: .78rem; }
 .manifesto-signoff { margin-top: 28px; padding-left: 18px; border-left: 2px solid var(--signal); color: var(--ink); font-size: 1.35rem; line-height: 1.45; letter-spacing: -.02em; }
 .inline-link { color: var(--signal); border-bottom: 1px solid #5d7a32; }
 .inline-link:hover { border-bottom-color: var(--signal); }

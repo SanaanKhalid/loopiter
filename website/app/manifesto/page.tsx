@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SiteFrame } from '../../components/site-chrome';
-import { docsHref } from '../../lib/docs-links';
+import { docUrl, docsHref } from '../../lib/docs-links';
 import { pageMetadata } from '../../lib/site';
 
 export const metadata: Metadata = pageMetadata({
@@ -65,6 +65,8 @@ export default function Manifesto() {
         <div className="manifesto-next">
           <Link className="text-link" href="/#how-it-works">How Loopiter works <span aria-hidden="true">↗</span></Link>
           <Link className="text-link" href="/blog/self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate">Why the loop has to be evaluable <span aria-hidden="true">↗</span></Link>
+          <Link className="text-link" href="/blog/graduated-autonomy-for-self-improving-ai-agents">Graduated autonomy for self-improving agents <span aria-hidden="true">↗</span></Link>
+          <a className="text-link" href={docUrl('autonomous')}>Autonomy modes in the documentation <span aria-hidden="true">↗</span></a>
           <a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a>
         </div>
     </article>
