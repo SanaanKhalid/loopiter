@@ -10,6 +10,7 @@ import {
   type DatasetRow,
   type TickResult,
 } from "../../src/index.js";
+import { longestExample, sizedReservations } from "./budget.js";
 import {
   CLOCK_START,
   assertWithinCap,
@@ -131,6 +132,8 @@ export async function runController<T extends PublicExample>(input: {
   modelId: string;
   scenario: string;
   tickLimit: number;
+  predictMaxOutputTokens?: number;
+  proposeMaxOutputTokens?: number;
   timeouts?: { callbackTimeoutMs: number; tickTimeoutMs: number };
 }): Promise<ArmRun> {
   const readIds: string[] = [];
@@ -179,12 +182,34 @@ export async function runController<T extends PublicExample>(input: {
       production: input.split.production.length,
       heldOut: input.split.heldOut.length,
     };
+    const predictMax = input.predictMaxOutputTokens ?? input.task.predict.defaultValue;
+    const proposeMax = input.proposeMaxOutputTokens ?? input.task.propose.defaultValue;
+    const examples = [
+      ...input.split.optimization,
+      ...input.split.validation,
+      ...input.split.audit,
+      ...input.split.production,
+      ...input.split.heldOut,
+    ].map((row) => row.example);
+    const reservations = sizedReservations({
+      task: input.task,
+      prompt: "x".repeat(input.task.promptCap),
+      predictRow: longestExample(input.task, examples),
+      proposeRows: input.split.optimization.map((row) => row.example),
+      predictMaxOutputTokens: predictMax,
+      proposeMaxOutputTokens: proposeMax,
+      deployment: input.modelId,
+    });
     const policy = promptPolicy({
       taskId: input.task.id,
       promptCap: input.task.promptCap,
       minimumImprovement: input.minimumImprovement,
       sizes,
       latencyMs: input.latencyMs,
+      predictReservation: reservations.predict,
+      proposeReservation: reservations.propose,
+      batchSize: input.batchSize,
+      observeChunk: input.observeChunk,
     });
     const datasetRow = (row: PoolRow<T>): DatasetRow => {
       if (row.role !== "pool" || row.partition === "production")

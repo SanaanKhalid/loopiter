@@ -8,13 +8,39 @@ export function promptPolicy(input: {
   minimumImprovement: number;
   sizes: SplitSizes;
   latencyMs: number;
+  /** Per-call controller reservations from `reservedModelTokens`. */
+  predictReservation: number;
+  proposeReservation: number;
+  batchSize: number;
+  observeChunk: number;
 }): AutonomyPolicy {
   const loopCalls =
     1 +
     input.sizes.validation * 2 +
     input.sizes.audit * 2 +
     input.sizes.production;
-  const reserve = Math.max(input.sizes.validation, input.sizes.audit, 1) * 2 + 10;
+  const evaluateCalls = Math.max(1, input.batchSize) * 2;
+  const observeCalls = Math.max(1, input.observeChunk);
+  const reserve = Math.max(
+    input.sizes.validation,
+    input.sizes.audit,
+    evaluateCalls,
+    observeCalls,
+    1,
+  ) * 2 + 10;
+  const callbackTokens = Math.max(
+    input.proposeReservation,
+    evaluateCalls * input.predictReservation,
+    observeCalls * input.predictReservation,
+  );
+  const dailyTokens =
+    input.proposeReservation +
+    (input.sizes.optimization +
+      input.sizes.validation * 2 +
+      input.sizes.audit * 2 +
+      input.sizes.production +
+      input.sizes.heldOut * 2) *
+      input.predictReservation;
   return {
     version: `public-${input.taskId}-v1`,
     target: { kind: "prompt", key: input.taskId },
@@ -45,12 +71,12 @@ export function promptPolicy(input: {
     maximumRows: Math.max(input.sizes.audit, input.sizes.validation, input.sizes.optimization),
     daily: {
       modelRequests: loopCalls * 4,
-      tokens: loopCalls * 4 * 200,
+      tokens: dailyTokens,
       deployments: 2,
     },
     callbackReservation: {
       modelRequests: reserve,
-      tokens: reserve * 200,
+      tokens: callbackTokens,
     },
     cooldownMs: 0,
     rollout: { mode: "immediate" },

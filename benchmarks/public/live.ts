@@ -241,6 +241,8 @@ export async function runLiveTask<T extends PublicExample>(
         batchSize: 1,
         observeChunk: 2,
         latencyMs: session.requestTimeoutMs,
+        predictMaxOutputTokens: session.limits.predictMaxOutputTokens,
+        proposeMaxOutputTokens: session.limits.proposeMaxOutputTokens,
         modelId: options.deployment,
         scenario: "live",
         tickLimit: 10_000,

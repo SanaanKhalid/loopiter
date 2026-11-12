@@ -169,6 +169,10 @@ test("the prompt cap is larger than 800 characters and enforced", () => {
     minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
     sizes: FIXTURE_SIZES,
     latencyMs: 1000,
+    predictReservation: 1,
+    proposeReservation: 1,
+    batchSize: 1,
+    observeChunk: 1,
   });
   assert.equal(policy.changeSchema.properties?.fragment?.maxLength, 8000);
   assert.ok(8000 > 800);

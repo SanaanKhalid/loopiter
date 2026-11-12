@@ -1,7 +1,22 @@
 /**
- * Official HotpotQA answer normalization, exact match, and token F1.
- * Ported from hotpot_evaluate_v1.py at
+ * Copyright 2018 Zhilin Yang, Peng Qi, Saizheng Zhang
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Modified TypeScript port of hotpot_evaluate_v1.py from
  * https://github.com/hotpotqa/hotpot/blob/3635853403a8735609ee997664e1528f4480762a/hotpot_evaluate_v1.py
+ * The repository license is Apache-2.0 (LICENSE.txt at that commit).
+ * See benchmarks/NOTICE.
  */
 
 const PUNCTUATION = new Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~");

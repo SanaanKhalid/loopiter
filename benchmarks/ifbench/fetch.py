@@ -56,11 +56,33 @@ def main() -> None:
 
 
 def download(url: str, dest: Path) -> Path:
-    if dest.exists() and dest.stat().st_size > 0:
-        return dest
+    return download_atomic(url, dest, timeout=120)
+
+
+def download_atomic(url: str, dest: Path, timeout: int) -> Path:
+    """Write a sibling temp file, check the length, then rename over dest."""
     request = urllib.request.Request(url, headers={"User-Agent": "loopiter-benchmark-fetch"})
-    with urllib.request.urlopen(request, timeout=120) as response, dest.open("wb") as handle:
-        handle.write(response.read())
+    temporary = dest.with_name(dest.name + ".partial")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            expected = response.headers.get("Content-Length")
+            expected_n = int(expected) if expected and expected.isdigit() else None
+            if dest.exists() and expected_n is not None and dest.stat().st_size == expected_n:
+                return dest
+            total = 0
+            with temporary.open("wb") as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    total += len(chunk)
+            if expected_n is not None and total != expected_n:
+                raise SystemExit(f"Download of {url} was truncated ({total} of {expected_n} bytes).")
+            os.replace(temporary, dest)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
     return dest
 
 

@@ -44,7 +44,8 @@ Both follow `hotpot_evaluate_v1.py` at commit
 [hotpotqa/hotpot](https://github.com/hotpotqa/hotpot): lower case, strip
 punctuation, drop the articles a/an/the, collapse whitespace, then exact match
 or token overlap. The yes/no/noanswer answers score F1 only on an exact
-normalized match.
+normalized match. The port's copyright and the Apache-2.0 text are in
+[benchmarks/NOTICE](../NOTICE).
 
 The controller's paired cases use exact match. The proposer sees the question,
 the frozen paragraphs, and the gold answer. It does not make an extra feedback

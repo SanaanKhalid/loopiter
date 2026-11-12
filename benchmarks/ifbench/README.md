@@ -52,7 +52,8 @@ python -m pip install -r benchmarks/ifbench/requirements.txt
 
 The first import downloads NLTK data into the package directory. CI installs
 this requirements file in the offline benchmark job and does not download the
-datasets.
+datasets. Copyright and the Apache-2.0 text for the ported loose-response
+variants are in [benchmarks/NOTICE](../NOTICE).
 
 Primary metric: strict prompt-level accuracy. The report also includes loose
 prompt-level accuracy and instruction-level accuracy, strict and loose.

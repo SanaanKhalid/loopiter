@@ -647,6 +647,11 @@ export function inputTokenCeiling(payload: string): number {
   return Math.max(1, Buffer.byteLength(payload, "utf8"));
 }
 
+/** Tokens reserved with the controller before one live generate. */
+export function reservedModelTokens(body: string, maxOutputTokens: number): number {
+  return inputTokenCeiling(body) + maxOutputTokens + 64;
+}
+
 export function redactSecrets(text: string, secrets: readonly string[]): string {
   let redacted = text;
   const ordered = [...secrets].sort((left, right) => right.length - left.length);
@@ -1315,7 +1320,7 @@ export class LiveSession {
     try {
       signal.throwIfAborted();
       sent = true;
-      const generated = await meter(ceiling + maxOutput + 64, async () => {
+      const generated = await meter(reservedModelTokens(body, maxOutput), async () => {
         requestSignal.throwIfAborted();
         const result = await this.provider.generate({
           ...input,

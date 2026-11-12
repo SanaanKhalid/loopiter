@@ -1,15 +1,31 @@
 #!/usr/bin/env python3
+# Copyright 2025 The Google Research Authors.
+# Copyright 2025 Allen Institute for AI.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Score responses with the official IFBench verifiers.
 
-The checker classes are imported from the installed ``ifbench`` package.
-Pin that package to git commit cd189a9c2889526d8af901d2103fd3e1ffcea6df
-of https://github.com/allenai/IFBench (Apache-2.0).
+The checker classes are imported from the installed ``ifbench`` package at
+git commit cd189a9c2889526d8af901d2103fd3e1ffcea6df of
+https://github.com/allenai/IFBench (Apache-2.0).
 
-Strict and loose follow ``evaluation_lib.py`` at that commit. Loose also
-tries the response with the first line, the last line, or both removed, and
-with asterisks removed. Null kwargs are dropped before both modes, which is
-what the official strict path does. The official loose path does not drop
-them; cleaned JSON has no nulls, so the checks match.
+Strict and loose follow ``evaluation_lib.py`` at that commit, including
+``all([]) is True`` for an empty instruction list. Loose tries the response,
+the asterisk-stripped response, the response with the first line, the last
+line, or both removed, and each of those line-drops with asterisks removed.
+Null kwargs are dropped before both modes, which is what the official strict
+path does. See benchmarks/NOTICE.
 """
 
 from __future__ import annotations
@@ -69,8 +85,8 @@ def score_item(item):
             any(check(instruction_id, raw, prompt, variant) for variant in variants)
         )
     return {
-        "strictPrompt": bool(strict) and all(strict),
-        "loosePrompt": bool(loose) and all(loose),
+        "strictPrompt": all(strict),
+        "loosePrompt": all(loose),
         "instructions": [
             {"id": instruction_id, "strict": strict[index], "loose": loose[index]}
             for index, instruction_id in enumerate(instruction_ids)
@@ -82,8 +98,13 @@ def main():
     for line in sys.stdin:
         if not line.strip():
             continue
-        items = json.loads(line)
-        sys.stdout.write(json.dumps([score_item(item) for item in items]) + "\n")
+        message = json.loads(line)
+        if isinstance(message, dict):
+            items = message["items"]
+            payload = {"id": message.get("id"), "rows": [score_item(item) for item in items]}
+        else:
+            payload = [score_item(item) for item in message]
+        sys.stdout.write(json.dumps(payload) + "\n")
         sys.stdout.flush()
 
 
