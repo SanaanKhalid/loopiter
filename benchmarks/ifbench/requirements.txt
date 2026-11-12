@@ -1,0 +1,29 @@
+# Official IFBench verifiers, pinned to a git commit. Transitive packages are
+# the versions resolved for that commit. CI installs this file. It does not
+# download the datasets.
+ifbench @ git+https://github.com/allenai/IFBench.git@cd189a9c2889526d8af901d2103fd3e1ffcea6df
+absl-py==2.5.1
+annotated-types==0.8.0
+anyio==4.16.0
+certifi==2026.10.23
+click==8.5.1
+cloudpickle==3.1.2
+defusedxml==0.7.1
+emoji==2.16.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.20
+immutabledict==4.3.1
+joblib==1.6.0
+langdetect==1.0.9
+nltk==3.10.4
+pydantic==2.14.3
+pydantic-core==2.50.4
+pydantic-settings==2.16.2
+python-dotenv==1.2.4
+regex==2026.11.9
+syllapy==0.8.0
+tqdm==4.70.1
+typing-extensions==4.16.0
+typing-inspection==0.4.5

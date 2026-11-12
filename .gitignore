@@ -22,3 +22,6 @@ __pycache__/
 playwright-report/
 test-results/
 reports/kb-qa-live/
+reports/ifbench-live/
+reports/hotpotqa-live/
+benchmarks/.cache/

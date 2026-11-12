@@ -1,3 +1,10 @@
+# Benchmarks
+
+`kb-qa/` is the synthetic offline and live harness. `ifbench/` and `hotpotqa/`
+are public-dataset siblings. They reuse the kb-qa live-safety helpers and do
+not change that harness. Their READMEs describe the pins, arms, and the
+minimum-improvement caveat. Results are internal.
+
 # Offline benchmark
 
 Phase 0 compares a **frozen baseline** (no improvement) with an **autonomous candidate**
