@@ -21,6 +21,9 @@ export function FeedbackLoopArticle({ post }: { post: Post }) {
 
       <div className="manifesto-body">
         <p>
+          A later run can behave differently because an earlier run left a stored note, a prompt edit, or a skill, and none of those artifacts is, by itself, an improvement. A loop you can keep has an outside check: the proposer does not grade its own change on the cases that decide whether the change ships, and the check has a version, a dataset, and a record of what was deployed, including a previous version you can restore. Loopiter, in this repository, is an MIT-licensed library that coordinates capture, verified feedback, a bounded proposal, and evaluation, and you bring storage, model calls, evaluation, scheduling, and deployment.
+        </p>
+        <p>
           Teams call an agent self-improving when a later run behaves differently because an earlier run produced something: a failed test, a correction, a stored note, a new skill. The change is often not a weight update. This note separates that idea from the narrower thing the Loopiter SDK in this repository actually coordinates, and it points at the public sources behind the general claims.
         </p>
 
@@ -105,7 +108,7 @@ export function FeedbackLoopArticle({ post }: { post: Post }) {
             The self-hosted worker is a process you start. After doctor and verify, the init recipe omits <code>--mode</code>, so <code>plan.mode</code> controls it. Node: <code>npx --no-install loopiter worker --module ./loopiter/application.mjs --enable --once</code>. Python: <code>python -m loopiter worker --module loopiter/application.py --enable --once</code>. Without <code>--enable</code> the worker refuses to run. <code>--mode</code> overrides the plan. With no integration plan, the worker uses <code>recommend</code>. The first autonomous run asks you to type activate on a terminal, or to pass <code>--confirm-activation</code> or <code>--yes</code> when stdin is not a terminal. Later runs reuse that consent record until the hashed plan settings change. Installing the package does not start the worker.
           </p>
           <p>
-            A cycle stops at the policy’s caps on proposal calls and candidates. The controller’s fallback is three of each, and three consecutive unsuccessful cycles stop proposals unless the policy sets another cap. The step timeout defaults to 120000 milliseconds and cannot exceed 3600000. The tick timeout defaults to 600000 milliseconds, or longer when the step needs it, and cannot exceed 3660000. The policy has to set daily ceilings for model requests, tokens, and deployments. There is no unlimited fallback. Callbacks run in your process, with your credentials. Cancellation is cooperative.
+            A cycle stops at the policy’s caps on proposal calls and candidates. The controller’s fallback is three of each, and three consecutive unsuccessful cycles stop proposals unless the policy sets another cap. The step timeout defaults to 120000 milliseconds and cannot exceed 7200000 (2 hours). The tick timeout defaults to 600000 milliseconds, or longer when the step needs it, and cannot exceed 7260000. The Node and Python controllers use those same ceilings. A plan <code>stepTimeoutMs</code> and the <code>--step-timeout-ms</code> flag also stop at 7200000. The policy has to set daily ceilings for model requests, tokens, and deployments. There is no unlimited fallback. Callbacks run in your process, with your credentials. Cancellation is cooperative.
           </p>
           <h3>Deployment stays an adapter</h3>
           <p>
