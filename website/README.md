@@ -5,6 +5,8 @@ Its design and canonical Fern documentation links are shared across deployments.
 
 Public Cloudflare URL: https://loopiter-website.sanaansanaan.workers.dev
 
+Live `robots.txt` at https://loopiter.co is served by Cloudflare's managed robots.txt setting, which overrides `app/robots.ts`. Edits here may not take effect live; changes to crawler rules must be made in Cloudflare.
+
 ## Deploy to your Cloudflare account
 
 Use Node 22 or 24, then run from this directory:
