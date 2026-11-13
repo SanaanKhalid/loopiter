@@ -53,18 +53,30 @@ or token overlap. The yes/no/noanswer answers score F1 only on an exact
 normalized match. The port's copyright and the Apache-2.0 text are in
 [benchmarks/NOTICE](../NOTICE).
 
-The controller's paired cases use exact match. The proposer sees the question,
-the frozen paragraphs, and the gold answer. It does not make an extra feedback
-predict pass.
+The controller's paired cases use exact match. The proposer sees a bounded sample, not every optimization row and not all 10
+paragraphs. Failures come first. The rest are a shuffle with seed 1402. At
+most 8 examples are sent, and the JSON payload stays within 16384 bytes
+(`LOOPITER_BENCH_PROPOSE_EXAMPLES` and `LOOPITER_BENCH_PROPOSE_BYTES`). Each
+example keeps the question, the gold answer, a score, and the supporting-fact
+paragraphs (the gold titles when the cache has them, otherwise paragraphs that
+contain the answer). Held-out rows are still never passed to propose.
 
 ## Artifact and generation
 
 The artifact is one versioned system prompt, `hotpotqa-system-v1`. The
 character cap is 8000 Unicode code points, the same cap as the IFBench prompt
-and larger than the 800-character kb-qa fragment. Answers are short, so
-predict `max_output_tokens` defaults to 256 and may be set from 1 to 2048.
-Propose defaults to 2048. Free-form text is the `text` field of a strict JSON
-schema, because the Azure Responses client used here only accepts that shape.
+and larger than the 800-character kb-qa fragment. Answers are short, but a
+reasoning model counts reasoning tokens against `max_output_tokens`. The
+default is 1024, not 256, so effort `low` can finish before the answer. It may
+be set from 1 to 2048. Propose defaults to 2048. Free-form text is the `text`
+field of a strict JSON schema, because the Azure Responses client used here
+only accepts that shape.
+
+Per-item provider failures are the same as IFBench: a content filter, a
+prompt-scoped 400, or an incomplete response scores 0 for that row. The report
+and summary record the row, arm, split, and reason. Five failures in a row, or
+more than 20% of any arm and split, stop the run. 401, 403, 404, 429, repeated
+5xx, and a systemic 400 still stop immediately.
 
 ## Arms
 

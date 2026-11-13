@@ -740,7 +740,7 @@ test("pacing and HTTP 429 retries stay on the fake server", async () => {
     assert.equal(retryClock.sleeps[0], 4_000);
     assert.ok(report.pacing.rateLimitResponses >= 1);
     assert.ok(report.pacing.waitMs >= 4_000);
-    assert.ok(report.attempts > report.liveCalls);
+    assert.ok(report.pacing.rejectedAttempts >= 1);
     assert.equal((report.stopped?.message ?? "").includes(KEY), false);
   } finally {
     await retried.close();
@@ -769,16 +769,18 @@ test("pacing and HTTP 429 retries stay on the fake server", async () => {
       warnUsd: Number(formatUsd(worst)),
       rowLimit: 1,
       seeds: [1],
+      max429Retries: 1,
       now: capClock.now,
       sleep: capClock.sleep,
       random: capClock.random,
     });
-    assert.equal(capped.requests.length, 1);
-    assert.equal(report.stopped?.reason, "total_cap");
-    assert.equal(report.attempts, 1);
-    assert.ok(report.spend.totalMicroUsd > 0);
-    assert.equal(report.pacing.rateLimitResponses, 1);
-    assert.equal(capClock.sleeps.length, 0);
+    assert.equal(capped.requests.length, 2);
+    assert.equal(report.stopped?.reason, "rate_limit");
+    assert.equal(report.attempts, 0);
+    assert.equal(report.spend.totalMicroUsd, 0);
+    assert.equal(report.pacing.rejectedAttempts, 2);
+    assert.equal(report.pacing.rateLimitResponses, 2);
+    assert.deepEqual(capClock.sleeps, [2_500]);
   } finally {
     await capped.close();
   }
@@ -808,7 +810,9 @@ test("pacing and HTTP 429 retries stay on the fake server", async () => {
     assert.equal(report.passed, false);
     assert.equal(report.pacing.rateLimitResponses, 2);
     assert.equal(report.pacing.waitMs, 1_500);
-    assert.equal(report.attempts, 2);
+    assert.equal(report.pacing.rejectedAttempts, 2);
+    assert.equal(report.attempts, 0);
+    assert.equal(report.spend.totalMicroUsd, 0);
     assert.equal((report.stopped?.message ?? "").includes(KEY), false);
     assert.equal(JSON.stringify(report).includes(KEY), false);
     assert.equal((report.stopped?.message ?? "").includes("retry-after"), false);
@@ -849,7 +853,7 @@ test("both retry headers prefer retry-after-ms and the retry is metered", async 
     assert.equal(clock.sleeps.includes(30_000), false);
     assert.equal(report.pacing.waitMs, 2_500);
     assert.equal(report.pacing.rateLimitResponses, 1);
-    assert.ok(report.attempts > report.liveCalls);
+    assert.ok(report.pacing.rejectedAttempts >= 1);
     assert.ok(report.spend.totalMicroUsd > 0);
     assert.equal((report.stopped?.message ?? "").includes(KEY), false);
     assert.equal(JSON.stringify(report).includes(KEY), false);
@@ -1339,7 +1343,9 @@ test("transient fetch failures retry within the attempt and wait caps", async ()
       /HTTP 400/,
     );
     assert.equal(fatalFetches, 2);
-    assert.equal(fatalLedger.attempts, 2);
+    assert.equal(fatalLedger.attempts, 1);
+    assert.equal(fatalLedger.rejectedAttempts, 1);
+    assert.equal(fatalLedger.totalMicroUsd > 0, true);
     const paced = new TokenMinuteWindow(pacedTokenLimit(1000), clock.now, clock.sleep);
     const first = await paced.acquire(500);
     assert.equal(first.waited, 0);
@@ -1777,7 +1783,9 @@ test("user abort, unauthorized, server, and lookup errors stay bounded", async (
     }, "unauthorized.json");
     await assert.rejects(ask(unauthorized.session), /HTTP 401/);
     assert.equal(denied, 1);
-    assert.equal(unauthorized.ledger.attempts, 1);
+    assert.equal(unauthorized.ledger.attempts, 0);
+    assert.equal(unauthorized.ledger.rejectedAttempts, 1);
+    assert.equal(unauthorized.ledger.totalMicroUsd, 0);
 
     let serverErrors = 0;
     const server = sessionFor(async () => {

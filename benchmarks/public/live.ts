@@ -2,12 +2,13 @@
  * Opt-in Azure path. Live calls require --live and LOOPITER_BENCH_ALLOW_LIVE=1.
  * The spend ledger, pacer, retries, stall watchdog, and redaction are the kb-qa session.
  */
-import type { CallbackContext } from "../../src/index.js";
+import { failureDetailText, type CallbackContext } from "../../src/index.js";
 import {
   LIVE_ENV,
   LiveGateError,
   LiveLedger,
   LiveSession,
+  RateLimitStop,
   assertLiveSpendGuards,
   createExitGuard,
   createInterruptHandler,
@@ -27,11 +28,19 @@ import { formatUsd, usdToMicro } from "../kb-qa/money.js";
 import { requestBody } from "./bodies.js";
 import { LIVE_INPUT_BYTES } from "./constants.js";
 import { viewOf, type ScoreView } from "./harness.js";
+import {
+  ItemFailureStop,
+  ItemFailureTracker,
+  failureCategories,
+  perItemReason,
+  type ItemFailure,
+  type ItemFailureCount,
+} from "./item-failures.js";
 import { PREDICT_NAME, PROPOSE_INSTRUCTIONS, PROPOSE_NAME } from "./instructions.js";
 import { deploymentOf, resolveLimits } from "./limits.js";
 import { runController, runOneShot, scoreHeldOut, type RateDraft } from "./loop.js";
 import { buildSeededSplit, limitSplit } from "./splits.js";
-import type { BenchmarkTask, ModelRunner, PublicExample } from "./task.js";
+import type { BenchmarkTask, ModelRunner, PredictCall, PublicExample } from "./task.js";
 
 const directMeter = async <T>(
   _maximum: number,
@@ -92,7 +101,15 @@ export interface PublicLiveReport {
     controllerState: string;
   }[];
   stopped: { reason: string; message: string } | null;
-  spend: { totalUsd: string; invocationUsd: string; calls: number; attempts: number };
+  itemFailures: ItemFailure[];
+  itemFailureCounts: ItemFailureCount[];
+  spend: {
+    totalUsd: string;
+    invocationUsd: string;
+    calls: number;
+    attempts: number;
+    rejectedAttempts: number;
+  };
   passed: boolean;
 }
 
@@ -179,7 +196,8 @@ export async function runLiveTask<T extends PublicExample>(
     ...options.limits,
   });
   const secrets = redactionSecrets(options.apiKey, options.endpoint);
-  const runner = liveRunner(task, session);
+  const failures = new ItemFailureTracker();
+  const runner = liveRunner(task, session, failures);
   const perSeed: PublicLiveReport["perSeed"] = [];
   const heartbeat = startProgressTicker(120_000, () => session.emitProgress());
   const guard = createExitGuard(forceExit);
@@ -229,7 +247,11 @@ export async function runLiveTask<T extends PublicExample>(
         }),
         options.rowLimit,
       );
-      const baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut);
+      const baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut, {
+        arm: "baseline",
+        split: "held-out",
+        planned: split.heldOut.length,
+      });
       const oneShot = await runOneShot({ task, split, runner, mode: "improve" });
       const controller = await runController({
         task,
@@ -265,10 +287,7 @@ export async function runLiveTask<T extends PublicExample>(
       }
     }
   } catch (error) {
-    failure = {
-      reason: "provider_error",
-      message: redactSecrets(error instanceof Error ? error.message : "Live run failed.", secrets),
-    };
+    failure = stoppedView(error, secrets);
   } finally {
     heartbeat.stop();
     watchdog?.stop();
@@ -277,7 +296,7 @@ export async function runLiveTask<T extends PublicExample>(
       process.off("SIGTERM", onInterrupt);
     }
   }
-  const report = buildReport(task, options, ledger, perSeed, failure);
+  const report = buildReport(task, options, ledger, perSeed, failure, failures);
   if (options.apiKey.length >= 4 && JSON.stringify(report).includes(options.apiKey))
     throw new LiveGateError("Refusing to write a report that contains a credential.");
   return report;
@@ -286,36 +305,58 @@ export async function runLiveTask<T extends PublicExample>(
 function liveRunner<T extends PublicExample>(
   task: BenchmarkTask<T>,
   session: LiveSession,
+  failures: ItemFailureTracker,
 ): ModelRunner<T> {
+  const callOf = (call: PredictCall | undefined): PredictCall =>
+    call ?? { arm: "baseline", split: "held-out", planned: 0 };
   return {
-    async answer(prompt, row, context) {
+    afterPredict() {
+      const stop = failures.stop();
+      if (stop) throw stop;
+    },
+    async answer(prompt, row, context, call) {
+      const stop = failures.stop();
+      if (stop) throw stop;
+      const site = callOf(call);
       const payload = task.predictPayload(row);
-      const generation = await session.generate(
-        {
-          instructions: prompt,
-          input: payload,
-          name: PREDICT_NAME,
-          schema: task.predictSchema(),
-        },
-        requestBody({
-          model: session.provider.model,
-          instructions: prompt,
-          payload,
-          name: PREDICT_NAME,
-          schema: task.predictSchema(),
-          maxOutputTokens: session.limits.predictMaxOutputTokens,
-          reasoningEffort: session.limits.reasoningEffort,
-        }),
-        session.limits.predictMaxOutputTokens,
-        context ? context.meter.bind(context) : directMeter,
-        signalOf(context),
-      );
-      const text = generation.value.text;
-      if (typeof text !== "string" || !text.trim())
-        throw new LiveGateError("Model output is missing text.");
-      return { text, latencyMs: generation.latencyMs };
+      try {
+        const generation = await session.generate(
+          {
+            instructions: prompt,
+            input: payload,
+            name: PREDICT_NAME,
+            schema: task.predictSchema(),
+          },
+          requestBody({
+            model: session.provider.model,
+            instructions: prompt,
+            payload,
+            name: PREDICT_NAME,
+            schema: task.predictSchema(),
+            maxOutputTokens: session.limits.predictMaxOutputTokens,
+            reasoningEffort: session.limits.reasoningEffort,
+          }),
+          session.limits.predictMaxOutputTokens,
+          context ? context.meter.bind(context) : directMeter,
+          signalOf(context),
+        );
+        const text = generation.value.text;
+        if (typeof text !== "string" || !text.trim()) {
+          failures.noteFailure(site, row.id, "empty_output", []);
+          return { text: "", latencyMs: generation.latencyMs };
+        }
+        failures.noteSuccess();
+        return { text, latencyMs: generation.latencyMs };
+      } catch (error) {
+        const reason = perItemReason(error);
+        if (!reason) throw error;
+        failures.noteFailure(site, row.id, reason, failureCategories(error));
+        return { text: "", latencyMs: 0 };
+      }
     },
     async propose(request, context) {
+      const stop = failures.stop();
+      if (stop) throw stop;
       const payload = task.proposePayload(request.current, request.rows, request.feedback);
       const generation = await session.generate(
         {
@@ -345,12 +386,22 @@ function liveRunner<T extends PublicExample>(
   };
 }
 
+function stoppedView(error: unknown, secrets: readonly string[]): { reason: string; message: string } {
+  const message = failureDetailText(
+    redactSecrets(error instanceof Error ? error.message : "Live run failed.", secrets),
+  );
+  if (error instanceof ItemFailureStop) return { reason: error.reason, message };
+  if (error instanceof RateLimitStop) return { reason: "rate_limit", message };
+  return { reason: "provider_error", message };
+}
+
 function buildReport<T extends PublicExample>(
   task: BenchmarkTask<T>,
   options: PublicLiveOptions,
   ledger: LiveLedger,
   perSeed: PublicLiveReport["perSeed"],
   failure: { reason: string; message: string } | null,
+  failures: ItemFailureTracker,
 ): PublicLiveReport {
   const scored = perSeed.length > 0 && failure === null;
   return {
@@ -389,11 +440,14 @@ function buildReport<T extends PublicExample>(
       : null,
     perSeed,
     stopped: failure,
+    itemFailures: failures.failures,
+    itemFailureCounts: failures.countsBySplit(),
     spend: {
       totalUsd: formatUsd(ledger.totalMicroUsd),
       invocationUsd: formatUsd(ledger.invocationMicroUsd),
       calls: ledger.calls,
       attempts: ledger.attempts,
+      rejectedAttempts: ledger.rejectedAttempts,
     },
     passed: failure === null && perSeed.length === options.seeds.length,
   };

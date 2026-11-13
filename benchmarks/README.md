@@ -192,7 +192,7 @@ There are no baked-in prices or caps.
 | `LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS` | no | `max_output_tokens` for a proposal. Default `1024`. A finite integer greater than zero |
 | `LOOPITER_BENCH_MAX_TPM` | no | Tokens per rolling minute, using the realistic reservation (bytes/4 plus the output bound). The pacer uses 90% of this value so a full window is less likely to return HTTP 429. Unset or `0` turns pacing off. Any other value must be a finite integer greater than zero |
 | `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS` | no | Cap on each 429 wait. Default `60`. A finite integer greater than zero |
-| `LOOPITER_BENCH_MAX_429_RETRIES` | no | Extra attempts after HTTP 429. Default `6`. A finite integer greater than zero |
+| `LOOPITER_BENCH_MAX_429_RETRIES` | no | Extra attempts after HTTP 429. Default `1000`, a fuse. A rate-limited request stops when its wait budget runs out first. A finite integer greater than zero |
 | `LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS` | no | Per-request abort. Default `120`. A timed-out request is retried within the existing attempt limit |
 | `LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS` | no | Cap on retry wait for one model call. Pace waits are not counted. Default `900`. The run stops with a clear message instead of waiting longer |
 | `LOOPITER_BENCH_STALL_MINUTES` | no | Exit if a live run records no attempt, ledger write, or retry for this many minutes. Default `10`. The value must be at least 2 × the 60 second pace window plus the attempt deadline, so one pace wait and one slow request cannot trip it. A shorter value refuses to start. A ref'd watchdog, so a stalled socket cannot silence it |
@@ -282,10 +282,19 @@ are retried once. A bare `fetch failed`, `ENOTFOUND`, and TLS or certificate
 errors stop the run. Each of those retries logs the error class, waits with
 the same exponential backoff and jitter as a 429 that has no `Retry-After`,
 and is still checked against the spend cap before it is sent. HTTP 4xx other
-than 429, and any other error, stop the run. HTTP 429 is retried up to
-`LOOPITER_BENCH_MAX_429_RETRIES` times. The wait uses `retry-after-ms` or
-`Retry-After` when the response has one, otherwise exponential backoff with
-jitter, and each wait is capped by `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS`.
+than 429, and any other error, stop the run. HTTP 429 is retried until a time budget runs out, not for a fixed 6 attempts.
+The budget is 10 minutes for an ordinary request and one extra minute per
+10,000 reserved tokens, up to 30 minutes, and it is also capped by
+`LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS`. `LOOPITER_BENCH_MAX_429_RETRIES`
+remains a fuse. The wait uses `retry-after-ms`, then `Retry-After` (seconds or
+an HTTP date), then the latest `x-ratelimit-reset-*` header. With none of
+those, the wait is exponential backoff with full jitter. Each wait is capped
+by `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS`. The budget sums those waits, so a
+wall-clock jump does not consume it, and the stall watchdog treats the planned
+backoff as progress. A stop signal interrupts the wait. A 429, and any other
+4xx that returns no token usage, releases the pre-call spend reservation and
+costs $0. The report counts those rejected attempts. A timeout or a dropped
+connection after the request was sent still costs the full ceiling.
 Retry wait for a single model call, not including pace waits, is capped by
 `LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS` (default 900). Crossing that cap stops
 the run with a clear message instead of waiting longer. Each attempt also has

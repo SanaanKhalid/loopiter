@@ -29,6 +29,7 @@ import type {
   BenchmarkTask,
   InstructionMark,
   ModelRunner,
+  PredictCall,
   PublicExample,
   RowScore,
 } from "./task.js";
@@ -83,12 +84,16 @@ export async function scoreHeldOut<T extends PublicExample>(
   runner: ModelRunner<T>,
   prompt: string,
   rows: readonly HeldOutRow<T>[],
+  call?: PredictCall,
 ): Promise<RateDraft> {
   const answers = [];
   for (const row of rows) {
-    const answer = await runner.answer(prompt, row.example, null);
+    runner.afterPredict?.();
+    const answer = await runner.answer(prompt, row.example, null, call);
+    runner.afterPredict?.();
     answers.push({ response: answer.text, row: row.example });
   }
+  runner.afterPredict?.();
   return draftOf(await task.scoreMany(answers));
 }
 
@@ -104,7 +109,11 @@ export async function runOneShot<T extends PublicExample>(input: {
   const { fragment, ids } = await rewrite(input.task, input.split, input.runner, input.mode, null);
   for (const id of ids) readIds.push(id);
   registry.serve(fragment);
-  const heldOut = await scoreHeldOut(input.task, input.runner, registry.fragment(), input.split.heldOut);
+  const heldOut = await scoreHeldOut(input.task, input.runner, registry.fragment(), input.split.heldOut, {
+    arm: "one-shot",
+    split: "held-out",
+    planned: input.split.heldOut.length,
+  });
   return {
     fragment: registry.fragment(),
     version: registry.version,
@@ -145,6 +154,8 @@ export async function runController<T extends PublicExample>(input: {
     }
   };
   const heldOut = new Set(idsOf(input.split.heldOut));
+  const validationIds = new Set(input.split.validation.map((row) => row.example.id));
+  const auditIds = new Set(input.split.audit.map((row) => row.example.id));
   const pool = new Map<string, T>();
   for (const row of [
     ...input.split.optimization,
@@ -156,7 +167,7 @@ export async function runController<T extends PublicExample>(input: {
       throw new Error(`Held-out row ${row.example.id} is in the pool.`);
     pool.set(row.example.id, row.example);
   }
-  const feedback = await feedbackFor(input.task, input.split, input.runner, input.mode);
+  const feedback = await feedbackFor(input.task, input.split, input.runner, input.mode, "controller");
   for (const id of feedback.ids) readIds.push(id);
   const clock = { now: new Date(CLOCK_START) };
   const store = new InMemoryStore();
@@ -257,7 +268,13 @@ export async function runController<T extends PublicExample>(input: {
         for (const row of chunk) {
           if (heldOut.has(row.example.id))
             throw new Error(`Held-out row ${row.example.id} reached observe.`);
-          const answer = await input.runner.answer(fragment, row.example, context);
+          input.runner.afterPredict?.();
+          const answer = await input.runner.answer(fragment, row.example, context, {
+            arm: "controller",
+            split: "production",
+            planned: input.split.production.length,
+          });
+          input.runner.afterPredict?.();
           answers.push({ response: answer.text, row: row.example });
         }
         const scores = answers.length === 0 ? [] : await input.task.scoreMany(answers);
@@ -306,8 +323,16 @@ export async function runController<T extends PublicExample>(input: {
       scorePair: async (row, baseline, candidate, context) => {
         watch([row]);
         const example = exampleOf(pool, row.id);
-        const left = await input.runner.answer(baseline, example, context);
-        const right = await input.runner.answer(candidate, example, context);
+        const split = validationIds.has(row.id) ? "validation" : auditIds.has(row.id) ? "audit" : null;
+        if (!split) throw new Error(`Row ${row.id} is not in validation or audit.`);
+        const planned =
+          (split === "validation" ? input.split.validation.length : input.split.audit.length) * 2;
+        const site: PredictCall = { arm: "controller", split, planned };
+        input.runner.afterPredict?.();
+        const left = await input.runner.answer(baseline, example, context, site);
+        input.runner.afterPredict?.();
+        const right = await input.runner.answer(candidate, example, context, site);
+        input.runner.afterPredict?.();
         const [base, next] = await input.task.scoreMany([
           { response: left.text, row: example },
           { response: right.text, row: example },
@@ -339,7 +364,9 @@ export async function runController<T extends PublicExample>(input: {
     const transitions: { state: string; reason: string }[] = [];
     let result: TickResult | undefined;
     for (let tick = 0; tick < input.tickLimit; tick++) {
+      input.runner.afterPredict?.();
       result = await controller.tick(workflow.id);
+      input.runner.afterPredict?.();
       transitions.push({ state: result.state, reason: result.reason });
       if (TERMINAL.has(result.state)) break;
       if (result.state === "observing")
@@ -350,9 +377,17 @@ export async function runController<T extends PublicExample>(input: {
         `Loop did not finish: ${result?.state ?? "none"} (${result?.reason ?? "no tick"}).`,
       );
     const served = registry.fragment();
-    const held = await scoreHeldOut(input.task, input.runner, served, input.split.heldOut);
+    const held = await scoreHeldOut(input.task, input.runner, served, input.split.heldOut, {
+      arm: "controller",
+      split: "held-out-served",
+      planned: input.split.heldOut.length,
+    });
     const ungated = proposal
-      ? await scoreHeldOut(input.task, input.runner, proposal, input.split.heldOut)
+      ? await scoreHeldOut(input.task, input.runner, proposal, input.split.heldOut, {
+          arm: "controller",
+          split: "held-out-ungated",
+          planned: input.split.heldOut.length,
+        })
       : null;
     return {
       fragment: served,
@@ -378,7 +413,7 @@ async function rewrite<T extends PublicExample>(
   mode: "improve" | "harmful",
   context: CallbackContext | null,
 ): Promise<{ fragment: string; ids: string[] }> {
-  const feedback = await feedbackFor(task, split, runner, mode);
+  const feedback = await feedbackFor(task, split, runner, mode, "one-shot");
   const rows = split.optimization.map((row) => row.example);
   const fragment = assertWithinCap(
     await runner.propose(
@@ -400,6 +435,7 @@ async function feedbackFor<T extends PublicExample>(
   split: PublicSplit<T>,
   runner: ModelRunner<T>,
   mode: "improve" | "harmful",
+  arm: PredictCall["arm"],
 ): Promise<{ byId: Map<string, InstructionMark[]>; ids: string[] }> {
   const rows = split.optimization.map((row) => row.example);
   const ids = rows.map((row) => row.id);
@@ -408,7 +444,13 @@ async function feedbackFor<T extends PublicExample>(
   }
   const answers = [];
   for (const row of rows) {
-    const answer = await runner.answer(task.baselinePrompt, row, null);
+    runner.afterPredict?.();
+    const answer = await runner.answer(task.baselinePrompt, row, null, {
+      arm,
+      split: "feedback",
+      planned: rows.length,
+    });
+    runner.afterPredict?.();
     answers.push({ response: answer.text, row });
   }
   const scores = await task.scoreMany(answers);

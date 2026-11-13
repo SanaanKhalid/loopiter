@@ -39,16 +39,126 @@ export interface ResponseUsage {
   outputTokens: number | null;
   cachedInputTokens: number | null;
 }
-/** HTTP failure. The message is status-only so response bodies and headers stay out of logs. */
+const SAFE_TOKEN = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+export interface ContentFilterCategory {
+  category: string;
+  severity: string | null;
+}
+
+/** Allowlisted provider fields. Prompt text, headers, and URLs are not copied. */
+export interface SafeProviderDetail {
+  status: number;
+  code: string | null;
+  type: string | null;
+  innerCode: string | null;
+  categories: ContentFilterCategory[];
+  incompleteReason: string | null;
+}
+
+/** HTTP failure. The message is built only from allowlisted fields. */
 export class ProviderRequestError extends Error {
   readonly usage: ResponseUsage | null;
   readonly retryAfterMs: number | null;
-  constructor(readonly status: number, usage: ResponseUsage | null, retryAfterMs: number | null = null) {
-    super(`OpenAI request failed (HTTP ${status}).`);
+  readonly detail: SafeProviderDetail;
+  constructor(
+    readonly status: number,
+    usage: ResponseUsage | null,
+    retryAfterMs: number | null = null,
+    detail?: SafeProviderDetail,
+  ) {
+    const safe = detail ?? emptyDetail(status);
+    super(formatSafeProviderDetail(safe));
     this.name = "ProviderRequestError";
     this.usage = usage;
     this.retryAfterMs = retryAfterMs;
+    this.detail = safe;
   }
+}
+
+/** A 200 whose status is not completed. The message carries only the reason token. */
+export class IncompleteOutputError extends Error {
+  readonly detail: SafeProviderDetail;
+  constructor(reason: string | null) {
+    const detail = emptyDetail(200);
+    detail.incompleteReason = reason;
+    super(formatSafeProviderDetail(detail));
+    this.name = "IncompleteOutputError";
+    this.detail = detail;
+  }
+}
+
+export function formatSafeProviderDetail(detail: SafeProviderDetail): string {
+  if (detail.incompleteReason)
+    return `OpenAI response was incomplete or malformed (incomplete_details.reason: ${detail.incompleteReason}).`;
+  if (detail.status === 200) return "OpenAI response was incomplete or malformed.";
+  const parts = [`HTTP ${detail.status}`];
+  if (detail.code) parts.push(`code=${detail.code}`);
+  if (detail.type) parts.push(`type=${detail.type}`);
+  if (detail.innerCode && detail.innerCode !== detail.code) parts.push(`inner=${detail.innerCode}`);
+  if (detail.categories.length) {
+    parts.push(
+      `categories=${detail.categories
+        .map((item) => (item.severity ? `${item.category}:${item.severity}` : item.category))
+        .join(",")}`,
+    );
+  }
+  if (parts.length === 1) return `OpenAI request failed (${parts[0]}).`;
+  return `OpenAI request failed (${parts.join(", ")}).`;
+}
+
+export function parseProviderErrorBody(status: number, body: unknown): SafeProviderDetail {
+  const detail = emptyDetail(status);
+  const error = recordOf(body && typeof body === "object" ? (body as { error?: unknown }).error : null);
+  if (!error) return detail;
+  detail.code = safeToken(error.code);
+  detail.type = safeToken(error.type);
+  const inner = recordOf(error.innererror);
+  detail.innerCode = safeToken(inner?.code);
+  detail.categories = categoriesFrom(error);
+  return detail;
+}
+
+function emptyDetail(status: number): SafeProviderDetail {
+  return {
+    status,
+    code: null,
+    type: null,
+    innerCode: null,
+    categories: [],
+    incompleteReason: null,
+  };
+}
+
+function categoriesFrom(error: Record<string, unknown>): ContentFilterCategory[] {
+  const found: ContentFilterCategory[] = [];
+  const visit = (value: unknown): void => {
+    const record = recordOf(value);
+    if (!record) return;
+    const results = recordOf(record.content_filter_result);
+    if (results) {
+      for (const [name, item] of Object.entries(results)) {
+        if (!SAFE_TOKEN.test(name)) continue;
+        const fields = recordOf(item);
+        if (!fields) continue;
+        const filtered = fields.filtered === true || fields.detected === true;
+        if (!filtered) continue;
+        found.push({ category: name, severity: safeToken(fields.severity) });
+      }
+    }
+    if (record.innererror) visit(record.innererror);
+  };
+  visit(error);
+  return found;
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function safeToken(value: unknown): string | null {
+  return typeof value === "string" && SAFE_TOKEN.test(value) ? value : null;
 }
 export function responsesRequestBody(input: {
   model: string;
@@ -136,15 +246,20 @@ class ResponsesProvider implements GenerationProvider {
     );
     if (!response.ok) {
       const retryAfterMs = retryAfterMsFrom(response);
-      const usage = await usageFromBody(response, signal);
-      throw new ProviderRequestError(response.status, usage, retryAfterMs);
+      const parsed = await readJsonAllowingFailure(response, signal);
+      throw new ProviderRequestError(
+        response.status,
+        parsed ? readUsage(parsed) : null,
+        retryAfterMs,
+        parseProviderErrorBody(response.status, parsed),
+      );
     }
     signal.throwIfAborted();
     const body = await readJsonBody(response, signal);
     signal.throwIfAborted();
     object(body, "OpenAI response");
     if (body.status !== "completed" || !Array.isArray(body.output))
-      throw new Error(incompleteMessage(body));
+      throw new IncompleteOutputError(incompleteReason(body));
     const texts: string[] = [];
     for (const item of body.output) {
       if (!item || item.type !== "message" || !Array.isArray(item.content))
@@ -216,30 +331,66 @@ export class AzureOpenAIProvider extends ResponsesProvider {
   }
 }
 
-/** Milliseconds from retry-after-ms or Retry-After. The header text is not returned. */
-function retryAfterMsFrom(response: Response): number | null {
-  const millis = response.headers.get("retry-after-ms");
-  if (millis !== null && /^[0-9]+$/.test(millis.trim())) {
-    const value = Number(millis.trim());
-    if (Number.isSafeInteger(value)) return value;
-  }
-  const header = response.headers.get("retry-after");
-  if (header === null) return null;
-  const trimmed = header.trim();
-  if (/^[0-9]+$/.test(trimmed)) {
-    const seconds = Number(trimmed);
-    if (Number.isSafeInteger(seconds)) return seconds * 1000;
-  }
-  const when = Date.parse(trimmed);
-  if (Number.isFinite(when)) return Math.max(0, when - Date.now());
-  return null;
+/**
+ * Wait before a 429 retry. Header values become a duration only.
+ * retry-after-ms wins, then Retry-After, then the latest x-ratelimit-reset-* .
+ * With none of those, the wait is full-jitter exponential backoff.
+ */
+export function rateLimitDelayMs(input: {
+  headers: Headers;
+  retryIndex: number;
+  maxWaitMs: number;
+  random: () => number;
+  now?: number;
+}): number {
+  const hinted = hintedDelayMs(input.headers, input.now ?? Date.now());
+  const chosen = hinted ?? fullJitterMs(input.retryIndex, input.maxWaitMs, input.random);
+  if (!Number.isFinite(chosen) || chosen < 0) return input.maxWaitMs;
+  return Math.min(input.maxWaitMs, Math.max(0, Math.round(chosen)));
 }
 
-function incompleteMessage(body: unknown): string {
-  const reason = incompleteReason(body);
-  return reason
-    ? `OpenAI response was incomplete or malformed (incomplete_details.reason: ${reason}).`
-    : "OpenAI response was incomplete or malformed.";
+function hintedDelayMs(headers: Headers, now: number): number | null {
+  const millis = delayNumber(headers.get("retry-after-ms"), 1);
+  if (millis !== null) return millis;
+  const retryAfter = headers.get("retry-after");
+  if (retryAfter !== null) {
+    const seconds = delayNumber(retryAfter, 1000);
+    if (seconds !== null) return seconds;
+    const when = Date.parse(retryAfter.trim());
+    if (Number.isFinite(when)) return Math.max(0, when - now);
+  }
+  let reset: number | null = null;
+  headers.forEach((value, name) => {
+    if (!name.toLowerCase().startsWith("x-ratelimit-reset")) return;
+    const wait = delayNumber(value, 1000);
+    if (wait === null) return;
+    reset = reset === null ? wait : Math.max(reset, wait);
+  });
+  return reset;
+}
+
+function delayNumber(value: string | null, scale: number): number | null {
+  if (value === null) return null;
+  const trimmed = value.trim().replace(/s$/i, "");
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  const scaled = parsed * scale;
+  if (!Number.isSafeInteger(Math.round(scaled))) return null;
+  return scaled;
+}
+
+function fullJitterMs(retryIndex: number, maxWaitMs: number, random: () => number): number {
+  const exponent = Math.min(Math.max(retryIndex, 1) - 1, 16);
+  const ceiling = Math.min(maxWaitMs, 1000 * 2 ** exponent);
+  const draw = random();
+  const unit = Number.isFinite(draw) ? Math.max(0, Math.min(1, draw)) : 0;
+  return Math.floor(unit * ceiling);
+}
+
+/** Milliseconds from retry-after-ms or Retry-After. The header text is not returned. */
+function retryAfterMsFrom(response: Response): number | null {
+  return hintedDelayMs(response.headers, Date.now());
 }
 
 /** Only a short token is copied. Response bodies and headers stay out of the message. */
@@ -278,14 +429,11 @@ export function readUsage(body: unknown): ResponseUsage {
   };
 }
 
-async function usageFromBody(
-  response: Response,
-  signal: AbortSignal,
-): Promise<ResponseUsage | null> {
+async function readJsonAllowingFailure(response: Response, signal: AbortSignal): Promise<unknown> {
   try {
     const text = await readResponseText(response, signal);
     if (!text) return null;
-    return readUsage(JSON.parse(text) as unknown);
+    return JSON.parse(text) as unknown;
   } catch (error) {
     if (signal.aborted) throw error;
     return null;

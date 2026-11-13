@@ -23,7 +23,9 @@ import {
 import { promptWorkflow } from "../../examples/autonomous/workflows.js";
 import {
   AzureOpenAIProvider,
+  IncompleteOutputError,
   ProviderRequestError,
+  rateLimitDelayMs,
   responsesRequestBody,
   type GenerateInput,
   type Generation,
@@ -179,8 +181,20 @@ export class LiveExitError extends Error {
   }
 }
 export const DEFAULT_MAX_429_RETRIES = 6;
+/** Safety fuse. The time budget stops a 429 storm before this many retries. */
+export const RATE_LIMIT_RETRY_FUSE = 1_000;
+/** Default patience for one rate-limited request. Large requests get more, up to the cap. */
+export const DEFAULT_RATE_LIMIT_BUDGET_MS = 10 * 60 * 1000;
+export const MAX_RATE_LIMIT_BUDGET_MS = 30 * 60 * 1000;
 export const DEFAULT_MAX_RETRY_WAIT_SECONDS = 60;
 export const DEFAULT_MAX_TOTAL_WAIT_SECONDS = 900;
+
+/** Ten minutes, plus one minute per 10,000 reserved tokens, and never more than 30 minutes. */
+export function rateLimitBudgetMs(reservedTokens: number): number {
+  const tokens = Number.isFinite(reservedTokens) && reservedTokens > 0 ? reservedTokens : 0;
+  const extra = Math.floor(tokens / 10_000) * 60_000;
+  return Math.min(MAX_RATE_LIMIT_BUDGET_MS, DEFAULT_RATE_LIMIT_BUDGET_MS + extra);
+}
 export const SMOKE_ROWS = 14;
 export const FULL_SEEDS = [1, 2, 3, 4, 5] as const;
 export const LIVE_OUTPUT_DIR = "reports/kb-qa-live";
@@ -240,7 +254,7 @@ export function liveDeadlinePlan(input: {
   maxTotalWaitMs: number;
   attemptDeadlineMs?: number;
 }): { callbackTimeoutMs: number; attemptDeadlineMs: number } {
-  const attempts = reservedAttemptsPerCall(input.max429Retries);
+  const attempts = reservedAttemptsPerCall(Math.min(input.max429Retries, DEFAULT_MAX_429_RETRIES));
   const slots = Math.max(1, input.callsPerStep * attempts);
   const explicit = input.attemptDeadlineMs !== undefined;
   const floor = attemptDeadlineFloorMs(input.requestTimeoutMs);
@@ -387,6 +401,7 @@ interface LedgerFile {
   outputTokens: number;
   cachedInputTokens: number;
   warnCrossed: boolean;
+  rejectedAttempts?: number;
   updatedAt: string;
 }
 
@@ -403,6 +418,7 @@ export class LiveLedger {
   outputTokens = 0;
   cachedInputTokens = 0;
   warnCrossed = false;
+  rejectedAttempts = 0;
   stopReason: LiveStopReason | null = null;
 
   constructor(
@@ -506,6 +522,11 @@ export class LiveLedger {
     return { micro, tokens };
   }
 
+  /** A 4xx rejected before processing. The pre-call hold is already gone. */
+  noteRejected(): void {
+    this.rejectedAttempts += 1;
+  }
+
   /** Drop a hold that never sent a request, so an aborted attempt is not billed. */
   async releaseAttempt(
     held: { micro: number; tokens: TokenUse },
@@ -577,6 +598,12 @@ export class LiveLedger {
     this.outputTokens = file.outputTokens!;
     this.cachedInputTokens = file.cachedInputTokens!;
     this.warnCrossed = file.warnCrossed === true || this.totalMicroUsd >= this.caps.warnMicroUsd;
+    this.rejectedAttempts =
+      typeof file.rejectedAttempts === "number" &&
+      Number.isInteger(file.rejectedAttempts) &&
+      file.rejectedAttempts >= 0
+        ? file.rejectedAttempts
+        : 0;
   }
 
   private apply(micro: number, tokens: TokenUse, direction: 1 | -1): void {
@@ -605,6 +632,7 @@ export class LiveLedger {
       outputTokens: this.outputTokens,
       cachedInputTokens: this.cachedInputTokens,
       warnCrossed: this.warnCrossed,
+      rejectedAttempts: this.rejectedAttempts,
       updatedAt: new Date().toISOString(),
     };
     const json = `${JSON.stringify(file)}\n`;
@@ -879,6 +907,7 @@ export interface LiveReport {
   pacing: {
     maxTokensPerMinute: number;
     rateLimitResponses: number;
+    rejectedAttempts: number;
     waitMs: number;
     callbackTimeoutMs: number;
     tickTimeoutMs: number;
@@ -1074,7 +1103,7 @@ export class LiveSession {
     const deadline = liveDeadlinePlan({
       callsPerStep: maxModelCallsPerStep(),
       requestTimeoutMs: options.requestTimeoutMs,
-      max429Retries: options.max429Retries,
+      max429Retries: Math.min(options.max429Retries, DEFAULT_MAX_429_RETRIES),
       maxRetryWaitMs: options.maxRetryWaitMs,
       maxTotalWaitMs: options.maxTotalWaitMs,
       ...(options.attemptDeadlineMs === undefined
@@ -1180,11 +1209,36 @@ export class LiveSession {
         if (error instanceof LoopiterError && error.code === "spend_cap") throw error;
         if (error instanceof ProviderRequestError && error.status === 429) {
           this.rateLimitResponses += 1;
+          const budget = Math.min(
+            this.maxTotalWaitMs,
+            rateLimitBudgetMs(inputTokenCeiling(body) + maxOutput),
+          );
+          const wait =
+            error.retryAfterMs === null
+              ? rateLimitDelayMs({
+                  headers: new Headers(),
+                  retryIndex: rateRetries + 1,
+                  maxWaitMs: this.maxRetryWaitMs,
+                  random: this.random,
+                  now: this.now(),
+                })
+              : Math.min(this.maxRetryWaitMs, Math.max(0, Math.round(error.retryAfterMs)));
           if (rateRetries >= this.max429Retries) {
             this.rateLimitExhausted = true;
             this.touch();
             const message = redactSecrets(
               `Rate limit persisted after ${this.max429Retries} retries (HTTP 429).`,
+              this.secrets,
+            );
+            this.lastError = message;
+            throw new RateLimitStop(message);
+          }
+          if (retryWaited + wait > budget && budget < this.maxTotalWaitMs) {
+            this.rateLimitExhausted = true;
+            this.touch();
+            const minutes = Math.round((budget / 60_000) * 10) / 10;
+            const message = redactSecrets(
+              `Rate limit wait for this request reached ${minutes} minutes (HTTP 429).`,
               this.secrets,
             );
             this.lastError = message;
@@ -1198,7 +1252,6 @@ export class LiveSession {
           if (!this.ledger.allow(worst, this.stopAtWarn))
             throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
           rateRetries += 1;
-          const wait = retryWaitMs(rateRetries, error.retryAfterMs, this.maxRetryWaitMs, this.random);
           console.error("retrying HTTP 429");
           await this.waitToRetry(signal, retryWaited, wait);
           retryWaited += wait;
@@ -1210,9 +1263,14 @@ export class LiveSession {
             ? error.status
             : null;
         if ((!networkClass && httpStatus === null) || otherRetries >= MAX_ATTEMPTS - 1) {
-          const message = redactSecrets(errorText(error), this.secrets);
+          const message = providerFailureMessage(error, this.secrets);
           this.lastError = message;
           this.touch();
+          if (shouldLogProviderFailure(error)) console.error(message);
+          if (error instanceof ProviderRequestError || error instanceof IncompleteOutputError) {
+            error.message = message;
+            throw error;
+          }
           throw new Error(message);
         }
         const worst: TokenUse = {
@@ -1356,8 +1414,14 @@ export class LiveSession {
         : error;
       if (!(normalized instanceof LoopiterError && normalized.code === "spend_cap")) {
         const usage = extractUsage(normalized);
-        if (usage) this.pacer.settle(paced.id, usage.input + usage.output);
-        await this.ledger.finishAttempt(held, usage ?? worst, false, signal);
+        if (unbilledRejection(normalized)) {
+          this.pacer.settle(paced.id, 0);
+          await this.ledger.releaseAttempt(held, signal);
+          this.ledger.noteRejected();
+        } else {
+          if (usage) this.pacer.settle(paced.id, usage.input + usage.output);
+          await this.ledger.finishAttempt(held, usage ?? worst, false, signal);
+        }
         this.maybeWarn();
         this.noteProgress();
       }
@@ -1579,6 +1643,7 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
   const report = buildReport(options, ledger, perSeed, failure, {
     maxTokensPerMinute: session.maxTokensPerMinute,
     rateLimitResponses: session.rateLimitResponses,
+    rejectedAttempts: ledger.rejectedAttempts,
     waitMs: session.waitMs,
     callbackTimeoutMs: session.callbackTimeoutMs,
     tickTimeoutMs: session.tickTimeoutMs,
@@ -1746,7 +1811,7 @@ export function paceSettings(options: LiveRunOptions): PaceSettings {
     );
   const maxRetryWaitMs = options.maxRetryWaitMs ?? DEFAULT_MAX_RETRY_WAIT_SECONDS * 1000;
   requirePositiveInt(maxRetryWaitMs, LIVE_ENV.maxRetryWait);
-  const max429Retries = options.max429Retries ?? DEFAULT_MAX_429_RETRIES;
+  const max429Retries = options.max429Retries ?? RATE_LIMIT_RETRY_FUSE;
   requirePositiveInt(max429Retries, LIVE_ENV.max429Retries);
   const requestTimeoutMs =
     options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_SECONDS * 1000;
@@ -1777,7 +1842,7 @@ export function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
   return {
     maxTokensPerMinute: readMaxTpm(env),
     maxRetryWaitMs: readOptionalIntOr(env, LIVE_ENV.maxRetryWait, DEFAULT_MAX_RETRY_WAIT_SECONDS) * 1000,
-    max429Retries: readOptionalIntOr(env, LIVE_ENV.max429Retries, DEFAULT_MAX_429_RETRIES),
+    max429Retries: readOptionalIntOr(env, LIVE_ENV.max429Retries, RATE_LIMIT_RETRY_FUSE),
     requestTimeoutMs:
       readOptionalIntOr(env, LIVE_ENV.requestTimeout, DEFAULT_REQUEST_TIMEOUT_SECONDS) * 1000,
     maxTotalWaitMs:
@@ -1829,6 +1894,12 @@ function readOptionalIntOr(env: NodeJS.ProcessEnv, name: string, fallback: numbe
   const value = Number(raw.trim());
   requirePositiveInt(value, name);
   return value;
+}
+
+function unbilledRejection(error: unknown): boolean {
+  if (!(error instanceof ProviderRequestError)) return false;
+  if (error.status < 400 || error.status >= 500) return false;
+  return extractUsage(error) === null;
 }
 
 function retryWaitMs(
@@ -2213,7 +2284,7 @@ async function runCandidate(
     split,
     reserve,
     inLoop,
-    reservedAttemptsPerCall(session.max429Retries),
+    reservedAttemptsPerCall(Math.min(session.max429Retries, DEFAULT_MAX_429_RETRIES)),
   );
   const clock = { now: new Date(CLOCK_START) };
   const store = new InMemoryStore();
@@ -2990,6 +3061,24 @@ function isTimeoutError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   if ((error as { name?: string }).name === "TimeoutError") return true;
   return isTimeoutError((error as { cause?: unknown }).cause);
+}
+
+function providerFailureMessage(error: unknown, secrets: readonly string[]): string {
+  const text =
+    error instanceof ProviderRequestError || error instanceof IncompleteOutputError
+      ? error.message
+      : errorText(error);
+  return failureDetailText(redactSecrets(text, secrets));
+}
+
+function shouldLogProviderFailure(error: unknown): boolean {
+  if (error instanceof IncompleteOutputError) return true;
+  return (
+    error instanceof ProviderRequestError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 429
+  );
 }
 
 function errorText(error: unknown): string {

@@ -9,6 +9,7 @@ import {
 import { PRODUCT_MINIMUM_IMPROVEMENT } from "./constants.js";
 import { renderTaskEstimate } from "./estimate.js";
 import { renderMarkdown, runOfflineBenchmark } from "./harness.js";
+import { renderItemFailureSummary } from "./item-failures.js";
 import { liveOptionsFromEnv, runLiveTask } from "./live.js";
 import type { BenchmarkTask, PublicExample } from "./task.js";
 
@@ -104,6 +105,8 @@ async function runLiveCli<T extends PublicExample>(task: BenchmarkTask<T>): Prom
       throw new LiveGateError("Refusing to write a report that contains a credential.");
     await boundedWrite(out, json);
     console.log(`${report.passed ? "PASS" : "FAIL"} ${out}`);
+    const failureSummary = renderItemFailureSummary(report.itemFailures);
+    if (failureSummary) console.error(failureSummary);
     if (report.stopped) console.error(report.stopped.message);
     if (!report.passed) process.exitCode = 1;
   } catch (error) {
