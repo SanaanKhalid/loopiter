@@ -25,9 +25,13 @@ export async function loadIfbenchCache(): Promise<{ pool: IfExample[]; heldOut: 
   if (heldOut.length !== IFBENCH_TEST_ROWS)
     throw new Error(`IFBench test cache has ${heldOut.length} rows; the pin expects ${IFBENCH_TEST_ROWS}.`);
   const heldIds = new Set(heldOut.map((row) => row.id));
-  for (const row of pool)
+  const seen = new Set<string>();
+  for (const row of pool) {
+    if (seen.has(row.id)) throw new Error(`IFBench train id ${row.id} is duplicated.`);
+    seen.add(row.id);
     if (heldIds.has(row.id))
       throw new Error(`Train row ${row.id} collides with the held-out test set.`);
+  }
   return { pool, heldOut };
 }
 

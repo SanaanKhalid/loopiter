@@ -8,6 +8,7 @@ Requires pyarrow: python -m pip install pyarrow
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import sys
@@ -37,8 +38,14 @@ def main() -> None:
         f"https://huggingface.co/datasets/{TRAIN_DATASET}/resolve/{TRAIN_REVISION}/data/train-00000-of-00001.parquet",
         CACHE / "train.parquet",
     )
-    write_jsonl(CACHE / "test.jsonl", rows_from_table(pq.read_table(test_path), kind="test"))
-    write_jsonl(CACHE / "train.jsonl", rows_from_table(pq.read_table(train_path), kind="train"))
+    test_rows, _test_stats = rows_from_table(pq.read_table(test_path), kind="test")
+    train_rows, train_stats = rows_from_table(pq.read_table(train_path), kind="train")
+    test_ids = {row["id"] for row in test_rows}
+    overlap = sorted(test_ids & {row["id"] for row in train_rows})
+    if overlap:
+        raise SystemExit(f"IFBench train ids overlap the test set: {overlap[:8]}")
+    write_jsonl(CACHE / "test.jsonl", test_rows)
+    write_jsonl(CACHE / "train.jsonl", train_rows)
     (CACHE / "manifest.json").write_text(
         json.dumps(
             {
@@ -46,13 +53,22 @@ def main() -> None:
                 "testRevision": TEST_REVISION,
                 "trainDataset": TRAIN_DATASET,
                 "trainRevision": TRAIN_REVISION,
+                "testRows": len(test_rows),
+                "trainRows": len(train_rows),
+                "duplicateKeys": train_stats["duplicateKeys"],
+                "duplicateKeyNames": train_stats["duplicateKeyNames"],
+                "rowsRewritten": train_stats["rowsRewritten"],
             },
             indent=2,
         )
         + "\n",
         encoding="utf-8",
     )
-    print(f"Wrote {CACHE}")
+    print(
+        f"Wrote {CACHE} test={len(test_rows)} train={len(train_rows)} "
+        f"duplicateKeys={train_stats['duplicateKeys']} rowsRewritten={train_stats['rowsRewritten']} "
+        f"keys={train_stats['duplicateKeyNames']}"
+    )
 
 
 def download(url: str, dest: Path) -> Path:
@@ -86,20 +102,29 @@ def download_atomic(url: str, dest: Path, timeout: int) -> Path:
     return dest
 
 
-def rows_from_table(table, kind: str) -> list[dict]:
-    rows = []
+def rows_from_table(table, kind: str):
+    pending = []
     for record in table.to_pylist():
         if kind == "test":
             instruction_ids = list(record["instruction_id_list"])
             kwargs = [drop_nulls(item) for item in record["kwargs"]]
             prompt = record["prompt"]
-            row_id = str(record["key"])
+            key = str(record["key"])
         else:
             prompt = record["messages"][0]["content"]
-            row_id = str(record["key"])
+            key = str(record["key"])
             instruction_ids, kwargs = parse_ground_truth(record["ground_truth"])
         if len(instruction_ids) != len(kwargs):
-            raise SystemExit(f"{row_id} has mismatched instructions and kwargs.")
+            raise SystemExit(f"{key} has mismatched instructions and kwargs.")
+        pending.append((key, prompt, instruction_ids, kwargs))
+    if kind == "test":
+        ids = [key for key, _prompt, _ids, _kwargs in pending]
+        assert_unique(ids, "IFBench test")
+        stats = {"duplicateKeys": 0, "rowsRewritten": 0}
+    else:
+        ids, stats = assign_train_ids([(key, prompt) for key, prompt, _ids, _kwargs in pending])
+    rows = []
+    for (key, prompt, instruction_ids, kwargs), row_id in zip(pending, ids):
         rows.append(
             {
                 "id": row_id,
@@ -108,7 +133,38 @@ def rows_from_table(table, kind: str) -> list[dict]:
                 "kwargs": kwargs,
             }
         )
-    return rows
+    return rows, stats
+
+
+def assign_train_ids(records: list[tuple[str, str]]) -> tuple[list[str], dict]:
+    """Keep a key that appears once. Disambiguate repeats with a prompt hash."""
+    counts: dict[str, int] = {}
+    for key, _prompt in records:
+        counts[key] = counts.get(key, 0) + 1
+    ids = []
+    rewritten = 0
+    for key, prompt in records:
+        if counts[key] == 1:
+            ids.append(key)
+            continue
+        digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
+        ids.append(f"{key}-{digest}")
+        rewritten += 1
+    assert_unique(ids, "IFBench train")
+    duplicate_key_names = sorted(key for key, count in counts.items() if count > 1)
+    return ids, {
+        "duplicateKeys": len(duplicate_key_names),
+        "duplicateKeyNames": duplicate_key_names,
+        "rowsRewritten": rewritten,
+    }
+
+
+def assert_unique(ids: list[str], label: str) -> None:
+    seen: set[str] = set()
+    for row_id in ids:
+        if row_id in seen:
+            raise SystemExit(f"{label} ids are not unique: {row_id}")
+        seen.add(row_id)
 
 
 def parse_ground_truth(value):

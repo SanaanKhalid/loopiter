@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +14,8 @@ import {
 } from "../ifbench/score.js";
 import { ifbenchFixtures } from "../ifbench/fixtures.js";
 import { ifbenchTask } from "../ifbench/task.js";
-import { hotpotFixtures } from "../hotpotqa/fixtures.js";
+import { keepFullParagraphRows } from "../hotpotqa/cache.js";
+import { hotpotFixtures, row } from "../hotpotqa/fixtures.js";
 import { HOTPOT_PARAGRAPHS } from "../hotpotqa/pins.js";
 import { hotpotTask } from "../hotpotqa/task.js";
 import { sizedReservations } from "./budget.js";
@@ -153,6 +156,105 @@ test("a large verifier batch is written in chunks", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("IFBench train ids disambiguate duplicate keys", () => {
+  const payload = runFetchModule<{
+    ids: string[];
+    stats: { duplicateKeys: number; rowsRewritten: number };
+    collision: string;
+  }>(join(repoRoot(import.meta.url), "benchmarks/ifbench/fetch.py"), `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("ifbench_fetch", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+records = [
+    ("hard_coded_18", "alpha prompt"),
+    ("unique_key", "only once"),
+    ("hard_coded_18", "beta prompt"),
+    ("hard_coded_5", "one"),
+    ("hard_coded_5", "two"),
+    ("hard_coded_5", "three"),
+]
+ids, stats = mod.assign_train_ids(records)
+collision = None
+try:
+    mod.assign_train_ids([("same", "prompt"), ("same", "prompt")])
+except SystemExit as error:
+    collision = str(error)
+print(json.dumps({"ids": ids, "stats": stats, "collision": collision}))
+`);
+  assert.equal(payload.stats.duplicateKeys, 2);
+  assert.equal(payload.stats.rowsRewritten, 5);
+  assert.equal(payload.ids[1], "unique_key");
+  const alpha = createHash("sha256").update("alpha prompt").digest("hex").slice(0, 12);
+  const beta = createHash("sha256").update("beta prompt").digest("hex").slice(0, 12);
+  assert.equal(payload.ids[0], `hard_coded_18-${alpha}`);
+  assert.equal(payload.ids[2], `hard_coded_18-${beta}`);
+  assert.equal(new Set(payload.ids).size, payload.ids.length);
+  assert.match(payload.collision, /IFBench train ids are not unique: same-/);
+});
+
+test("HotpotQA fetch reads the title/sentences struct", () => {
+  const root = repoRoot(import.meta.url);
+  const payload = runFetchModule<{
+    full: number;
+    firstTitle: string;
+    firstText: string;
+    short: number;
+    legacy: number;
+    pair: number;
+  }>(join(root, "benchmarks/hotpotqa/fetch.py"), `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("hotpot_fetch", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+fixture = json.load(open(sys.argv[2], encoding="utf-8"))
+full = mod.paragraphs_from_context(fixture["full"]["context"])
+short = mod.paragraphs_from_context(fixture["short"]["context"])
+titles = fixture["full"]["context"]["title"]
+sentences = fixture["full"]["context"]["sentences"]
+legacy = mod.paragraphs_from_context([
+    {"title": title, "sentences": sentence_list}
+    for title, sentence_list in zip(titles, sentences)
+])
+pair = mod.paragraphs_from_context((titles, sentences))
+print(json.dumps({
+    "full": len(full),
+    "firstTitle": full[0]["title"],
+    "firstText": full[0]["text"],
+    "short": len(short),
+    "legacy": len(legacy),
+    "pair": len(pair),
+}))
+`, join(root, "benchmarks/hotpotqa/fixtures/context-struct.json"));
+  assert.equal(payload.full, HOTPOT_PARAGRAPHS);
+  assert.equal(payload.short, 4);
+  assert.equal(payload.firstTitle, "Notes");
+  assert.equal(payload.firstText, "The city in the notes is Paris. It sits on the Seine.");
+  assert.equal(payload.legacy, HOTPOT_PARAGRAPHS);
+  assert.equal(payload.pair, HOTPOT_PARAGRAPHS);
+});
+
+test("HotpotQA cache drops rows that are not 10 paragraphs", () => {
+  const full = row("full", "Paris", false);
+  const short = row("short", "Lima", false);
+  short.paragraphs = short.paragraphs.slice(0, 4);
+  const result = keepFullParagraphRows([full, short]);
+  assert.equal(result.dropped, 1);
+  assert.deepEqual(
+    result.rows.map((item) => item.id),
+    ["full"],
+  );
+  assert.equal(result.rows[0]?.paragraphs.length, HOTPOT_PARAGRAPHS);
+});
+
+function runFetchModule<T>(fetchPy: string, script: string, fixture?: string): T {
+  const args = ["-c", script, fetchPy];
+  if (fixture) args.push(fixture);
+  const result = spawnSync(process.env.LOOPITER_BENCH_PYTHON ?? "python3", args, { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return JSON.parse(result.stdout) as T;
+}
 
 function assertFits<T extends PublicExample>(
   task: BenchmarkTask<T>,
