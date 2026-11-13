@@ -22,12 +22,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.6,
     },
     {
-      url: absoluteUrl('/docs'),
-      lastModified: modified('/docs'),
-      changeFrequency: 'yearly',
-      priority: 0.5,
-    },
-    {
       url: absoluteUrl('/blog'),
       lastModified: modified('/blog'),
       changeFrequency: 'monthly',

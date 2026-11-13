@@ -62,7 +62,6 @@ const routes = {
     'website/components/home-faq.tsx',
   ],
   '/manifesto': ['website/app/manifesto/page.tsx'],
-  '/docs': ['website/app/docs/layout.tsx', 'website/app/docs/page.tsx'],
   '/blog': ['website/app/blog/page.tsx', 'website/lib/posts.ts'],
 };
 
