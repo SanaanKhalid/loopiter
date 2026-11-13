@@ -144,9 +144,16 @@ def rows_from_table(table) -> tuple[list[dict], int, int]:
                 "question": record["question"],
                 "answer": record["answer"],
                 "paragraphs": paragraphs,
+                "supportingTitles": supporting_titles(record.get("supporting_facts")),
             }
         )
     return rows, raw, dropped
+
+
+def supporting_titles(facts) -> list[str]:
+    if isinstance(facts, dict) and "title" in facts:
+        return [str(title) for title in facts["title"]]
+    return []
 
 
 def paragraphs_from_context(context) -> list[dict]:

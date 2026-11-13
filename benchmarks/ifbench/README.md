@@ -68,7 +68,10 @@ variants are in [benchmarks/NOTICE](../NOTICE).
 Primary metric: strict prompt-level accuracy. The report also includes loose
 prompt-level accuracy and instruction-level accuracy, strict and loose.
 The proposer receives per-instruction strict pass/fail from that verifier
-before the single rewrite call.
+before the single rewrite call. The example list is capped the same way as
+HotpotQA: failures first, then a seeded shuffle, at most 8 examples, and a
+16384-byte payload (`LOOPITER_BENCH_PROPOSE_EXAMPLES`,
+`LOOPITER_BENCH_PROPOSE_BYTES`). Held-out rows are not included.
 
 ## Artifact and generation
 
@@ -80,10 +83,27 @@ system prompt while staying inside the provider input budget.
 
 Predict output is free-form text in a strict JSON `{ "text" }` field, because
 the existing Azure Responses client only accepts a JSON schema. `max_output_tokens`
-must be from 1024 to 2048. The default is 1024. Propose defaults to 2048 so a
-prompt at the character cap can be returned. Override either bound with
+must be from 1024 to 2048. The default is 2048. A reasoning model counts
+reasoning tokens against that bound, and format-heavy prompts at effort `low`
+can spend most of 1024 before the answer, so the default is the top of the
+existing range. Propose defaults to 2048 so a prompt at the character cap can
+be returned. Override either bound with
 `LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS` or
 `LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS`.
+
+A per-item content filter, a 400 whose code is clearly about that prompt
+(`context_length_exceeded`, `string_above_max_length`, `invalid_prompt`), or an
+incomplete response with no usable text scores 0 for that row and the run
+continues. The report lists each one by row id, arm, split, and reason code,
+and the summary counts them per arm and split. The log line is only the HTTP
+status, error code, error type, content-filter category and severity, or
+`incomplete_details.reason`, after the shared error sanitizer. Prompt text,
+response text, headers, and keys are not logged. The run still stops on 401,
+403, 404, 429 after the retry policy, repeated 5xx, and a 400 that is not
+clearly per item (invalid parameter, unknown model or deployment). It also
+stops after 5 failed predictions in a row, or when failures in one arm and
+split exceed 20% of that split. Those failed calls still count against the
+spend cap and the ledger.
 
 ## Arms
 

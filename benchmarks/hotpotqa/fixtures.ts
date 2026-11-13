@@ -13,6 +13,8 @@ export interface HotpotExample {
   question: string;
   answer: string;
   paragraphs: Paragraph[];
+  /** Titles of the gold supporting paragraphs. Absent caches fall back to answer overlap. */
+  supportingTitles?: string[];
 }
 
 export function hotpotFixtures(): { pool: HotpotExample[]; heldOut: HotpotExample[] } {
@@ -39,6 +41,7 @@ export function row(id: string, answer: string, baselinePass: boolean): HotpotEx
     question: `Which city does fixture ${id} name?`,
     answer,
     paragraphs,
+    supportingTitles: [paragraphs[0]!.title],
   };
 }
 

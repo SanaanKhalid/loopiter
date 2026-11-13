@@ -167,7 +167,7 @@ jobs:
       - run: npm run build
       - run: node --test dist/test/offline-benchmark.test.js
       - run: node dist/benchmarks/kb-qa/run.js --seeds 5 --out reports/offline-kb-qa-ci.json
-      - run: node --test dist/benchmarks/public/offline.test.js dist/benchmarks/public/review.test.js
+      - run: node --test dist/benchmarks/public/offline.test.js dist/benchmarks/public/review.test.js dist/benchmarks/public/item-failures.test.js dist/benchmarks/public/rate-limit.test.js
       - run: node dist/benchmarks/public/estimate-main.js
         env:
           LOOPITER_BENCH_PRICE_INPUT_PER_1M: "1"

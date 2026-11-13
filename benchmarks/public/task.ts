@@ -41,9 +41,30 @@ export interface ModelAnswer {
   latencyMs: number;
 }
 
+export interface PredictCall {
+  arm: "baseline" | "one-shot" | "controller";
+  split:
+    | "feedback"
+    | "validation"
+    | "audit"
+    | "production"
+    | "held-out"
+    | "held-out-served"
+    | "held-out-ungated";
+  /** Predictions expected for this arm and split. The fraction valve uses this denominator. */
+  planned: number;
+}
+
 export interface ModelRunner<T extends PublicExample> {
-  answer(prompt: string, row: T, context: CallbackContext | null): Promise<ModelAnswer>;
+  answer(
+    prompt: string,
+    row: T,
+    context: CallbackContext | null,
+    call?: PredictCall,
+  ): Promise<ModelAnswer>;
   propose(input: ProposeRequest<T>, context: CallbackContext | null): Promise<string>;
+  /** Throws when per-item failures have crossed the safety valve. */
+  afterPredict?(): void;
 }
 
 export interface BenchmarkTask<T extends PublicExample> {

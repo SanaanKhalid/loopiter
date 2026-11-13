@@ -6,6 +6,7 @@ import type { BenchmarkTask, InstructionMark, RowScore } from "../public/task.js
 import { loadIfbenchCache } from "./cache.js";
 import { ifbenchFixtures, type IfExample } from "./fixtures.js";
 import { IFBENCH_PROMPT_VERSION, IFBENCH_SYSTEM_PROMPT } from "./prompt.js";
+import { selectProposeExamples } from "../public/propose-bound.js";
 import { scoreWithVerifiers } from "./score.js";
 
 const FAIL_TEXT = "plain reply";
@@ -20,7 +21,7 @@ export const ifbenchTask: BenchmarkTask<IfExample> = {
   fullSizes: FULL_SIZES,
   smokeRows: SMOKE_ROWS,
   feedbackPredicts: true,
-  predict: { min: 1024, max: 2048, defaultValue: 1024 },
+  predict: { min: 1024, max: 2048, defaultValue: 2048 },
   propose: { min: 1, max: 4096, defaultValue: 2048 },
   fixtureSizes: FIXTURE_SIZES,
   fixtures: ifbenchFixtures,
@@ -37,15 +38,20 @@ export const ifbenchTask: BenchmarkTask<IfExample> = {
   mockAnswer: (prompt, row) => scriptedAnswer(prompt, row.baselinePass, passText(row), FAIL_TEXT),
   scoreMany: async (items) => scoreItems(items),
   predictPayload: (row) => JSON.stringify({ task: row.prompt }),
-  proposePayload: (current, rows, feedback) =>
-    JSON.stringify({
-      fragment: current,
-      examples: rows.map((row, index) => ({
+  proposePayload: (current, rows, feedback) => {
+    const examples = selectProposeExamples({
+      rows,
+      failed: (_row, index) => failedFeedback(feedback[index] ?? []),
+      project: (row, index) => ({
         prompt: row.prompt,
         instructions: row.instructionIdList,
         feedback: (feedback[index] ?? []).map(mark),
-      })),
-    }),
+        score: feedbackScore(feedback[index] ?? []),
+      }),
+      envelope: (chosen) => JSON.stringify({ fragment: current, examples: chosen }),
+    });
+    return JSON.stringify({ fragment: current, examples });
+  },
   predictSchema: textSchema,
   proposeSchema: () => fragmentSchema(PROMPT_CAP),
   emptyScore: () => emptyIfScore(),
@@ -74,6 +80,16 @@ function passText(row: IfExample): string {
 
 function mark(item: InstructionMark): { id: string; passed: boolean } {
   return { id: item.id, passed: item.strict };
+}
+
+function failedFeedback(marks: InstructionMark[]): boolean {
+  return marks.some((item) => !item.strict);
+}
+
+function feedbackScore(marks: InstructionMark[]): number | null {
+  if (marks.length === 0) return null;
+  const passed = marks.filter((item) => item.strict).length;
+  return passed / marks.length;
 }
 
 function emptyIfScore(): RowScore {

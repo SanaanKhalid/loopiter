@@ -82,7 +82,20 @@ function parseRow(value: unknown): HotpotExample | null {
     throw new Error(`HotpotQA row ${id} does not have ${HOTPOT_PARAGRAPHS} frozen paragraphs.`);
   if (row.paragraphs.length !== HOTPOT_PARAGRAPHS) return null;
   const paragraphs = row.paragraphs.map(parseParagraph);
-  return { id, question, answer, paragraphs, baselinePass: false };
+  const supportingTitles = stringList(row.supportingTitles);
+  return {
+    id,
+    question,
+    answer,
+    paragraphs,
+    ...(supportingTitles ? { supportingTitles } : {}),
+    baselinePass: false,
+  };
+}
+
+function stringList(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return null;
+  return value;
 }
 
 function parseParagraph(value: unknown): Paragraph {

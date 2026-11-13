@@ -4,9 +4,10 @@ import { scriptedAnswer } from "../public/propose.js";
 import type { JsonValue } from "../../src/index.js";
 import type { BenchmarkTask, RowScore } from "../public/task.js";
 import { loadHotpotCache } from "./cache.js";
-import { hotpotFixtures, type HotpotExample } from "./fixtures.js";
+import { hotpotFixtures, type HotpotExample, type Paragraph } from "./fixtures.js";
 import { exactMatch, tokenF1 } from "./normalize.js";
 import { HOTPOT_PROMPT_VERSION, HOTPOT_SYSTEM_PROMPT } from "./prompt.js";
+import { selectProposeExamples } from "../public/propose-bound.js";
 
 const FAIL_TEXT = "unknown";
 
@@ -20,7 +21,7 @@ export const hotpotTask: BenchmarkTask<HotpotExample> = {
   fullSizes: FULL_SIZES,
   smokeRows: SMOKE_ROWS,
   feedbackPredicts: false,
-  predict: { min: 1, max: 2048, defaultValue: 256 },
+  predict: { min: 1, max: 2048, defaultValue: 1024 },
   propose: { min: 1, max: 4096, defaultValue: 2048 },
   fixtureSizes: FIXTURE_SIZES,
   fixtures: hotpotFixtures,
@@ -41,15 +42,21 @@ export const hotpotTask: BenchmarkTask<HotpotExample> = {
       question: row.question,
       paragraphs: row.paragraphs,
     }),
-  proposePayload: (current, rows) =>
-    JSON.stringify({
-      fragment: current,
-      examples: rows.map((row) => ({
+  proposePayload: (current, rows) => {
+    const examples = selectProposeExamples({
+      rows,
+      failed: (row) => row.baselinePass === false,
+      project: (row) => ({
         question: row.question,
-        paragraphs: row.paragraphs,
+        paragraphs: supportingParagraphs(row),
         answer: row.answer,
-      })),
-    }),
+        prediction: null,
+        score: row.baselinePass ? 1 : 0,
+      }),
+      envelope: (chosen) => JSON.stringify({ fragment: current, examples: chosen }),
+    });
+    return JSON.stringify({ fragment: current, examples });
+  },
   predictSchema: textSchema,
   proposeSchema: () => fragmentSchema(PROMPT_CAP),
   emptyScore: () => ({
@@ -63,6 +70,20 @@ export const hotpotTask: BenchmarkTask<HotpotExample> = {
     instructions: [],
   }),
 };
+
+function supportingParagraphs(row: HotpotExample): Paragraph[] {
+  const titles = new Set(row.supportingTitles ?? []);
+  const named = titles.size
+    ? row.paragraphs.filter((paragraph) => titles.has(paragraph.title))
+    : [];
+  if (named.length) return named;
+  const needle = row.answer.trim().toLowerCase();
+  const overlapped = needle
+    ? row.paragraphs.filter((paragraph) => paragraph.text.toLowerCase().includes(needle))
+    : [];
+  if (overlapped.length) return overlapped;
+  return row.paragraphs.slice(0, 2);
+}
 
 function scoreOne(response: string, answer: string): RowScore {
   const matched = exactMatch(response, answer);
