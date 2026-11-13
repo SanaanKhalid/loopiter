@@ -76,7 +76,9 @@ Per-item provider failures are the same as IFBench: a content filter, a
 prompt-scoped 400, or an incomplete response scores 0 for that row. The report
 and summary record the row, arm, split, and reason. Five failures in a row, or
 more than 20% of any arm and split, stop the run. 401, 403, 404, 429, repeated
-5xx, and a systemic 400 still stop immediately.
+5xx, and a systemic 400 still stop immediately. A 4xx with no token usage,
+including a 429, releases the pre-call reservation and costs $0. A timeout or
+a dropped connection after the request was sent is charged the full ceiling.
 
 ## Arms
 

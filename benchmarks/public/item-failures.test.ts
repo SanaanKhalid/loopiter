@@ -176,6 +176,53 @@ test("repeated refusals trip the consecutive valve", async () => {
   assert.equal(seen.fetches, ITEM_FAILURE_CONSECUTIVE);
 });
 
+test("invalid JSON scores 0 and repeated invalid output trips the valve", async () => {
+  const once = await runScript(10, (predicts) =>
+    predicts === 1 ? invalidJsonResponse() : answerResponse("Paris"),
+  );
+  assert.equal(once.report.stopped, null);
+  assert.equal(once.report.perSeed[0]?.baseline.successes, 9);
+  assert.deepEqual(
+    once.report.itemFailures.map((failure) => failure.reason),
+    ["invalid_output"],
+  );
+  assertNoLeaks(JSON.stringify(once.report));
+  const repeated = await runScript(25, (predicts) =>
+    predicts <= ITEM_FAILURE_CONSECUTIVE ? invalidJsonResponse() : answerResponse("Paris"),
+  );
+  assert.equal(repeated.report.stopped?.reason, "item_failure_consecutive");
+  assert.equal(repeated.report.itemFailures.length, ITEM_FAILURE_CONSECUTIVE);
+  assert.ok(repeated.report.itemFailures.every((failure) => failure.reason === "invalid_output"));
+});
+
+test("prompt-scoped 400s score 0 and 403 and 404 stop the run", async () => {
+  const scoped = await runScript(20, (predicts) => {
+    const code = ["context_length_exceeded", "string_above_max_length", "invalid_prompt"][predicts - 1];
+    if (!code) return answerResponse("Paris");
+    return jsonResponse(400, {
+      error: { message: PROMPT, type: "invalid_request_error", code },
+    });
+  });
+  assert.equal(scoped.report.stopped, null);
+  assert.deepEqual(
+    scoped.report.itemFailures.map((failure) => failure.reason),
+    ["context_length_exceeded", "string_above_max_length", "invalid_prompt"],
+  );
+  assert.equal(scoped.report.perSeed[0]?.baseline.successes, 17);
+  assertNoLeaks(JSON.stringify(scoped.report));
+
+  for (const status of [403, 404]) {
+    const stopped = await runScript(4, () =>
+      jsonResponse(status, { error: { message: `${PROMPT} ${KEY}`, code: "access_denied" } }),
+    );
+    assert.equal(stopped.report.stopped?.reason, "provider_error");
+    assert.match(stopped.report.stopped?.message ?? "", new RegExp(`HTTP ${status}`));
+    assert.equal(stopped.report.itemFailures.length, 0);
+    assert.equal(stopped.fetches, 1);
+    assertNoLeaks(JSON.stringify(stopped.report));
+  }
+});
+
 test("auth, systemic 400, repeated 5xx, and 429 stop the run", async () => {
   const unauthorized = await runScript(4, () =>
     jsonResponse(401, { error: { message: `${PROMPT} ${KEY}`, code: "invalid_api_key" } }),
@@ -345,6 +392,19 @@ function incompleteResponse(): Response {
     incomplete_details: { reason: "max_output_tokens" },
     output: [{ type: "message", content: [{ type: "output_text", text: `${PROMPT} ${KEY}` }] }],
     usage: { input_tokens: 8, output_tokens: 256 },
+  });
+}
+
+function invalidJsonResponse(): Response {
+  return jsonResponse(200, {
+    status: "completed",
+    output: [
+      {
+        type: "message",
+        content: [{ type: "output_text", text: `not-json ${PROMPT}` }],
+      },
+    ],
+    usage: { input_tokens: 4, output_tokens: 2 },
   });
 }
 

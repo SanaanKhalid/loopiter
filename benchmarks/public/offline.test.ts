@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { validateChange } from "../../src/index.js";
-import { closeVerifier, scoreWithVerifiers } from "../ifbench/score.js";
+import { UnsupportedInstructionError, closeVerifier, scoreWithVerifiers } from "../ifbench/score.js";
 import {
   IFBENCH_TEST_REVISION,
   IFBENCH_TRAIN_REVISION,
@@ -162,6 +162,25 @@ test("minimumImprovement is recorded and a value the audit cannot clear is refus
   assert.ok(required > 0.19 && required < 0.2);
 });
 
+test("an unknown IFBench instruction stops the verifier", async () => {
+  await assert.rejects(
+    scoreWithVerifiers([
+      {
+        prompt: "Say hello.",
+        response: "hello",
+        instructionIdList: ["not:real"],
+        kwargs: [{}],
+      },
+    ]),
+    (error: unknown) => {
+      assert.ok(error instanceof UnsupportedInstructionError);
+      assert.equal(error.instructionId, "not:real");
+      assert.equal(error.message.includes("hello"), false);
+      return true;
+    },
+  );
+});
+
 test("the prompt cap is larger than 800 characters and enforced", () => {
   const policy = promptPolicy({
     taskId: "ifbench",
@@ -274,6 +293,51 @@ test("fetch scripts and the bridge cite the pinned revisions", () => {
   assert.match(hotpotFetch, /CI/);
   assert.match(bridge, new RegExp(IFBENCH_VERIFIER_SHA));
   assert.match(requirements, new RegExp(IFBENCH_VERIFIER_SHA));
+  const supported = JSON.parse(
+    readFileSync(`${root}/benchmarks/ifbench/supported-instructions.json`, "utf8"),
+  ) as { revision: string; ids: string[] };
+  assert.equal(supported.revision, IFBENCH_VERIFIER_SHA);
+  const listed = spawnSync(
+    process.env.LOOPITER_BENCH_PYTHON ?? "python3",
+    [
+      "-c",
+      "from ifbench import instructions_registry; import json; print(json.dumps(sorted(instructions_registry.INSTRUCTION_DICT)))",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.deepEqual(supported.ids, JSON.parse(listed.stdout));
+  const filtered = spawnSync(
+    process.env.LOOPITER_BENCH_PYTHON ?? "python3",
+    [
+      "-c",
+      `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("fetch", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+supported = mod.load_supported_ids()
+train = [
+    {"id": "keep", "instructionIdList": ["keywords:existence"]},
+    {"id": "drop", "instructionIdList": ["keywords:existence", "not:real"]},
+]
+kept, stats = mod.keep_supported(train, "train", supported)
+assert [row["id"] for row in kept] == ["keep"]
+assert stats["droppedRows"] == 1
+assert stats["unsupported"] == [{"id": "not:real", "rows": 1}]
+try:
+    mod.keep_supported([{"id": "t", "instructionIdList": ["not:real"]}], "test", supported)
+except SystemExit as error:
+    assert "unsupported" in str(error)
+else:
+    raise SystemExit("test rows must fail closed")
+print("ok")
+`,
+      `${root}/benchmarks/ifbench/fetch.py`,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(filtered.status, 0, filtered.stderr || filtered.stdout);
   assert.match(readFileSync(`${root}/benchmarks/hotpotqa/normalize.ts`, "utf8"), new RegExp(HOTPOT_EVAL_SHA));
 });
 

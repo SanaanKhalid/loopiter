@@ -27,6 +27,7 @@ import {
 import { formatUsd, usdToMicro } from "../kb-qa/money.js";
 import { requestBody } from "./bodies.js";
 import { LIVE_INPUT_BYTES } from "./constants.js";
+import { UnsupportedInstructionError } from "../ifbench/score.js";
 import { viewOf, type ScoreView } from "./harness.js";
 import {
   ItemFailureStop,
@@ -392,6 +393,8 @@ function stoppedView(error: unknown, secrets: readonly string[]): { reason: stri
   );
   if (error instanceof ItemFailureStop) return { reason: error.reason, message };
   if (error instanceof RateLimitStop) return { reason: "rate_limit", message };
+  if (error instanceof UnsupportedInstructionError)
+    return { reason: "unsupported_instruction", message };
   return { reason: "provider_error", message };
 }
 

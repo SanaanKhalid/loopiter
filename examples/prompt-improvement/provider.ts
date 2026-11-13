@@ -275,7 +275,7 @@ class ResponsesProvider implements GenerationProvider {
     try {
       value = JSON.parse(texts.join(""));
     } catch {
-      throw new IncompleteOutputError("empty_output");
+      throw new IncompleteOutputError("invalid_output");
     }
     json(value);
     object(value, "structured output");

@@ -1,4 +1,5 @@
 /** Read the fetch-script cache. Tests use fixtures and do not call this. */
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { repoRoot } from "../public/paths.js";
@@ -20,8 +21,12 @@ export async function loadIfbenchCache(): Promise<{ pool: IfExample[]; heldOut: 
     manifest.trainRevision !== IFBENCH_TRAIN_REVISION
   )
     throw new Error("IFBench cache revisions do not match the pinned dataset SHAs. Run fetch.py again.");
+  const supported = supportedInstructionIds();
   const heldOut = (await readJsonl(join(root, "test.jsonl"))).map(parseTest);
-  const pool = (await readJsonl(join(root, "train.jsonl"))).map(parseTest);
+  for (const row of heldOut) assertSupported(row, supported);
+  const pool = (await readJsonl(join(root, "train.jsonl")))
+    .map(parseTest)
+    .filter((row) => row.instructionIdList.every((id) => supported.has(id)));
   if (heldOut.length !== IFBENCH_TEST_ROWS)
     throw new Error(`IFBench test cache has ${heldOut.length} rows; the pin expects ${IFBENCH_TEST_ROWS}.`);
   const heldIds = new Set(heldOut.map((row) => row.id));
@@ -85,6 +90,23 @@ function stringList(value: unknown): string[] {
 function objectField(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function supportedInstructionIds(): Set<string> {
+  const payload = JSON.parse(
+    readFileSync(new URL("./supported-instructions.json", import.meta.url), "utf8"),
+  ) as { ids?: unknown };
+  if (!Array.isArray(payload.ids) || payload.ids.some((item) => typeof item !== "string"))
+    throw new Error("IFBench supported instruction list is unreadable.");
+  return new Set(payload.ids);
+}
+
+function assertSupported(row: IfExample, supported: Set<string>): void {
+  const missing = row.instructionIdList.filter((id) => !supported.has(id));
+  if (missing.length)
+    throw new Error(
+      `IFBench test row ${row.id} uses unsupported instructions: ${missing.join(", ")}.`,
+    );
 }
 
 function stablePass(id: string): boolean {
