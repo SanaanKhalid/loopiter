@@ -282,7 +282,10 @@ are retried once. A bare `fetch failed`, `ENOTFOUND`, and TLS or certificate
 errors stop the run. Each of those retries logs the error class, waits with
 the same exponential backoff and jitter as a 429 that has no `Retry-After`,
 and is still checked against the spend cap before it is sent. HTTP 4xx other
-than 429, and any other error, stop the run. HTTP 429 is retried until a time budget runs out, not for a fixed 6 attempts.
+than 429, and any other error, stop the run. A model refusal or a completed
+response with no structured text is thrown as an incomplete output with reason
+`refusal` or `empty_output` and no response text. This KB-QA run still stops
+on that error. The public benchmarks score the row as 0 and continue. HTTP 429 is retried until a time budget runs out, not for a fixed 6 attempts.
 The budget is 10 minutes for an ordinary request and one extra minute per
 10,000 reserved tokens, up to 30 minutes, and it is also capped by
 `LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS`. `LOOPITER_BENCH_MAX_429_RETRIES`

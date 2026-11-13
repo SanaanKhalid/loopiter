@@ -146,6 +146,36 @@ test("content filter and incomplete predictions score 0 and the run continues", 
   assertNoLeaks(JSON.stringify(seen.report));
 });
 
+test("a refusal and an empty output score 0 and the run continues", async () => {
+  const seen = await runScript(10, (predicts) => {
+    if (predicts === 1) return refusalResponse();
+    if (predicts === 2) return emptyOutputResponse();
+    return answerResponse("Paris");
+  });
+  assert.equal(seen.report.stopped, null);
+  assert.equal(seen.report.perSeed.length, 1);
+  assert.equal(seen.report.perSeed[0]?.baseline.trials, 10);
+  assert.equal(seen.report.perSeed[0]?.baseline.successes, 8);
+  assert.deepEqual(
+    seen.report.itemFailures.map((failure) => failure.reason),
+    ["refusal", "empty_output"],
+  );
+  assert.equal(seen.report.itemFailures[0]?.arm, "baseline");
+  assert.equal(seen.report.itemFailures[0]?.split, "held-out");
+  assertNoLeaks(seen.logs);
+  assertNoLeaks(JSON.stringify(seen.report));
+});
+
+test("repeated refusals trip the consecutive valve", async () => {
+  const seen = await runScript(25, (predicts) =>
+    predicts <= ITEM_FAILURE_CONSECUTIVE ? refusalResponse() : answerResponse("Paris"),
+  );
+  assert.equal(seen.report.stopped?.reason, "item_failure_consecutive");
+  assert.equal(seen.report.itemFailures.length, ITEM_FAILURE_CONSECUTIVE);
+  assert.ok(seen.report.itemFailures.every((failure) => failure.reason === "refusal"));
+  assert.equal(seen.fetches, ITEM_FAILURE_CONSECUTIVE);
+});
+
 test("auth, systemic 400, repeated 5xx, and 429 stop the run", async () => {
   const unauthorized = await runScript(4, () =>
     jsonResponse(401, { error: { message: `${PROMPT} ${KEY}`, code: "invalid_api_key" } }),
@@ -315,6 +345,22 @@ function incompleteResponse(): Response {
     incomplete_details: { reason: "max_output_tokens" },
     output: [{ type: "message", content: [{ type: "output_text", text: `${PROMPT} ${KEY}` }] }],
     usage: { input_tokens: 8, output_tokens: 256 },
+  });
+}
+
+function refusalResponse(): Response {
+  return jsonResponse(200, {
+    status: "completed",
+    output: [{ type: "message", content: [{ type: "refusal", refusal: PROMPT }] }],
+    usage: { input_tokens: 8, output_tokens: 4 },
+  });
+}
+
+function emptyOutputResponse(): Response {
+  return jsonResponse(200, {
+    status: "completed",
+    output: [],
+    usage: { input_tokens: 8, output_tokens: 1 },
   });
 }
 

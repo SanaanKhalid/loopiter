@@ -265,17 +265,18 @@ class ResponsesProvider implements GenerationProvider {
       if (!item || item.type !== "message" || !Array.isArray(item.content))
         continue;
       for (const part of item.content) {
-        if (part.type === "refusal")
-          throw new Error(
-            "Model refused; no candidate/result will be accepted.",
-          );
+        if (part.type === "refusal") throw new IncompleteOutputError("refusal");
         if (part.type === "output_text" && typeof part.text === "string")
           texts.push(part.text);
       }
     }
-    if (!texts.length)
-      throw new Error("OpenAI response contained no structured output.");
-    const value: unknown = JSON.parse(texts.join(""));
+    if (!texts.length) throw new IncompleteOutputError("empty_output");
+    let value: unknown;
+    try {
+      value = JSON.parse(texts.join(""));
+    } catch {
+      throw new IncompleteOutputError("empty_output");
+    }
     json(value);
     object(value, "structured output");
     const usage = readUsage(body);
