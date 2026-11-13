@@ -40,6 +40,31 @@ pinned train revision, 95,373 rows include four repeated keys
 (`hard_coded_1`, `hard_coded_5`, `hard_coded_17`, `hard_coded_18`) across nine
 prompts, and those nine ids are rewritten. The test split stays 300 rows.
 
+Train rows are kept only when every instruction id is in the pinned verifier
+dictionary (`supported-instructions.json`, 83 ids at `cd189a9`). At that
+revision, 77,152 of 95,373 train rows are dropped and 18,221 remain. A row is
+counted once even when it has several unsupported ids. The unsupported ids
+and the number of train rows that contain each one are
+`copy:copy` 1,782, `copy:copying_multiple` 1,805, `copy:copying_simple` 1,728,
+`copy:repeat_phrase` 5,106, `count:count_increment_word` 5,092,
+`count:count_unique` 5,142, `count:counting_composition` 4,495,
+`count:lowercase_counting` 5,026, `detectable_format:bigram_wrapping` 5,267,
+`detectable_format:sentence_hyphens` 5,196,
+`detectable_format:square_brackets` 5,156, `first_word:first_word_answer` 5,105,
+`first_word:first_word_sent` 5,003, `keywords:exclude_word_harder` 5,182,
+`keywords:keyword_specific_position` 5,175,
+`keywords:no_adjacent_consecutive` 5,149, `keywords:palindrome` 5,120,
+`keywords:start_end` 5,222, `keywords:word_count_different_numbers` 5,064,
+`keywords:word_once` 5,194, `last_word:last_word_answer` 5,305,
+`last_word:last_word_sent` 5,279, `letters:letter_counting` 5,094,
+`letters:letter_counting2` 5,165, `new:copy_span_idx` 1,815,
+`paragraphs:paragraphs` 5,087, `paragraphs:paragraphs2` 5,095,
+`punctuation:punctuation_dot` 5,099, `punctuation:punctuation_exclamation` 5,147.
+The same counts are in the cache manifest. Every one of the 300 test rows is
+supported; fetch and the cache loader fail if one is not. The seeded split is
+unchanged and is drawn from the remaining train rows. Held-out ids stay
+disjoint from train.
+
 ```sh
 python -m pip install pyarrow
 python benchmarks/ifbench/fetch.py
@@ -102,8 +127,11 @@ response text, headers, and keys are not logged. The run still stops on 401,
 403, 404, 429 after the retry policy, repeated 5xx, and a 400 that is not
 clearly per item (invalid parameter, unknown model or deployment). It also
 stops after 5 failed predictions in a row, or when failures in one arm and
-split exceed 20% of that split. Those failed calls still count against the
-spend cap and the ledger.
+split exceed 20% of that split. A 4xx with no token usage, including a 429,
+releases the pre-call reservation and costs $0. A timeout or a dropped
+connection after the request was sent is charged the full ceiling. The
+pre-call check still reserves that ceiling so concurrent calls cannot pass
+the cap.
 
 ## Arms
 

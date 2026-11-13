@@ -50,7 +50,7 @@ export class ItemFailureStop extends Error {
 export function perItemReason(error: unknown): string | null {
   if (error instanceof IncompleteOutputError) {
     const reason = error.detail.incompleteReason;
-    if (reason === "refusal" || reason === "empty_output") return reason;
+    if (reason === "refusal" || reason === "empty_output" || reason === "invalid_output") return reason;
     return reason ? `incomplete:${reason}` : "incomplete";
   }
   if (!(error instanceof ProviderRequestError) || error.status !== 400) return null;

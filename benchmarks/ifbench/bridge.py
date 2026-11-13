@@ -42,8 +42,19 @@ def clean_kwargs(raw):
     return {key: value for key, value in raw.items() if value is not None}
 
 
+class UnsupportedInstructionError(Exception):
+    """The pinned verifier has no checker for this instruction id."""
+
+    def __init__(self, instruction_id: str):
+        self.instruction_id = instruction_id
+        super().__init__(instruction_id)
+
+
 def check(instruction_id, kwargs, prompt, response):
-    checker_cls = instructions_registry.INSTRUCTION_DICT[instruction_id]
+    try:
+        checker_cls = instructions_registry.INSTRUCTION_DICT[instruction_id]
+    except KeyError as error:
+        raise UnsupportedInstructionError(instruction_id) from error
     checker = checker_cls(instruction_id)
     checker.build_description(**clean_kwargs(kwargs))
     args = checker.get_instruction_args()

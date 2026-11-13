@@ -20,6 +20,7 @@ TEST_REVISION = "ed7c12452594b7028b15807b86d3938150b663ae"
 TRAIN_DATASET = "allenai/IF_multi_constraints_upto5"
 TRAIN_REVISION = "2e3a77407b7fce69f95b248d64a884e3ae1c2423"
 CACHE = Path(__file__).resolve().parents[1] / ".cache" / "ifbench"
+SUPPORTED_PATH = Path(__file__).with_name("supported-instructions.json")
 
 
 def main() -> None:
@@ -38,8 +39,11 @@ def main() -> None:
         f"https://huggingface.co/datasets/{TRAIN_DATASET}/resolve/{TRAIN_REVISION}/data/train-00000-of-00001.parquet",
         CACHE / "train.parquet",
     )
+    supported = load_supported_ids()
     test_rows, _test_stats = rows_from_table(pq.read_table(test_path), kind="test")
-    train_rows, train_stats = rows_from_table(pq.read_table(train_path), kind="train")
+    train_built, train_stats = rows_from_table(pq.read_table(train_path), kind="train")
+    test_rows, _test_support = keep_supported(test_rows, "test", supported)
+    train_rows, support = keep_supported(train_built, "train", supported)
     test_ids = {row["id"] for row in test_rows}
     overlap = sorted(test_ids & {row["id"] for row in train_rows})
     if overlap:
@@ -53,8 +57,12 @@ def main() -> None:
                 "testRevision": TEST_REVISION,
                 "trainDataset": TRAIN_DATASET,
                 "trainRevision": TRAIN_REVISION,
+                "verifierRevision": json.loads(SUPPORTED_PATH.read_text(encoding="utf-8"))["revision"],
                 "testRows": len(test_rows),
+                "trainRowsBefore": len(train_built),
                 "trainRows": len(train_rows),
+                "droppedRows": support["droppedRows"],
+                "unsupportedInstructions": support["unsupported"],
                 "duplicateKeys": train_stats["duplicateKeys"],
                 "duplicateKeyNames": train_stats["duplicateKeyNames"],
                 "rowsRewritten": train_stats["rowsRewritten"],
@@ -65,7 +73,9 @@ def main() -> None:
         encoding="utf-8",
     )
     print(
-        f"Wrote {CACHE} test={len(test_rows)} train={len(train_rows)} "
+        f"Wrote {CACHE} test={len(test_rows)} trainBefore={len(train_built)} "
+        f"train={len(train_rows)} dropped={support['droppedRows']} "
+        f"unsupported={json.dumps(support['unsupported'])} "
         f"duplicateKeys={train_stats['duplicateKeys']} rowsRewritten={train_stats['rowsRewritten']} "
         f"keys={train_stats['duplicateKeyNames']}"
     )
@@ -157,6 +167,35 @@ def assign_train_ids(records: list[tuple[str, str]]) -> tuple[list[str], dict]:
         "duplicateKeyNames": duplicate_key_names,
         "rowsRewritten": rewritten,
     }
+
+
+def load_supported_ids() -> set[str]:
+    payload = json.loads(SUPPORTED_PATH.read_text(encoding="utf-8"))
+    ids = payload.get("ids")
+    if not isinstance(ids, list) or not ids or any(not isinstance(item, str) for item in ids):
+        raise SystemExit(f"{SUPPORTED_PATH} does not list verifier instruction ids.")
+    return set(ids)
+
+
+def keep_supported(rows: list[dict], kind: str, supported: set[str]):
+    """Drop a train row unless every instruction id is in the pinned verifier."""
+    kept = []
+    dropped = 0
+    counts: dict[str, int] = {}
+    for row in rows:
+        missing = sorted({item for item in row["instructionIdList"] if item not in supported})
+        if not missing:
+            kept.append(row)
+            continue
+        if kind == "test":
+            raise SystemExit(
+                f"IFBench test row {row['id']} uses unsupported instructions: {', '.join(missing)}."
+            )
+        dropped += 1
+        for item in missing:
+            counts[item] = counts.get(item, 0) + 1
+    unsupported = [{"id": key, "rows": counts[key]} for key in sorted(counts)]
+    return kept, {"droppedRows": dropped, "unsupported": unsupported}
 
 
 def assert_unique(ids: list[str], label: str) -> None:

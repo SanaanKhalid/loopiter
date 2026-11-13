@@ -62,6 +62,17 @@ export async function resetVerifier(): Promise<void> {
   await closeVerifier();
 }
 
+export class UnsupportedInstructionError extends Error {
+  readonly instructionId: string;
+  constructor(instructionId: string) {
+    super(
+      `Unsupported IFBench instruction ${instructionId}. The pinned verifier does not implement it.`,
+    );
+    this.name = "UnsupportedInstructionError";
+    this.instructionId = instructionId;
+  }
+}
+
 export async function scoreWithVerifiers(items: readonly VerifierItem[]): Promise<RowScore[]> {
   if (items.length === 0) return [];
   const scores: RowScore[] = [];
@@ -180,11 +191,21 @@ function ensureChild(): ChildProcessWithoutNullStreams {
       child = null;
       reader = null;
     }
-    const message = `IFBench verifier bridge exited ${code ?? "null"}. ${stderr.slice(-500)}. Install the pinned package (ifbench@${IFBENCH_VERIFIER_SHA}).`;
-    for (const waiter of waiters.filter((item) => item.proc === proc)) waiter.reject(new Error(message));
+    const unsupported = unsupportedFrom(stderr);
+    const message = unsupported
+      ? unsupported.message
+      : `IFBench verifier bridge exited ${code ?? "null"}. ${stderr.slice(-500)}. Install the pinned package (ifbench@${IFBENCH_VERIFIER_SHA}).`;
+    const failure = unsupported ?? new Error(message);
+    for (const waiter of waiters.filter((item) => item.proc === proc)) waiter.reject(failure);
   });
   child = proc;
   return proc;
+}
+
+function unsupportedFrom(text: string): UnsupportedInstructionError | null {
+  const match = text.match(/UnsupportedInstructionError: (\S+)/);
+  const instructionId = match?.[1];
+  return instructionId ? new UnsupportedInstructionError(instructionId) : null;
 }
 
 function failClosed(
