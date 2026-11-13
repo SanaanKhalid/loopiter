@@ -8,6 +8,7 @@ import {
   IFBENCH_TEST_REVISION,
   IFBENCH_TEST_ROWS,
   IFBENCH_TRAIN_REVISION,
+  IFBENCH_VERIFIER_SHA,
 } from "./pins.js";
 
 export async function loadIfbenchCache(): Promise<{ pool: IfExample[]; heldOut: IfExample[] }> {
@@ -15,12 +16,17 @@ export async function loadIfbenchCache(): Promise<{ pool: IfExample[]; heldOut: 
   const manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8")) as {
     testRevision?: string;
     trainRevision?: string;
+    verifierRevision?: string;
   };
   if (
     manifest.testRevision !== IFBENCH_TEST_REVISION ||
     manifest.trainRevision !== IFBENCH_TRAIN_REVISION
   )
     throw new Error("IFBench cache revisions do not match the pinned dataset SHAs. Run fetch.py again.");
+  if (manifest.verifierRevision !== IFBENCH_VERIFIER_SHA)
+    throw new Error(
+      `IFBench cache verifier revision does not match ${IFBENCH_VERIFIER_SHA}. Run fetch.py again.`,
+    );
   const supported = supportedInstructionIds();
   const heldOut = (await readJsonl(join(root, "test.jsonl"))).map(parseTest);
   for (const row of heldOut) assertSupported(row, supported);
@@ -94,7 +100,10 @@ function objectField(value: unknown): Record<string, unknown> {
 
 function supportedInstructionIds(): Set<string> {
   const payload = JSON.parse(
-    readFileSync(new URL("./supported-instructions.json", import.meta.url), "utf8"),
+    readFileSync(
+      join(repoRoot(import.meta.url), "benchmarks", "ifbench", "supported-instructions.json"),
+      "utf8",
+    ),
   ) as { ids?: unknown };
   if (!Array.isArray(payload.ids) || payload.ids.some((item) => typeof item !== "string"))
     throw new Error("IFBench supported instruction list is unreadable.");
