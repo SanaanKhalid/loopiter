@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateChange } from "../../src/index.js";
+import { loadIfbenchCache } from "../ifbench/cache.js";
 import { UnsupportedInstructionError, closeVerifier, scoreWithVerifiers } from "../ifbench/score.js";
 import {
   IFBENCH_TEST_REVISION,
+  IFBENCH_TEST_ROWS,
   IFBENCH_TRAIN_REVISION,
   IFBENCH_VERIFIER_SHA,
 } from "../ifbench/pins.js";
@@ -160,6 +164,74 @@ test("minimumImprovement is recorded and a value the audit cannot clear is refus
     minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
   });
   assert.ok(required > 0.19 && required < 0.2);
+});
+
+test("the built cache loader reads the source instruction list", async () => {
+  const root = repoRoot(import.meta.url);
+  const sourceList = join(root, "benchmarks", "ifbench", "supported-instructions.json");
+  const distList = join(root, "dist", "benchmarks", "ifbench", "supported-instructions.json");
+  assert.equal(existsSync(sourceList), true);
+  assert.equal(existsSync(distList), false);
+  const cache = join(root, "benchmarks", ".cache", "ifbench");
+  const aside = `${cache}.test-aside`;
+  await rm(aside, { recursive: true, force: true });
+  if (existsSync(cache)) await rename(cache, aside);
+  try {
+    await mkdir(cache, { recursive: true });
+    await writeFile(
+      join(cache, "manifest.json"),
+      `${JSON.stringify({
+        testRevision: IFBENCH_TEST_REVISION,
+        trainRevision: IFBENCH_TRAIN_REVISION,
+        verifierRevision: "not-the-pin",
+      })}\n`,
+    );
+    await assert.rejects(
+      loadIfbenchCache(),
+      new RegExp(`verifier revision does not match ${IFBENCH_VERIFIER_SHA}`),
+    );
+    await writeFile(
+      join(cache, "manifest.json"),
+      `${JSON.stringify({
+        testRevision: IFBENCH_TEST_REVISION,
+        trainRevision: IFBENCH_TRAIN_REVISION,
+        verifierRevision: IFBENCH_VERIFIER_SHA,
+      })}\n`,
+    );
+    const row = (id: string) =>
+      JSON.stringify({
+        id,
+        prompt: `Prompt ${id}`,
+        instructionIdList: ["keywords:existence"],
+        kwargs: [{ keywords: ["quartz"] }],
+      });
+    await writeFile(
+      join(cache, "test.jsonl"),
+      `${Array.from({ length: IFBENCH_TEST_ROWS }, (_, index) => row(`held-${index}`)).join("\n")}\n`,
+    );
+    await writeFile(
+      join(cache, "train.jsonl"),
+      `${[
+        row("train-kept"),
+        JSON.stringify({
+          id: "train-dropped",
+          prompt: "Unsupported train row",
+          instructionIdList: ["not:real"],
+          kwargs: [{}],
+        }),
+      ].join("\n")}\n`,
+    );
+    const loaded = await loadIfbenchCache();
+    assert.equal(loaded.heldOut.length, IFBENCH_TEST_ROWS);
+    assert.deepEqual(
+      loaded.pool.map((item) => item.id),
+      ["train-kept"],
+    );
+    assert.deepEqual(loaded.pool[0]?.instructionIdList, ["keywords:existence"]);
+  } finally {
+    await rm(cache, { recursive: true, force: true });
+    if (existsSync(aside)) await rename(aside, cache);
+  }
 });
 
 test("an unknown IFBench instruction stops the verifier", async () => {

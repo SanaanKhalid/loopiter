@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ProviderRequestError, parseProviderErrorBody } from "../../examples/prompt-improvement/provider.js";
+import { ifbenchTask } from "../ifbench/task.js";
+import { UnsupportedInstructionError } from "../ifbench/score.js";
 import { hotpotTask } from "../hotpotqa/task.js";
 import { row } from "../hotpotqa/fixtures.js";
 import { LiveLedger, LiveSession } from "../kb-qa/live.js";
@@ -270,6 +272,68 @@ test("auth, systemic 400, repeated 5xx, and 429 stop the run", async () => {
   assert.equal(limited.report.itemFailures.length, 0);
   assert.equal(limited.fetches, 2);
   assertNoLeaks(JSON.stringify(limited.report));
+});
+
+test("an unsupported instruction stops the live run", async () => {
+  const logs: string[] = [];
+  const original = console.error;
+  console.error = (line?: unknown) => {
+    logs.push(String(line));
+  };
+  const directory = await mkdtemp(join(tmpdir(), "unsupported-instruction-"));
+  try {
+    const task = {
+      ...ifbenchTask,
+      fullSizes: { optimization: 2, validation: 2, audit: 2, production: 2, heldOut: 2 },
+      scoreMany: async () => {
+        throw new UnsupportedInstructionError("not:real");
+      },
+    };
+    const example = (id: string) => ({
+      id,
+      baselinePass: false,
+      prompt: `Prompt ${PROMPT}`,
+      instructionIdList: ["not:real"],
+      kwargs: [{}],
+    });
+    const report = await runLiveTask(
+      task,
+      {
+        seeds: [1],
+        smoke: true,
+        deployment: "loopiter-gpt-5-6",
+        apiVersion: "v1",
+        endpoint: "https://example.openai.azure.com/",
+        apiKey: KEY,
+        prices: { inputUsdPerMillion: 1, outputUsdPerMillion: 2, cachedInputUsdPerMillion: 0 },
+        totalCapUsd: 50,
+        warnUsd: 40,
+        invocationCapUsd: 50,
+        stopAtWarn: false,
+        ledgerPath: join(directory, "ledger.json"),
+        limits: resolveLimits({}, ifbenchTask),
+        minimumImprovement: 0,
+        maxTokensPerMinute: 0,
+        maxRetryWaitMs: 1_000,
+        max429Retries: 1,
+        requestTimeoutMs: 5_000,
+        maxTotalWaitMs: 5_000,
+        stallTimeoutMs: 600_000,
+        fetch: async () => answerResponse("hello"),
+      },
+      {
+        pool: Array.from({ length: 8 }, (_, index) => example(`pool-${index}`)),
+        heldOut: [example("held-0"), example("held-1")],
+      },
+    );
+    assert.equal(report.stopped?.reason, "unsupported_instruction");
+    assert.match(report.stopped?.message ?? "", /not:real/);
+    assert.equal((report.stopped?.message ?? "").includes(PROMPT), false);
+    assert.equal(report.perSeed.length, 0);
+  } finally {
+    console.error = original;
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("consecutive failures and the split fraction stop the run", async () => {
