@@ -1,0 +1,36 @@
+{
+  "full": {
+    "id": "struct-full",
+    "question": "Which city is named in the notes?",
+    "answer": "Paris",
+    "context": {
+      "title": ["Notes", "Atlas", "River", "Market", "Museum", "Harbor", "Library", "Station", "Garden", "Bridge"],
+      "sentences": [
+        ["The city in the notes is Paris.", "It sits on the Seine."],
+        ["An atlas lists many other cities."],
+        ["The river passage is a distractor."],
+        ["The market sells bread."],
+        ["The museum opened in 1900."],
+        ["The harbor is busy in summer."],
+        ["The library holds old maps."],
+        ["The station serves regional trains."],
+        ["The garden is closed on Mondays."],
+        ["The bridge was rebuilt later."]
+      ]
+    }
+  },
+  "short": {
+    "id": "struct-short",
+    "question": "Which city is named in the short row?",
+    "answer": "Lima",
+    "context": {
+      "title": ["Coast", "Plaza", "Hills", "Port"],
+      "sentences": [
+        ["Lima is the city."],
+        ["The plaza is crowded."],
+        ["The hills are dry."],
+        ["The port faces the ocean."]
+      ]
+    }
+  }
+}

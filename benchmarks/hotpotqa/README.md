@@ -13,18 +13,24 @@ Hugging Face `hotpotqa/hotpot_qa`, config `distractor`, revision
 the HotpotQA authors (Yang et al.).
 
 The distractor setting supplies a fixed 10-paragraph context with each
-question. This harness keeps that list in dataset order. The system prompt
-cannot add, drop, or reorder paragraphs.
+question. Hugging Face stores `context` as a struct of parallel `title` and
+`sentences` lists. This harness joins each sentence list into one paragraph
+and keeps that list in dataset order. The system prompt cannot add, drop, or
+reorder paragraphs.
 
-The labeled validation split is the held-out source. Train is the source for
-optimization, validation, audit, and production observation. A frozen sample of
-300 validation rows is the scored held-out set, drawn with seed 1402, which is
-not one of the five run seeds. Those seeds only reshuffle the train pools.
-Sizes match IFBench: optimization 150, validation 150, audit 300, production
-150, held-out 300. The full validation file is about 7405 rows; scoring every
-row on every seed would not match the other benchmark's held-out size, so the
-scored set is the frozen sample. Held-out ids are disjoint from train and are
-never passed to `dataset`, `propose`, or `evaluate`.
+Some official rows have 2 to 9 paragraphs. Fetch drops those rows in both the
+train and validation splits, and the cache loader drops any short row that is
+still present. The raw, kept, and dropped counts for each split are recorded
+in `benchmarks/.cache/hotpotqa/manifest.json` under `splits`. At the pinned
+revision, train drops 838 of 90,447 rows and validation drops 60 of 7,405.
+The frozen 300-row held-out sample is drawn with seed 1402 from the validation
+rows that remain after that filter. Seed 1402 is not one of the five run seeds. Those
+seeds only reshuffle the train pools. Sizes match IFBench: optimization 150,
+validation 150, audit 300, production 150, held-out 300. Scoring every
+remaining validation row on every seed would not match the other benchmark's
+held-out size, so the scored set is the frozen sample. Held-out ids are
+disjoint from train and are never passed to `dataset`, `propose`, or
+`evaluate`.
 
 ## Fetch
 

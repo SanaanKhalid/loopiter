@@ -30,6 +30,16 @@ set as held-out.
 The fetch script writes a gitignored cache. It does not run in CI (`CI=true`
 refuses it). Tests use the checked-in synthetic fixtures.
 
+A few train keys are reused for different prompts. A key that appears once
+stays the row id. A repeated key becomes `key-` plus the first 12 hex
+characters of the SHA-256 of that prompt, so the id is unique and stable.
+Test-set ids are the dataset keys and are left unchanged. Fetch and the cache
+loader both refuse a cache whose train ids are still not unique. The manifest
+records how many keys were repeated and how many rows were rewritten. At the
+pinned train revision, 95,373 rows include four repeated keys
+(`hard_coded_1`, `hard_coded_5`, `hard_coded_17`, `hard_coded_18`) across nine
+prompts, and those nine ids are rewritten. The test split stays 300 rows.
+
 ```sh
 python -m pip install pyarrow
 python benchmarks/ifbench/fetch.py
