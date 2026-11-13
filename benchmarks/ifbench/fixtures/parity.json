@@ -1,0 +1,150 @@
+{
+  "generatedBy": "Ran evaluation_lib.test_instruction_following_strict and test_instruction_following_loose from https://github.com/allenai/IFBench/blob/cd189a9c2889526d8af901d2103fd3e1ffcea6df/evaluation_lib.py (Copyright 2025 The Google Research Authors, Apache-2.0). Each case is a separate InputExample so strict's in-place kwargs edit cannot affect loose. Expected booleans are follow_instruction_list and follow_all_instructions. Loose variants are the upstream list: the response, the asterisk-stripped response, the response with the first line removed, the last line removed, both removed, and each of those three line-drops with asterisks removed.",
+  "verifierSha": "cd189a9c2889526d8af901d2103fd3e1ffcea6df",
+  "cases": [
+    {
+      "name": "empty-instruction-list",
+      "group": "empty",
+      "prompt": "p",
+      "instructionIdList": [],
+      "kwargs": [],
+      "response": "ok",
+      "strict": [],
+      "loose": [],
+      "strictPrompt": true,
+      "loosePrompt": true
+    },
+    {
+      "name": "empty-instruction-list-blank-response",
+      "group": "empty",
+      "prompt": "p",
+      "instructionIdList": [],
+      "kwargs": [],
+      "response": "",
+      "strict": [],
+      "loose": [],
+      "strictPrompt": true,
+      "loosePrompt": true
+    },
+    {
+      "name": "keyword-pass",
+      "group": "keyword",
+      "prompt": "Include quartz.",
+      "instructionIdList": ["keywords:existence"],
+      "kwargs": [{ "keywords": ["quartz"] }],
+      "response": "quartz is here",
+      "strict": [true],
+      "loose": [true],
+      "strictPrompt": true,
+      "loosePrompt": true
+    },
+    {
+      "name": "keyword-fail",
+      "group": "keyword",
+      "prompt": "Include quartz.",
+      "instructionIdList": ["keywords:existence"],
+      "kwargs": [{ "keywords": ["quartz"] }],
+      "response": "plain reply",
+      "strict": [false],
+      "loose": [false],
+      "strictPrompt": false,
+      "loosePrompt": false
+    },
+    {
+      "name": "asterisk-only",
+      "group": "asterisk",
+      "prompt": "Include quartz.",
+      "instructionIdList": ["keywords:existence"],
+      "kwargs": [{ "keywords": ["quartz"] }],
+      "response": "quar*tz",
+      "strict": [false],
+      "loose": [true],
+      "strictPrompt": false,
+      "loosePrompt": true
+    },
+    {
+      "name": "two-instructions",
+      "group": "keyword",
+      "prompt": "both",
+      "instructionIdList": ["keywords:existence", "keywords:existence"],
+      "kwargs": [{ "keywords": ["quartz"] }, { "keywords": ["pebble"] }],
+      "response": "quartz only",
+      "strict": [true, false],
+      "loose": [true, false],
+      "strictPrompt": false,
+      "loosePrompt": false
+    },
+    {
+      "name": "remove-first-line",
+      "group": "line-drop",
+      "prompt": "no comma",
+      "instructionIdList": ["punctuation:no_comma"],
+      "kwargs": [{}],
+      "response": "bad, line\nclean words",
+      "strict": [false],
+      "loose": [true],
+      "strictPrompt": false,
+      "loosePrompt": true
+    },
+    {
+      "name": "remove-last-line",
+      "group": "line-drop",
+      "prompt": "no comma",
+      "instructionIdList": ["punctuation:no_comma"],
+      "kwargs": [{}],
+      "response": "clean words\nbad, line",
+      "strict": [false],
+      "loose": [true],
+      "strictPrompt": false,
+      "loosePrompt": true
+    },
+    {
+      "name": "remove-both-lines",
+      "group": "line-drop",
+      "prompt": "no comma",
+      "instructionIdList": ["punctuation:no_comma"],
+      "kwargs": [{}],
+      "response": "bad,\nclean words\nbad,",
+      "strict": [false],
+      "loose": [true],
+      "strictPrompt": false,
+      "loosePrompt": true
+    },
+    {
+      "name": "remove-first-line-asterisk",
+      "group": "line-drop-asterisk",
+      "prompt": "ab",
+      "instructionIdList": ["keywords:existence"],
+      "kwargs": [{ "keywords": ["ab"] }],
+      "response": "noise\na*b",
+      "strict": [false],
+      "loose": [true],
+      "strictPrompt": false,
+      "loosePrompt": true
+    },
+    {
+      "name": "remove-last-line-asterisk",
+      "group": "line-drop-asterisk",
+      "prompt": "ab",
+      "instructionIdList": ["keywords:existence"],
+      "kwargs": [{ "keywords": ["ab"] }],
+      "response": "a*b\nnoise",
+      "strict": [false],
+      "loose": [true],
+      "strictPrompt": false,
+      "loosePrompt": true
+    },
+    {
+      "name": "remove-both-lines-asterisk",
+      "group": "line-drop-asterisk",
+      "prompt": "ab",
+      "instructionIdList": ["keywords:existence"],
+      "kwargs": [{ "keywords": ["ab"] }],
+      "response": "zz\na*b\nzz",
+      "strict": [false],
+      "loose": [true],
+      "strictPrompt": false,
+      "loosePrompt": true
+    }
+  ]
+}

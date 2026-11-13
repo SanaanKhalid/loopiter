@@ -647,6 +647,11 @@ export function inputTokenCeiling(payload: string): number {
   return Math.max(1, Buffer.byteLength(payload, "utf8"));
 }
 
+/** Tokens reserved with the controller before one live generate. */
+export function reservedModelTokens(body: string, maxOutputTokens: number): number {
+  return inputTokenCeiling(body) + maxOutputTokens + 64;
+}
+
 export function redactSecrets(text: string, secrets: readonly string[]): string {
   let redacted = text;
   const ordered = [...secrets].sort((left, right) => right.length - left.length);
@@ -670,6 +675,14 @@ export interface RequestLimits {
   proposeMaxOutputTokens: number;
   /** Null omits the reasoning field. */
   reasoningEffort: string | null;
+}
+
+/** Byte cap for one Responses input. Unset keeps the original 65536-byte ceiling. */
+export function inputByteCap(value: number | undefined): number {
+  const cap = value ?? 65_536;
+  if (!Number.isSafeInteger(cap) || cap < 1)
+    throw new LiveGateError("maximumInputBytes must be a positive integer.");
+  return cap;
 }
 
 export function requestLimits(input: {
@@ -1041,6 +1054,8 @@ export class LiveSession {
       now: () => number;
       sleep: (ms: number) => Promise<void>;
       random: () => number;
+      /** Defaults to 65536. Callers that send longer task text can raise it. */
+      maximumInputBytes?: number;
     } & RequestLimits,
   ) {
     this.secrets = [
@@ -1103,7 +1118,7 @@ export class LiveSession {
         options.predictMaxOutputTokens,
         options.proposeMaxOutputTokens,
       ),
-      maximumInputBytes: 65_536,
+      maximumInputBytes: inputByteCap(options.maximumInputBytes),
       timeoutMs: options.requestTimeoutMs,
       fetch: fetchImpl,
     });
@@ -1305,7 +1320,7 @@ export class LiveSession {
     try {
       signal.throwIfAborted();
       sent = true;
-      const generated = await meter(ceiling + maxOutput + 64, async () => {
+      const generated = await meter(reservedModelTokens(body, maxOutput), async () => {
         requestSignal.throwIfAborted();
         const result = await this.provider.generate({
           ...input,
@@ -1676,7 +1691,7 @@ export function liveOptionsFromEnv(
   };
 }
 
-function readEstimatePrices(env: NodeJS.ProcessEnv): {
+export function readEstimatePrices(env: NodeJS.ProcessEnv): {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
 } {
@@ -1686,7 +1701,7 @@ function readEstimatePrices(env: NodeJS.ProcessEnv): {
   };
 }
 
-function readLivePrices(env: NodeJS.ProcessEnv): LivePrices {
+export function readLivePrices(env: NodeJS.ProcessEnv): LivePrices {
   return {
     inputUsdPerMillion: readDecimal(env, LIVE_ENV.priceInput, false),
     outputUsdPerMillion: readDecimal(env, LIVE_ENV.priceOutput, false),
@@ -1694,7 +1709,7 @@ function readLivePrices(env: NodeJS.ProcessEnv): LivePrices {
   };
 }
 
-function assertLiveSpendGuards(input: {
+export function assertLiveSpendGuards(input: {
   prices: LivePrices;
   totalCapUsd: number;
   warnUsd: number;
@@ -1712,7 +1727,7 @@ function assertLiveSpendGuards(input: {
     );
 }
 
-interface PaceSettings {
+export interface PaceSettings {
   maxTokensPerMinute: number;
   maxRetryWaitMs: number;
   max429Retries: number;
@@ -1723,7 +1738,7 @@ interface PaceSettings {
   random: () => number;
 }
 
-function paceSettings(options: LiveRunOptions): PaceSettings {
+export function paceSettings(options: LiveRunOptions): PaceSettings {
   const maxTokensPerMinute = options.maxTokensPerMinute ?? 0;
   if (!Number.isSafeInteger(maxTokensPerMinute) || maxTokensPerMinute < 0)
     throw new LiveGateError(
@@ -1751,7 +1766,7 @@ function paceSettings(options: LiveRunOptions): PaceSettings {
   };
 }
 
-function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
+export function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
   PaceSettings,
   | "maxTokensPerMinute"
   | "maxRetryWaitMs"
@@ -1770,7 +1785,7 @@ function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
   };
 }
 
-function stallTimeoutFromEnv(
+export function stallTimeoutFromEnv(
   env: NodeJS.ProcessEnv,
   pace: ReturnType<typeof paceSettingsFromEnv>,
 ): number {
@@ -1790,7 +1805,7 @@ function stallTimeoutFromEnv(
   return requested;
 }
 
-function readMaxTpm(env: NodeJS.ProcessEnv): number {
+export function readMaxTpm(env: NodeJS.ProcessEnv): number {
   const raw = env[LIVE_ENV.maxTpm];
   if (raw === undefined) return 0;
   const trimmed = raw.trim();
@@ -1836,7 +1851,7 @@ function retryWaitMs(
   return Math.min(maxWaitMs, Math.max(0, Math.round(chosen)));
 }
 
-function readRequestLimits(env: NodeJS.ProcessEnv): RequestLimits {
+export function readRequestLimits(env: NodeJS.ProcessEnv): RequestLimits {
   const predict = readOptionalInt(env, LIVE_ENV.predictMax);
   const propose = readOptionalInt(env, LIVE_ENV.proposeMax);
   const reasoning = readReasoningEnv(env);
@@ -2833,13 +2848,15 @@ export async function writeInterruptedReport(input: {
   perSeed?: LiveReport["perSeed"];
   reason?: string;
   message?: string;
+  /** Defaults to the KB-QA harness id so existing reports stay the same. */
+  harness?: string;
 }): Promise<void> {
   const bound = boundAbort(REPORT_IO_MS);
   try {
   await input.ledger.flush(bound.signal);
   const report = {
     schemaVersion: 1,
-    harness: "loopiter-live-kb-qa",
+    harness: input.harness ?? "loopiter-live-kb-qa",
     status: "partial",
     interrupted: true,
     stopped: {
@@ -2919,6 +2936,7 @@ export function createInterruptHandler(input: {
   secrets?: readonly string[];
   perSeed?: LiveReport["perSeed"];
   guard: ReturnType<typeof createExitGuard>;
+  harness?: string;
 }): (signal: NodeJS.Signals) => void {
   return () => {
     input.guard.arm(130, () => writeInterruptedReport(input));
@@ -3038,7 +3056,7 @@ function minutesLabel(ms: number): string {
   return `${text} ${text === "1" ? "minute" : "minutes"}`;
 }
 
-function redactionSecrets(apiKey: string, endpoint: string): string[] {
+export function redactionSecrets(apiKey: string, endpoint: string): string[] {
   const secrets = [apiKey, endpoint.trim()];
   try {
     const url = new URL(endpoint);

@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Download the pinned HotpotQA distractor split into benchmarks/.cache/hotpotqa.
+
+CI must not run this. Tests use the checked-in fixtures.
+Requires pyarrow: python -m pip install pyarrow
+
+The labeled validation split is the held-out source. Train is the pool source.
+Each row keeps the dataset's 10 paragraphs in order.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.request
+from pathlib import Path
+
+DATASET = "hotpotqa/hotpot_qa"
+REVISION = "1908d6afbbead072334abe2965f91bd2709910ab"
+PARAGRAPHS = 10
+CACHE = Path(__file__).resolve().parents[1] / ".cache" / "hotpotqa"
+FILES = {
+    "train": [
+        f"https://huggingface.co/datasets/{DATASET}/resolve/{REVISION}/distractor/train-00000-of-00002.parquet",
+        f"https://huggingface.co/datasets/{DATASET}/resolve/{REVISION}/distractor/train-00001-of-00002.parquet",
+    ],
+    "validation": [
+        f"https://huggingface.co/datasets/{DATASET}/resolve/{REVISION}/distractor/validation-00000-of-00001.parquet",
+    ],
+}
+
+
+def main() -> None:
+    if os.environ.get("CI") == "true":
+        sys.exit("Refusing to download HotpotQA data when CI=true.")
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:
+        sys.exit("Install pyarrow to fetch HotpotQA parquet files.")
+    CACHE.mkdir(parents=True, exist_ok=True)
+    for name, urls in FILES.items():
+        rows = []
+        for index, url in enumerate(urls):
+            path = download(url, CACHE / f"{name}-{index}.parquet")
+            rows.extend(rows_from_table(pq.read_table(path)))
+        write_jsonl(CACHE / f"{name}.jsonl", rows)
+    (CACHE / "manifest.json").write_text(
+        json.dumps(
+            {"dataset": DATASET, "config": "distractor", "revision": REVISION, "paragraphs": PARAGRAPHS},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    print(f"Wrote {CACHE}")
+
+
+def download(url: str, dest: Path) -> Path:
+    return download_atomic(url, dest, timeout=300)
+
+
+def download_atomic(url: str, dest: Path, timeout: int) -> Path:
+    """Write a sibling temp file, check the length, then rename over dest."""
+    request = urllib.request.Request(url, headers={"User-Agent": "loopiter-benchmark-fetch"})
+    temporary = dest.with_name(dest.name + ".partial")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            expected = response.headers.get("Content-Length")
+            expected_n = int(expected) if expected and expected.isdigit() else None
+            if dest.exists() and expected_n is not None and dest.stat().st_size == expected_n:
+                return dest
+            total = 0
+            with temporary.open("wb") as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    total += len(chunk)
+            if expected_n is not None and total != expected_n:
+                raise SystemExit(f"Download of {url} was truncated ({total} of {expected_n} bytes).")
+            os.replace(temporary, dest)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return dest
+
+
+def rows_from_table(table) -> list[dict]:
+    rows = []
+    for record in table.to_pylist():
+        context = record["context"]
+        if len(context) != PARAGRAPHS:
+            raise SystemExit(f"{record['id']} does not have {PARAGRAPHS} paragraphs.")
+        paragraphs = []
+        for paragraph in context:
+            sentences = paragraph["sentences"]
+            paragraphs.append(
+                {"title": paragraph["title"], "text": " ".join(sentences)}
+            )
+        rows.append(
+            {
+                "id": str(record["id"]),
+                "question": record["question"],
+                "answer": record["answer"],
+                "paragraphs": paragraphs,
+            }
+        )
+    return rows
+
+
+def write_jsonl(path: Path, rows: list[dict]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+if __name__ == "__main__":
+    main()
