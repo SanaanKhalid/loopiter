@@ -1311,6 +1311,11 @@ class ImprovementController:
                     async def apply(self, request):
                         async with controller._tx() as tx:
                             await controller._owned(tx, rid, owner)
+                        if improvement_work_disabled():
+                            v.fail(
+                                "self_improvement_disabled",
+                                "Improvement work is disabled.",
+                            )
                         return await w.deployment.apply(request)
 
                     async def inspect(self, request):
@@ -1319,19 +1324,26 @@ class ImprovementController:
                     async def rollback(self, request):
                         return await w.deployment.rollback(request)
 
-                attempt = await method(
-                    d["selected_id"],
-                    AuthorizedAdapter(),
-                    attempt_id=d["attempt_id"],
-                    expected_artifact_version=d["artifact_version"]
-                    if d["operation"] == "rollback"
-                    else d["baseline"]["artifact_version"],
-                    **(
-                        {"authorization": {"run_id": rid, "lease_owner": owner}}
-                        if d["operation"] == "apply"
-                        else {}
-                    ),
-                )
+                try:
+                    attempt = await method(
+                        d["selected_id"],
+                        AuthorizedAdapter(),
+                        attempt_id=d["attempt_id"],
+                        expected_artifact_version=d["artifact_version"]
+                        if d["operation"] == "rollback"
+                        else d["baseline"]["artifact_version"],
+                        **(
+                            {"authorization": {"run_id": rid, "lease_owner": owner}}
+                            if d["operation"] == "apply"
+                            else {}
+                        ),
+                    )
+                except Exception as exc:
+                    cause = exc.__cause__
+                    if getattr(cause, "code", None) == "self_improvement_disabled":
+                        await self._save(rid, owner, {"reason": "self_improvement_disabled"}, True)
+                        return
+                    raise
             if attempt["status"] == "pending":
                 await self._save(
                     rid,

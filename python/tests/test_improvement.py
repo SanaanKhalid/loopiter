@@ -615,6 +615,35 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             else:
                 os.environ["LOOPITER_DISABLE"] = previous
 
+    async def test_disable_check_before_apply(self):
+        previous = os.environ.get("LOOPITER_DISABLE")
+        try:
+            os.environ.pop("LOOPITER_DISABLE", None)
+            self.setup_workflow(FIXTURES["scenarios"][0])
+            ready = None
+            for _ in range(8):
+                ready = await self.controller().tick("classification")
+                if ready["reason"] == "audit_passed":
+                    break
+            self.assertEqual(ready["reason"], "audit_passed")
+            self.assertEqual(self.registry.calls, 0)
+            original = self.workflow.artifact
+
+            async def artifact(context, original=original):
+                current = await original(context)
+                os.environ["LOOPITER_DISABLE"] = "1"
+                return current
+
+            self.workflow = replace(self.workflow, artifact=artifact)
+            blocked = await self.controller().tick("classification")
+            self.assertEqual(blocked["reason"], "self_improvement_disabled")
+            self.assertEqual(self.registry.calls, 0)
+        finally:
+            if previous is None:
+                os.environ.pop("LOOPITER_DISABLE", None)
+            else:
+                os.environ["LOOPITER_DISABLE"] = previous
+
     async def test_out_of_band_change_blocks_rollback(self):
         self.setup_workflow(FIXTURES["scenarios"][5])
         await self.advance_to_observation()

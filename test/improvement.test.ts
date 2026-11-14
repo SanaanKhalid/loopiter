@@ -670,6 +670,30 @@ test("honor the disable setting in all apply paths", async () => {
     else process.env.LOOPITER_DISABLE = previous;
   }
 });
+test("tighten the disable check before apply", async () => {
+  const previous = process.env.LOOPITER_DISABLE;
+  try {
+    delete process.env.LOOPITER_DISABLE;
+    const x = setup();
+    let ready = await x.controller().tick("classification");
+    for (let i = 0; i < 8 && ready.reason !== "audit_passed"; i++)
+      ready = await x.controller().tick("classification");
+    assert.equal(ready.reason, "audit_passed");
+    assert.equal(x.registry.applications, 0);
+    const read = x.workflow.artifact;
+    x.workflow.artifact = async (context) => {
+      const current = await read(context);
+      process.env.LOOPITER_DISABLE = "1";
+      return current;
+    };
+    const blocked = await x.controller().tick("classification");
+    assert.equal(blocked.reason, "self_improvement_disabled");
+    assert.equal(x.registry.applications, 0);
+  } finally {
+    if (previous === undefined) delete process.env.LOOPITER_DISABLE;
+    else process.env.LOOPITER_DISABLE = previous;
+  }
+});
 test("out-of-band changes are never blindly overwritten by rollback", async () => {
   const x = setup({
     name: "regression",

@@ -1433,24 +1433,40 @@ export class ImprovementController {
               await this.loop.store.transaction(this.loop.namespace, (tx) =>
                 this.owned(tx, rid, owner),
               );
+              if (improvementWorkDisabled())
+                fail(
+                  "self_improvement_disabled",
+                  "Improvement work is disabled.",
+                );
               return w.deployment.apply(request);
             },
           };
-          attempt =
-            d.operation === "rollback"
-              ? await this.loop.rollbackCandidate(cid, {
-                  adapter,
-                  attemptId,
-                  signal: signal2,
-                  expectedArtifactVersion: d.artifactVersion!,
-                })
-              : await this.loop.deployCandidate(cid, {
-                  adapter,
-                  attemptId,
-                  signal: signal2,
-                  expectedArtifactVersion: d.baseline.artifactVersion,
-                  authorization: { runId: rid, leaseOwner: owner },
-                });
+          try {
+            attempt =
+              d.operation === "rollback"
+                ? await this.loop.rollbackCandidate(cid, {
+                    adapter,
+                    attemptId,
+                    signal: signal2,
+                    expectedArtifactVersion: d.artifactVersion!,
+                  })
+                : await this.loop.deployCandidate(cid, {
+                    adapter,
+                    attemptId,
+                    signal: signal2,
+                    expectedArtifactVersion: d.baseline.artifactVersion,
+                    authorization: { runId: rid, leaseOwner: owner },
+                  });
+          } catch (error) {
+            const cause = (error as { cause?: { code?: unknown } }).cause;
+            if (cause?.code === "self_improvement_disabled")
+              return {
+                ...(await idle("self_improvement_disabled", "paused")),
+                runId: rid,
+                candidateIds: d.candidateIds,
+              };
+            throw error;
+          }
         }
         if (attempt.status === "pending")
           run = await this.save(
