@@ -156,8 +156,8 @@ export function improvementWorkDisabled(
   return !IMPROVEMENT_DISABLE_OFF.has(raw);
 }
 
-/** `enable` and `enabled` still disable. Warn once per process so that is not silent. */
 let ambiguousDisableWarned = false;
+/** `enable` and `enabled` still disable. Warn once per process so that is not silent. */
 export function warnAmbiguousImprovementDisable(
   env: NodeJS.ProcessEnv = process.env,
 ): void {

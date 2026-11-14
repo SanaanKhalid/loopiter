@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import ts from "typescript";
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -22,9 +22,50 @@ async function sourceFiles(directory) {
   return found;
 }
 
-function controllerCalls(text) {
+const OMISSION =
+  /(?:omit(?:ting|s)?\s+(?:the\s+)?mode|without\s+a\s+mode|(?:^|[^a-z])no\s+mode|don'?t\s+pass\s+(?:a\s+)?mode|do\s+not\s+pass\s+(?:a\s+)?mode)/i;
+const CLAIMS_RECOMMEND_OR_OFF = /recommend|stays\s+off/i;
+const PUBLISHED_ALPHA = /published|0\.3\.0-alpha\.1|0\.3\.0a1/i;
+
+export function sentencesOf(text) {
+  const sentences = [];
+  for (const paragraph of text.split(/\n\s*\n/)) {
+    const flat = paragraph.replace(/\s+/g, " ").trim();
+    if (!flat) continue;
+    for (const sentence of flat.split(/(?<=[.!?])\s+/)) {
+      const trimmed = sentence.trim();
+      if (trimmed) sentences.push(trimmed);
+    }
+  }
+  return sentences;
+}
+
+/** Sentences that say omitting mode selects recommend or leaves self-improving off. */
+export function omittedModeClaimsRecommend(text) {
+  const sentences = sentencesOf(text);
+  const hits = [];
+  for (let index = 0; index < sentences.length; index += 1) {
+    const sentence = sentences[index];
+    const match = sentence.match(OMISSION);
+    if (!match || match.index === undefined) continue;
+    const earlier = `${sentences[index - 2] ?? ""} ${sentences[index - 1] ?? ""} ${sentence}`;
+    if (PUBLISHED_ALPHA.test(earlier)) continue;
+    const after = sentence.slice(match.index + match[0].length);
+    if (CLAIMS_RECOMMEND_OR_OFF.test(after)) {
+      hits.push(sentence);
+      continue;
+    }
+    if (/autonomous/i.test(after)) continue;
+    const following = sentences[index + 1] ?? "";
+    if (PUBLISHED_ALPHA.test(following)) continue;
+    if (CLAIMS_RECOMMEND_OR_OFF.test(following)) hits.push(sentence);
+  }
+  return hits;
+}
+
+export function controllerCalls(text) {
   const calls = [];
-  const pattern = /ImprovementController\s*\(/g;
+  const pattern = /(?<![A-Za-z])ImprovementController\s*\(/g;
   for (const match of text.matchAll(pattern)) {
     let index = match.index + match[0].length;
     let depth = 1;
@@ -41,6 +82,10 @@ function controllerCalls(text) {
   return calls;
 }
 
+function namesMode(source) {
+  return /\bmode\??\s*[:=,}]/.test(source);
+}
+
 async function rejectRecommendByOmission() {
   const paths = [
     ...(await sourceFiles(join(root, "website"))),
@@ -51,17 +96,17 @@ async function rejectRecommendByOmission() {
     join(root, "AGENT_GUIDE.md"),
     join(root, "python/AGENT_GUIDE.md"),
   ];
-  const omitMode = /omit mode[^\n]{0,180}recommend/i;
   for (const path of paths) {
     const text = await readFile(path, "utf8");
     const relative = path.slice(root.length);
-    assert.doesNotMatch(
-      text,
-      omitMode,
-      `${relative} says omitting mode selects recommend`,
+    const prose = omittedModeClaimsRecommend(text);
+    assert.deepEqual(
+      prose,
+      [],
+      `${relative} says omitting mode selects recommend: ${prose.join(" ")}`,
     );
     for (const call of controllerCalls(text)) {
-      if (/\bmode\s*[:=]/.test(call.source)) continue;
+      if (namesMode(call.source)) continue;
       const nearby = text.slice(Math.max(0, call.at - 500), call.at + call.source.length);
       const callsItRecommend =
         /recommend/i.test(nearby) &&
@@ -75,6 +120,11 @@ async function rejectRecommendByOmission() {
   }
 }
 
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
 await rejectRecommendByOmission();
 
 const build = spawnSync("npm", ["run", "build"], {
@@ -213,4 +263,5 @@ try {
   );
 } finally {
   await rm(directory, { recursive: true, force: true });
+}
 }

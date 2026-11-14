@@ -51,7 +51,7 @@ export default function Manifesto() {
 
           <section aria-labelledby="every-change-can-return">
             <h2 id="every-change-can-return">Every change can be undone.</h2>
-            <p>Every released change has a history and a previous version that can be restored when a worker is running and the deployment adapter supports rollback. Rollback is part of shipping on its own.</p>
+            <p>Every released change has a history and a previous version that can be restored through a deployment adapter that supports rollback. A running worker rolls back automatically.</p>
             <p className="manifesto-signoff">While it is in use, it gets better.</p>
           </section>
         </div>
