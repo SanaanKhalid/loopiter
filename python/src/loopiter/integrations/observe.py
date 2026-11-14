@@ -292,7 +292,8 @@ class _Bounded:
             handle.cancel()
         self.timers.clear()
         inflight = 1 if self.active > 0 and not self.active_deadline else 0
-        count = len(self.queue) + inflight
+        # A running operation or an unconsumed stream still holds its completion slot.
+        count = len(self.queue) + inflight + self.reserved
         self.dropped += count
         for _ in range(count):
             _note(

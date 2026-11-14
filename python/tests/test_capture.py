@@ -198,6 +198,53 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["metadata"]["loopiter_capture"]["status"], "completed")
         self.assertEqual(observer.stats()["dropped"], 0)
 
+    async def test_shutdown_counts_a_running_operation_and_an_unconsumed_stream(self):
+        loop = self.loop()
+        notes = []
+        observer = create_observer(
+            loop,
+            on_error=notes.append,
+            bounded={"queue_limit": 10, "write_timeout_ms": 100, "shutdown_timeout_ms": 40},
+        )
+        release = asyncio.Event()
+        running = asyncio.create_task(
+            observer.observe("long", lambda: _wait(release), context={"id": "s1"})
+        )
+        await asyncio.sleep(0.02)
+        await observer.shutdown(40)
+        self.assertEqual(observer.stats(), {"dropped": 1, "failed": 0, "backlog": 0})
+        self.assertEqual(len(notes), 1)
+        release.set()
+        self.assertEqual(await running, "later")
+        await asyncio.sleep(0.03)
+        self.assertEqual(observer.stats()["dropped"], 1)
+        self.assertEqual(len(notes), 1)
+        row = await loop.get_execution("s1")
+        self.assertEqual(row["metadata"]["loopiter_capture"]["status"], "pending")
+
+        stream_notes = []
+        streaming = create_observer(
+            loop,
+            on_error=stream_notes.append,
+            bounded={"queue_limit": 10, "write_timeout_ms": 100, "shutdown_timeout_ms": 40},
+        )
+
+        async def pending():
+            yield 1
+
+        wrapped = await streaming.observe("stream", pending, context={"id": "s3"})
+        await asyncio.sleep(0.02)
+        await streaming.shutdown(40)
+        self.assertEqual(streaming.stats(), {"dropped": 1, "failed": 0, "backlog": 0})
+        self.assertEqual(len(stream_notes), 1)
+        async for _chunk in wrapped:
+            pass
+        await asyncio.sleep(0.03)
+        self.assertEqual(streaming.stats()["dropped"], 1)
+        self.assertEqual(len(stream_notes), 1)
+        streamed = await loop.get_execution("s3")
+        self.assertEqual(streamed["metadata"]["loopiter_capture"]["status"], "pending")
+
     async def test_shutdown_ignores_a_hung_record(self):
         stall = _Stall()
         observer = create_observer(

@@ -255,6 +255,54 @@ test("shutdown ignores a hung record and does not finish after abandon", async (
   assert.ok(streaming.stats().backlog >= 0);
 });
 
+test("shutdown counts a running operation and an unconsumed stream once", async () => {
+  const loop = setup();
+  const notes: unknown[] = [];
+  const running = createObserver({
+    loop,
+    onError: (error) => notes.push(error),
+    bounded: { queueLimit: 10, writeTimeoutMs: 100, shutdownTimeoutMs: 40 },
+  });
+  let release: (value: string) => void = () => {};
+  const operation = running.observe(
+    "long",
+    () => new Promise<string>((resolve) => { release = resolve; }),
+    { context: { id: "s1" } },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await running.shutdown(40);
+  assert.equal(running.stats().dropped, 1);
+  assert.equal(running.stats().failed, 0);
+  assert.equal(running.stats().backlog, 0);
+  assert.equal(notes.length, 1);
+  release("done");
+  assert.equal(await operation, "done");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(running.stats().dropped, 1);
+  assert.equal(notes.length, 1);
+  assert.equal(state((await loop.getExecution("s1"))!).status, "pending");
+
+  const streamNotes: unknown[] = [];
+  const streaming = createObserver({
+    loop,
+    onError: (error) => streamNotes.push(error),
+    bounded: { queueLimit: 10, writeTimeoutMs: 100, shutdownTimeoutMs: 40 },
+  });
+  async function* pending() { yield 1; }
+  const wrapped = await streaming.observe("stream", pending, { context: { id: "s3" } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await streaming.shutdown(40);
+  assert.equal(streaming.stats().dropped, 1);
+  assert.equal(streaming.stats().failed, 0);
+  assert.equal(streaming.stats().backlog, 0);
+  assert.equal(streamNotes.length, 1);
+  for await (const _chunk of wrapped) { /* consume after shutdown */ }
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(streaming.stats().dropped, 1);
+  assert.equal(streamNotes.length, 1);
+  assert.equal(state((await loop.getExecution("s3"))!).status, "pending");
+});
+
 test("shutdown drains admitted writes, and an open flush does not free a hung write or a reservation", async () => {
   const loop = setup();
   const drained = createObserver({

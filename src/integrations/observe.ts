@@ -204,7 +204,8 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
     const inflight = active > 0 && !activeDeadline ? 1 : 0;
-    const count = queue.length + inflight;
+    // A running operation or an unconsumed stream still holds its completion slot.
+    const count = queue.length + inflight + reserved;
     dropped += count;
     for (let i = 0; i < count; i++) note(dropError());
     queue.length = 0;
