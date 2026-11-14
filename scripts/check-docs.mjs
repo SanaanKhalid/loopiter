@@ -23,9 +23,9 @@ async function sourceFiles(directory) {
 }
 
 const OMISSION =
-  /(?:omit(?:ting|s)?\s+(?:the\s+)?mode|leav(?:e|ing)\s+(?:the\s+)?`?mode`?\s+unset|mode`?\s+(?:is\s+)?(?:omitted|unset|not\s+set)|without\s+a\s+mode|(?:^|[^a-z])no\s+mode|don'?t\s+pass\s+(?:a\s+)?mode|do\s+not\s+pass\s+(?:a\s+)?mode|default\s+controller\s+mode\s+is)/i;
+  /(?:omit(?:ting|s)?\s+(?:the\s+)?mode|leav(?:e|ing)\s+(?:the\s+)?`?mode`?\s+unset|mode`?\s+(?:is\s+)?(?:omitted|unset|not\s+set)|without\s+a\s+mode|(?:^|[^a-z])no\s+mode|don'?t\s+pass\s+(?:a\s+)?mode|do\s+not\s+pass\s+(?:a\s+)?mode|default\s+controller\s+mode\s+is|default\s+mode\s+is|mode\s+defaults\s+to)/i;
 const CLAIMS_RECOMMEND_OR_OFF = /recommend|stays\s+off/i;
-const PUBLISHED_RECOMMEND_DEFAULT = /\b(?:0\.3\.0-alpha\.1|0\.3\.0a1)\b/;
+const PUBLISHED_RECOMMEND_DEFAULT = /(?<![\d.])v?(?:0\.3\.0-alpha\.1|0\.3\.0a1)\b/;
 
 export function sentencesOf(text) {
   const sentences = [];
@@ -40,6 +40,19 @@ export function sentencesOf(text) {
   return sentences;
 }
 
+/** A version exempts a sentence only when that sentence's recommend claim is about the release. */
+function versionQualifiesDefault(sentence, claimAt) {
+  const version = sentence.match(PUBLISHED_RECOMMEND_DEFAULT);
+  if (!version || version.index === undefined) return false;
+  if (/\b(?:unlike|whereas|however|instead)\b/i.test(sentence.slice(0, version.index)))
+    return false;
+  if (version.index > claimAt) {
+    const between = sentence.slice(claimAt, version.index);
+    if (/\b(?:unlike|whereas|however|instead)\b/i.test(between)) return false;
+  }
+  return true;
+}
+
 /** Sentences that say omitting mode selects recommend or leaves self-improving off. */
 export function omittedModeClaimsRecommend(text) {
   const sentences = sentencesOf(text);
@@ -52,16 +65,14 @@ export function omittedModeClaimsRecommend(text) {
     const recommendAt = after.search(/recommend/i);
     if (recommendAt !== -1 && /autonomous/i.test(after.slice(0, recommendAt))) continue;
     if (CLAIMS_RECOMMEND_OR_OFF.test(after)) {
-      if (PUBLISHED_RECOMMEND_DEFAULT.test(sentence)) continue;
+      if (versionQualifiesDefault(sentence, match.index + match[0].length + (after.match(CLAIMS_RECOMMEND_OR_OFF)?.index ?? 0)))
+        continue;
       hits.push(sentence);
       continue;
     }
     if (/autonomous/i.test(after)) continue;
     const following = sentences[index + 1] ?? "";
-    if (
-      CLAIMS_RECOMMEND_OR_OFF.test(following) &&
-      !PUBLISHED_RECOMMEND_DEFAULT.test(following)
-    )
+    if (CLAIMS_RECOMMEND_OR_OFF.test(following) && !versionQualifiesDefault(following, 0))
       hits.push(sentence);
   }
   return hits;

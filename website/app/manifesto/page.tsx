@@ -51,7 +51,7 @@ export default function Manifesto() {
 
           <section aria-labelledby="every-change-can-return">
             <h2 id="every-change-can-return">Every change can be undone.</h2>
-            <p>Every released change has a history and a previous version that can be restored through a deployment adapter that supports rollback. Automatic rollback happens when a released change fails its production guardrails or its observation window runs out, and only while improvement work is running.</p>
+            <p>Every released change has a history and a previous version that can be restored through a deployment adapter that supports rollback. Automatic rollback happens when a released change fails its production guardrails or its observation window runs out. selfImproving set to false, and pause(), still observe and roll back. Disable stops new applies everywhere, and stops observation and rollback only when the worker runs with --disable or LOOPITER_DISABLE.</p>
             <p className="manifesto-signoff">While it is in use, it gets better.</p>
           </section>
         </div>

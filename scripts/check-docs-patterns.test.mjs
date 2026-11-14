@@ -28,6 +28,9 @@ test("other omission phrasings near recommend fail the checker", () => {
     "Leaving mode unset selects recommend.",
     "With mode omitted, the controller recommends.",
     "When mode is not set, the controller recommends.",
+    "Unlike 0.3.0-alpha.1, omitting the mode selects recommend.",
+    "The default mode is recommend.",
+    "The controller mode defaults to recommend.",
   ])
     assert.ok(omittedModeClaimsRecommend(line).length > 0, line);
 });
