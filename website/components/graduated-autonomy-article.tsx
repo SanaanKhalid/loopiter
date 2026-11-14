@@ -18,9 +18,12 @@ export function attachAutonomy(loop: FeedbackLoop, workflow: ImprovementWorkflow
   });
 }
 
-// Omit mode and selfImproving: recommend, and self-improving stays off.
+// Recommend stores proposals and does not apply them. Omitting mode is autonomous.
 export function attachRecommend(loop: FeedbackLoop, workflow: ImprovementWorkflow) {
-  return new ImprovementController(loop, { workflows: [workflow] });
+  return new ImprovementController(loop, {
+    mode: "recommend",
+    workflows: [workflow],
+  });
 }
 
 export function scheduledTick(controller: ImprovementController, workflowId: string) {
@@ -35,8 +38,8 @@ def attach_autonomy(loop: FeedbackLoop, workflow: ImprovementWorkflow):
     )
 
 def attach_recommend(loop: FeedbackLoop, workflow: ImprovementWorkflow):
-    # Omit mode and self_improving: recommend, and self-improving stays off.
-    return ImprovementController(loop, workflows=[workflow])
+    # Recommend stores proposals and does not apply them. Omitting mode is autonomous.
+    return ImprovementController(loop, workflows=[workflow], mode="recommend")
 
 async def scheduled_tick(controller: ImprovementController, workflow_id: str):
     return await controller.tick(workflow_id)`;
@@ -86,7 +89,7 @@ export function GraduatedAutonomyArticle({ post }: { post: Post }) {
           </p>
           <h3>Recommend</h3>
           <p>
-            Recommend stores bounded proposals. It does not approve them and it does not deploy them. This is the mode you get from constructing <code>ImprovementController</code> without a mode, in Node and in Python. Self-improving stays off unless you pass the flag.
+            Recommend stores bounded proposals. It does not approve them and it does not deploy them. Pass <code>mode: &quot;recommend&quot;</code> in Node, or <code>mode=&quot;recommend&quot;</code> in Python. Constructing <code>ImprovementController</code> with no mode is autonomous, with self-improving on.
           </p>
           <h3>Experiment</h3>
           <p>

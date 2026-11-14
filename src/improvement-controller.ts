@@ -156,13 +156,15 @@ export function improvementWorkDisabled(
   return !IMPROVEMENT_DISABLE_OFF.has(raw);
 }
 
+let ambiguousDisableWarned = false;
 /** `enable` and `enabled` still disable. Warn once per process so that is not silent. */
 export function warnAmbiguousImprovementDisable(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   const shown = (env.LOOPITER_DISABLE ?? "").trim();
   const raw = shown.toLowerCase();
-  if (!AMBIGUOUS_DISABLE.has(raw)) return;
+  if (!AMBIGUOUS_DISABLE.has(raw) || ambiguousDisableWarned) return;
+  ambiguousDisableWarned = true;
   console.error(
     `warning: LOOPITER_DISABLE=${shown} disables improvement work. It does not turn work on. Unset it, or set 0, false, no, or off, to leave improvement work running.`,
   );

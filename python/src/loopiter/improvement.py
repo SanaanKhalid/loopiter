@@ -43,13 +43,18 @@ def improvement_work_disabled(environment=None):
     return raw not in _DISABLE_OFF
 
 
+_ambiguous_disable_warned = False
+
+
 def warn_ambiguous_improvement_disable(environment=None):
-    """enable and enabled still disable. Warn so that is not silent."""
+    """enable and enabled still disable. Warn once per process so that is not silent."""
+    global _ambiguous_disable_warned
     environment = os.environ if environment is None else environment
     shown = environment.get("LOOPITER_DISABLE", "")
     shown = "" if shown is None else str(shown).strip()
-    if shown.lower() not in {"enable", "enabled"}:
+    if shown.lower() not in {"enable", "enabled"} or _ambiguous_disable_warned:
         return
+    _ambiguous_disable_warned = True
     print(
         f"warning: LOOPITER_DISABLE={shown} disables improvement work. "
         "It does not turn work on. Unset it, or set 0, false, no, or off, "

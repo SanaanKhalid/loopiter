@@ -145,7 +145,7 @@ export default function Home() {
           <div className="section-heading compact">
             <div className="section-label">[ AUTONOMY, GRADUATED ]</div>
             <h2>Choose how far the loop can go.</h2>
-            <p>A fresh self-hosted plan records autonomous mode, with self-improving on. Your application calls each tick. The worker runs unless you pass --disable or set LOOPITER_DISABLE=1. Omit the mode on the controller and that object is autonomous. Omit --mode on the worker and the run follows the plan.</p>
+            <p>A fresh self-hosted plan records autonomous mode, with self-improving on. Your application calls each tick. The worker runs unless you pass --disable or set LOOPITER_DISABLE=1. Omit the mode on the controller and that object is autonomous. Omit --mode on the worker and the run follows the plan. That automatic default is on main and arrives in the next release. The published v0.3.0-alpha.1 still defaults to recommend.</p>
           </div>
           <div className="mode-list">
             <div className="mode-row"><span>01</span><strong>OBSERVE</strong><p>Inspect eligible evidence without proposing a change.</p><b>NO MUTATION</b></div>
