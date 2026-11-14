@@ -460,8 +460,12 @@ if ! grep -q "ERROR: failed to release deploy lock ${LOCK_BLOB:-locks/deploy-dev
 fi
 rm -f "$lock_err"
 
+nopy_bin="$work/nopy-bin"
+mkdir -p "$nopy_bin"
+# dirname is the external command that runs before the python3 check.
+ln -s "$(command -v dirname)" "$nopy_bin/dirname"
 nopy_code=0
-PATH=/does-not-exist /bin/bash "$ROOT/deploy.sh" dev "$IMAGE" plan >/dev/null 2>"$work/nopy.err" || nopy_code=$?
+PATH="$nopy_bin" /bin/bash "$ROOT/deploy.sh" dev "$IMAGE" plan >/dev/null 2>"$work/nopy.err" || nopy_code=$?
 if [[ "$nopy_code" -eq 0 ]] || ! grep -q 'python3 is required' "$work/nopy.err"; then
   echo "missing python3 must fail early" >&2
   cat "$work/nopy.err" >&2

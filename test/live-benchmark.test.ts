@@ -1596,9 +1596,10 @@ test("a fifo temp report cannot keep the process alive", async () => {
   assert.ok(outcome.signal === "SIGKILL" || outcome.code === 1);
 });
 
-test("sigkill helper skips a normal exit and a mismatched ppid", async () => {
+test("sigkill helper skips a normal exit, a mismatched ppid, and a dead parent", async () => {
   assert.equal(processIsRunning(process.pid), true);
   assert.equal(processIsRunning(-1), false);
+  assert.equal(processIsRunning(1), true);
   assert.equal(
     shouldForceKill({ ppid: 10, parentPid: 10, parentAlive: true }),
     true,
@@ -1655,15 +1656,18 @@ test("sigkill helper skips a normal exit and a mismatched ppid", async () => {
   const dead = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
   const deadPid = dead.pid ?? -1;
   await new Promise<void>((resolve) => dead.once("exit", () => resolve()));
+  assert.equal(processIsRunning(deadPid), false);
   const deadDecision = join(directory, "dead.txt");
   const deadHelper = spawn(
     process.execPath,
-    ["-e", forceKillScript(deadPid, 40, deadDecision)],
+    [
+      "-e",
+      `Object.defineProperty(process, "ppid", { configurable: true, get() { return ${deadPid}; } });\n${forceKillScript(deadPid, 40, deadDecision)}`,
+    ],
     { stdio: "ignore", windowsHide: true },
   );
   await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal(readFileSync(deadDecision, "utf8"), "skip");
-  assert.equal(processIsRunning(deadPid), false);
+  assert.equal(readFileSync(deadDecision, "utf8"), "dead");
   deadHelper.kill();
 });
 

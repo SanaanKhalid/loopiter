@@ -86,14 +86,14 @@ function boundAbort(ms: number): { signal: AbortSignal; done: () => void } {
   };
 }
 
-/** True when the pid exists. Signal 0 does not deliver a signal. */
+/** True when the pid exists. Signal 0 does not deliver a signal. EPERM means it exists and belongs to another user. */
 export function processIsRunning(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -116,12 +116,15 @@ export function forceKillScript(
   const resultLiteral = resultPath === undefined ? "null" : JSON.stringify(resultPath);
   return `const parentPid=${parentPid};const delay=${delayMs};const resultPath=${resultLiteral};
 const fs=require("node:fs");
-function parentAlive(){try{process.kill(parentPid,0);return true;}catch{return false;}}
+function parentAlive(){
+  // EPERM is another user's live process. Treat it as skip; this helper's parent is the same user.
+  try{process.kill(parentPid,0);return true;}catch{return false;}
+}
 function note(kind){if(resultPath)fs.writeFileSync(resultPath,kind);}
 const started=Date.now();
 const timer=setInterval(()=>{
-  const sameParent=process.ppid===parentPid;
-  if(!sameParent||!parentAlive()){clearInterval(timer);note("skip");process.exit(0);}
+  if(process.ppid!==parentPid){clearInterval(timer);note("skip");process.exit(0);}
+  if(!parentAlive()){clearInterval(timer);note("dead");process.exit(0);}
   if(Date.now()-started<delay)return;
   clearInterval(timer);
   note("kill");
