@@ -238,6 +238,23 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
                 (await self.rows(loop))[0]["metadata"]["loopiter_capture"]["status"], "completed"
             )
 
+    async def test_larger_output_limit_is_stored(self):
+        payload = "x" * 70_000
+        loop, create, _base, wrapped = self.setup_capture(maximum_output_bytes=200_000)
+        create.return_value = {
+            "choices": [{"index": 0, "message": {"content": payload}, "finish_reason": "stop"}]
+        }
+        await wrapped.chat.completions.create(**PARAMS)
+        self.assertIn(payload, json.dumps((await self.rows(loop))[0]["output"]))
+        source = Stream(
+            [{"choices": [{"index": 0, "delta": {"content": payload}, "finish_reason": "stop"}]}]
+        )
+        create.return_value = source
+        async for _event in await wrapped.chat.completions.create(**PARAMS, stream=True):
+            pass
+        streamed = json.dumps((await self.rows(loop))[-1]["output"])
+        self.assertIn(payload, streamed)
+
     async def test_failure_and_responses(self):
         loop, create, _base, wrapped = self.setup_capture()
         create.side_effect = ValueError("provider failure")

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FeedbackLoop, InMemoryStore, type JsonObject } from "../src/index.js";
-import { createObserver, capturePayload } from "../src/integrations/observe.js";
+import { createObserver, capturePayload, redactCapture } from "../src/integrations/observe.js";
 import { createLoopiterSpanExporter, spanExecutionId, type ReadableSpan } from "../src/integrations/otel.js";
 import { CaptureSession } from "../src/integrations/capture.js";
 
@@ -15,11 +15,11 @@ const parity = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.ur
 test("capture redacts before bounding, preserves application values, and explicitly marks incomplete data", () => {
   const raw = structuredClone(parity.sensitive.input);
   const redacted = capturePayload(raw, { mode: "redacted" });
-  const encoded = JSON.stringify(redacted.value);
-  for (const marker of parity.sensitive.absent) assert.equal(encoded.includes(marker), false, marker);
-  for (const marker of parity.sensitive.present) assert.equal(encoded.includes(marker), true, marker);
+  assert.deepEqual(redacted.value, parity.sensitive.output);
   assert.equal(raw.apiKey, parity.sensitive.input.apiKey);
   assert.equal(redacted.complete, false);
+  for (const item of parity.whitespace) assert.equal(redactCapture(item.input), item.output);
+  for (const item of parity.boundaries) assert.equal(redactCapture(item.input), item.output);
   const repeat = parity.credentialRepeat;
   const long = capturePayload(
     { [repeat.key]: repeat.unit.repeat(repeat.count) },
@@ -34,12 +34,31 @@ test("capture redacts before bounding, preserves application values, and explici
     ).value,
     { omitted: true, truncated: true, bytes: oversized.bytes },
   );
-  for (const sample of parity.boundaries) {
-    assert.equal(JSON.stringify(capturePayload(sample, { mode: "redacted" }).value).includes("fixture-marker-alpha") || JSON.stringify(capturePayload(sample, { mode: "redacted" }).value).includes("fixturekey123456"), false, sample);
-  }
   assert.deepEqual(capturePayload(raw, { mode: "metadata-only" }).value, { omitted: true });
   assert.equal(capturePayload(raw, { mode: "full" }).complete, true);
   assert.throws(() => capturePayload(raw, { mode: "redacted", maximumBytes: Number.NaN }));
+});
+
+test("redaction stays inside a generous time bound and still redacts a normal jwt", () => {
+  assert.equal(redactCapture("eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl"), "[REDACTED]");
+  assert.equal(redactCapture("9000000000001"), "[REDACTED]");
+  assert.equal(redactCapture("9000000000000000001"), "[REDACTED]");
+  assert.equal(redactCapture("1234567890123456"), "1234567890123456");
+  const bulky =
+    "eyJ-".repeat(262144) +
+    "9".repeat(262144) +
+    "http://user:" +
+    "a".repeat(262144) +
+    " secret_access_key=" +
+    "A".repeat(39) +
+    " a@";
+  const started = Date.now();
+  redactCapture(bulky);
+  assert.ok(Date.now() - started < 2000);
+  const capped = Date.now();
+  const omitted = capturePayload(bulky, { mode: "redacted" });
+  assert.ok(Date.now() - capped < 2000);
+  assert.equal((omitted.value as { omitted?: boolean }).omitted, true);
 });
 
 test("observer retains lineage, defaults to no content, preserves return identity and never replays a durable ID", async () => {

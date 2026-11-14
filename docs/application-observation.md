@@ -60,7 +60,7 @@ const options = {
 
 - `metadata-only` omits input/output bodies. Provider wrappers also omit arbitrary application metadata in this mode. Explicit context IDs should be opaque identifiers.
 - `redacted` removes common structured credential fields, authorization headers, private keys, known token patterns, URL passwords and labeled secrets before size limits. Add a domain-specific `redact` callback for customer-specific PII. Pattern redaction is not a guarantee of anonymization.
-- `full` explicitly retains payloads within the configured bounds. Optional custom redaction still applies.
+- `full` explicitly retains payloads within the configured bounds. The default bound is 64 KB. Optional custom redaction still applies.
 
 Python `with_loopiter` applies the capture client's policy to provider input, output, streamed chunks, and caller metadata. Its default remains full capture.
 

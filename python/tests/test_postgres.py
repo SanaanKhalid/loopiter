@@ -10,26 +10,44 @@ from test_core import Registry, approved
 
 from loopiter import FeedbackLoop, LoopiterError
 from loopiter.integrations.import_batch import import_batch
-from loopiter.postgres import PostgresStore, historical_down_sql, migration_sql
+from loopiter.postgres import PostgresStore, historical_down_sql, historical_sql, migration_sql
 from loopiter.testing import run_store_conformance
 
 URL = os.environ.get("LOOPITER_PYTHON_TEST_DATABASE_URL")
+
+# 002-autonomy.sql as shipped on main, before the superset skip.
+_OLD_NARROW_CHECK = """
+BEGIN;
+SELECT pg_advisory_xact_lock(hashtextextended('loopiter/python/schema/v1', 0));
+ALTER TABLE loopiter_python_records DROP CONSTRAINT IF EXISTS loopiter_python_records_collection_check;
+ALTER TABLE loopiter_python_records ADD CONSTRAINT loopiter_python_records_collection_check
+    CHECK (collection IN ('executions','signals','candidates','targets','attempts','events',
+                         'runs','operations','budgets','observations','coordination'));
+INSERT INTO loopiter_python_schema_migrations(version) VALUES (2) ON CONFLICT DO NOTHING;
+COMMIT;
+"""
 
 
 class HistoricalMigrationSqlTests(unittest.TestCase):
     def test_down_script_is_packaged_outside_migration_sql(self):
         applied = migration_sql()
+        upgrade = historical_sql()
         down = historical_down_sql()
         self.assertIn("ADD CONSTRAINT loopiter_python_records_collection_check", applied)
-        self.assertIn("NOT VALID", applied)
-        self.assertIn("VALIDATE CONSTRAINT loopiter_python_records_collection_check", applied)
-        self.assertIn("SET LOCAL lock_timeout", applied)
-        self.assertNotIn("VALUES (3)", applied)
-        self.assertNotIn("refuses to remove them", applied)
+        self.assertNotIn("NOT VALID", applied)
+        self.assertIn("LIKE '%historical%'", applied)
+        self.assertNotIn(upgrade, applied)
+        self.assertIn("NOT VALID", upgrade)
+        self.assertIn("VALIDATE CONSTRAINT loopiter_python_records_collection_check", upgrade)
+        self.assertIn("SET LOCAL lock_timeout", upgrade)
+        self.assertNotIn("VALUES (3)", upgrade)
+        self.assertNotIn("refuses to remove them", upgrade)
         self.assertIn("NOT VALID", down)
         self.assertIn("VALIDATE CONSTRAINT", down)
+        self.assertIn("LOCK TABLE loopiter_python_records IN SHARE ROW EXCLUSIVE MODE", down)
         self.assertIn("refuses to remove them", down)
         self.assertNotIn(down, applied)
+        self.assertNotIn(down, upgrade)
 
 
 class FailCommitPostgresStore(PostgresStore):
@@ -75,14 +93,10 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
         await run_store_conformance(self.store)
 
     async def test_v2_serves_traffic_and_historical_import_needs_003(self):
-        from importlib.resources import files
-
         from psycopg import AsyncConnection
         from psycopg.rows import tuple_row
 
-        upgrade = (
-            files("loopiter").joinpath("migrations/003-historical.sql").read_text(encoding="utf-8")
-        )
+        upgrade = historical_sql()
         body = {
             "idempotencyKey": "ticket-v2",
             "occurredAt": "2026-03-01T15:04:05.123Z",
@@ -148,7 +162,74 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
             async with await AsyncConnection.connect(URL, autocommit=True) as conn:
                 await conn.execute(upgrade)
 
+    async def test_migration_sql_keeps_historical_and_old_002_rolls_back(self):
+        from psycopg import AsyncConnection
+        from psycopg.errors import CheckViolation
+        from psycopg.rows import tuple_row
+
+        body = {
+            "idempotencyKey": "ticket-keep",
+            "occurredAt": "2026-03-01T15:04:05.123Z",
+            "status": "success",
+            "stageId": "classify",
+            "versions": {"prompt": "support-ticket-v1", "model": "fixture"},
+            "usage": {"state": "unknown"},
+        }
+
+        async def definition():
+            async with await AsyncConnection.connect(URL) as conn:
+                async with conn.cursor(row_factory=tuple_row) as cur:
+                    await cur.execute(
+                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                        "WHERE conrelid = %s::regclass AND conname = %s",
+                        ("loopiter_python_records", "loopiter_python_records_collection_check"),
+                    )
+                    (text,) = await cur.fetchone()
+            return text
+
+        try:
+            async with await AsyncConnection.connect(URL, autocommit=True) as conn:
+                await conn.execute(historical_sql())
+            self.assertEqual(
+                await import_batch(self.loop, [body]),
+                {"accepted": 1, "conflicts": 0, "rejected": 0},
+            )
+            async with await AsyncConnection.connect(URL, autocommit=True) as conn:
+                await conn.execute(migration_sql())
+            self.assertIn("historical", await definition())
+            self.assertEqual(len((await self.loop.list("historical"))["items"]), 1)
+            await self.loop.record_execution(id="still-open", kind="workflow", input={"ok": True})
+            async with await AsyncConnection.connect(URL, autocommit=True) as conn:
+                with self.assertRaises(CheckViolation):
+                    await conn.execute(_OLD_NARROW_CHECK)
+                await conn.rollback()
+            self.assertIn("historical", await definition())
+            self.assertEqual(len((await self.loop.list("historical"))["items"]), 1)
+            async with await AsyncConnection.connect(URL, autocommit=True) as conn:
+                await conn.execute(
+                    "DELETE FROM loopiter_python_records WHERE collection = 'historical'"
+                )
+                await conn.execute(_OLD_NARROW_CHECK)
+            self.assertNotIn("historical", await definition())
+            await self.loop.record_execution(
+                id="after-old-002", kind="workflow", input={"ok": True}
+            )
+            with self.assertRaises(LoopiterError) as caught:
+                await import_batch(self.loop, [body])
+            self.assertEqual(caught.exception.code, "migration_required")
+            async with await AsyncConnection.connect(URL, autocommit=True) as conn:
+                await conn.execute(historical_sql())
+            self.assertEqual((await import_batch(self.loop, [body]))["accepted"], 1)
+            self.assertIn("historical", await definition())
+        finally:
+            async with await AsyncConnection.connect(URL, autocommit=True) as conn:
+                await conn.execute(historical_sql())
+
     async def test_historical_import(self):
+        from psycopg import AsyncConnection
+
+        async with await AsyncConnection.connect(URL, autocommit=True) as conn:
+            await conn.execute(historical_sql())
         body = {
             "idempotencyKey": "ticket-pg",
             "occurredAt": "2026-03-01T15:04:05.123Z",

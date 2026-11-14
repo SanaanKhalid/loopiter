@@ -8,27 +8,226 @@ export interface CapturePolicy {
   redact?: (value: JsonValue) => JsonValue;
 }
 
-const credentialKey = /^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|client_secret|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials|x[-_]?api[-_]?key|private[-_]?key|token)$/i;
+// Shared with python/src/loopiter/integrations/privacy.py. Listed explicitly:
+// U+0009 TAB, U+000A LF, U+000B VT, U+000C FF, U+000D CR, U+0020 SPACE,
+// U+00A0 NO-BREAK SPACE, U+1680 OGHAM SPACE MARK,
+// U+2000 EN QUAD, U+2001 EM QUAD, U+2002 EN SPACE, U+2003 EM SPACE,
+// U+2004 THREE-PER-EM SPACE, U+2005 FOUR-PER-EM SPACE, U+2006 SIX-PER-EM SPACE,
+// U+2007 FIGURE SPACE, U+2008 PUNCTUATION SPACE, U+2009 THIN SPACE, U+200A HAIR SPACE,
+// U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR, U+202F NARROW NO-BREAK SPACE,
+// U+205F MEDIUM MATHEMATICAL SPACE, U+3000 IDEOGRAPHIC SPACE, U+FEFF BOM.
+const WS_CHARS =
+  "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+const WS_SET = new Set(WS_CHARS);
+const WS = `[${WS_CHARS}]`;
+const NOT_WS = `[^${WS_CHARS}]`;
+const credentialKey = new RegExp(
+  "^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|client[-_]?secret|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials|x[-_]?api[-_]?key|private[-_]?key|token|session)$",
+  "i",
+);
+const bearer = new RegExp(`(?<![A-Za-z0-9_])Bearer${WS}+[A-Za-z0-9+/_.=~-]+`, "gi");
+const basic = new RegExp(
+  `(?<![A-Za-z0-9_])[Bb][Aa][Ss][Ii][Cc]${WS}+(?![a-z]+(?![A-Za-z0-9_]))[A-Za-z0-9+/_.=~-]+`,
+  "g",
+);
+const tokens = /(?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![A-Za-z0-9_])/g;
+const jwt = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])/g;
+const awsSecret = new RegExp(
+  `(?<![A-Za-z0-9])(["']?(?:aws[-_]?)?secret[-_]?access[-_]?key["']?${WS}*[=:]${WS}*["']?)[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])`,
+  "gi",
+);
+const assigned = new RegExp(
+  `((?:password|api[_-]?key|access[_-]?token|secret)${WS}*[=:]${WS}*)[^${WS_CHARS}&,;]+`,
+  "gi",
+);
+const queryToken = new RegExp(
+  `((?:^|[${WS_CHARS}?&#])(?:access_token|token)=)[^${WS_CHARS}&#]+`,
+  "gi",
+);
+const privateKey = /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g;
+const localChar = /[A-Za-z0-9._%+-]/;
+const domainChar = /[A-Za-z0-9.-]/;
+const schemeChar = /[A-Za-z0-9+.-]/;
+
+function isWs(char: string): boolean {
+  return WS_SET.has(char);
+}
+
+function redactUrls(value: string): string {
+  let out = "";
+  let i = 0;
+  while (i < value.length) {
+    const at = value.indexOf("://", i);
+    if (at < 0) return out + value.slice(i);
+    let s = at - 1;
+    if (s < i || !/[A-Za-z]/.test(value[s]!)) {
+      out += value.slice(i, at + 3);
+      i = at + 3;
+      continue;
+    }
+    while (s > i && schemeChar.test(value[s - 1]!)) s -= 1;
+    if (!/[A-Za-z]/.test(value[s]!)) {
+      out += value.slice(i, at + 3);
+      i = at + 3;
+      continue;
+    }
+    let j = at + 3;
+    const userStart = j;
+    while (j < value.length && !isWs(value[j]!) && value[j] !== "/" && value[j] !== "@" && value[j] !== ":") j += 1;
+    if (j === userStart || value[j] !== ":") {
+      out += value.slice(i, at + 3);
+      i = at + 3;
+      continue;
+    }
+    j += 1;
+    const passStart = j;
+    while (j < value.length && !isWs(value[j]!) && value[j] !== "/" && value[j] !== "@") j += 1;
+    if (j === passStart || value[j] !== "@") {
+      out += value.slice(i, at + 3);
+      i = at + 3;
+      continue;
+    }
+    out += value.slice(i, s) + value.slice(s, at) + "://[REDACTED]@";
+    i = j + 1;
+  }
+  return out;
+}
+
+function redactEmails(value: string): string {
+  let out = "";
+  let i = 0;
+  while (i < value.length) {
+    const at = value.indexOf("@", i);
+    if (at < 0) return out + value.slice(i);
+    let left = at;
+    while (left > i && localChar.test(value[left - 1]!)) left -= 1;
+    const prev = left > 0 ? value[left - 1]! : "";
+    const boundary = left === 0 || isWs(prev) || prev === "<" || prev === "(" || prev === ":";
+    let j = at + 1;
+    while (j < value.length && domainChar.test(value[j]!)) j += 1;
+    const domain = value.slice(at + 1, j);
+    const dot = domain.lastIndexOf(".");
+    const tld = dot >= 0 ? domain.slice(dot + 1) : "";
+    const next = j < value.length ? value[j]! : "";
+    if (
+      left === at ||
+      !boundary ||
+      dot <= 0 ||
+      !/^[A-Za-z]{2,}$/.test(tld) ||
+      (next !== "" && /[A-Za-z0-9]/.test(next))
+    ) {
+      out += value.slice(i, at + 1);
+      i = at + 1;
+      continue;
+    }
+    out += value.slice(i, left) + "[REDACTED]";
+    i = j;
+  }
+  return out;
+}
+
+function luhn(digits: string): boolean {
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i -= 1) {
+    let n = digits.charCodeAt(i) - 48;
+    if (alt) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
+}
+
+function redactCards(value: string): string {
+  let out = "";
+  let i = 0;
+  const digit = (c: number) => c >= 48 && c <= 57;
+  while (i < value.length) {
+    const code = value.charCodeAt(i);
+    const prev = i > 0 ? value.charCodeAt(i - 1) : 0;
+    if (!digit(code) || digit(prev)) {
+      out += value[i];
+      i += 1;
+      continue;
+    }
+    let j = i;
+    const groups: string[] = [];
+    let glued = false;
+    const total = () => groups.reduce((sum, group) => sum + group.length, 0);
+    while (j < value.length && total() < 19) {
+      let chunk = "";
+      while (j < value.length && digit(value.charCodeAt(j)) && total() + chunk.length < 19) {
+        chunk += value[j];
+        j += 1;
+      }
+      if (!chunk) break;
+      if (j < value.length && digit(value.charCodeAt(j))) {
+        glued = true;
+        break;
+      }
+      groups.push(chunk);
+      if (j < value.length && (value[j] === " " || value[j] === "-") && j + 1 < value.length && digit(value.charCodeAt(j + 1))) {
+        let nxt = 0;
+        let k = j + 1;
+        while (k < value.length && digit(value.charCodeAt(k))) {
+          nxt += 1;
+          k += 1;
+        }
+        if (total() + nxt > 19) break;
+        j += 1;
+        continue;
+      }
+      break;
+    }
+    const digits = groups.join("");
+    if (!glued && digits.length >= 13 && digits.length <= 19 && luhn(digits)) {
+      out += "[REDACTED]";
+      i = j;
+      continue;
+    }
+    out += value[i];
+    i += 1;
+  }
+  return out;
+}
+
 function redactText(value: string): string {
-  return value
-    .replace(/\bBearer\s+[A-Za-z0-9+/_.=~-]+/gi, "Bearer [REDACTED]")
-    .replace(/\b[Bb][Aa][Ss][Ii][Cc]\s+(?![a-z]+\b)[A-Za-z0-9+/_.=~-]+/g, "Basic [REDACTED]")
-    .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g, "[REDACTED]")
-    .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1[REDACTED]@")
-    .replace(/(?<=^|\s)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, "[REDACTED]")
-    .replace(/((?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*)[^\s&,;]+/gi, "$1[REDACTED]")
-    .replace(/((?:^|[\s?&#])(?:access_token|token)=)[^\s&#]+/gi, "$1[REDACTED]")
-    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, "[REDACTED]");
+  return redactCards(
+    redactEmails(
+      redactUrls(
+        value
+          .replace(bearer, "Bearer [REDACTED]")
+          .replace(basic, "Basic [REDACTED]")
+          .replace(tokens, "[REDACTED]")
+          .replace(jwt, "[REDACTED]")
+          .replace(awsSecret, "$1[REDACTED]")
+          .replace(assigned, "$1[REDACTED]")
+          .replace(queryToken, "$1[REDACTED]")
+          .replace(privateKey, "[REDACTED]"),
+      ),
+    ),
+  );
+}
+
+function walk(value: JsonValue, patterns: boolean): JsonValue {
+  if (typeof value === "string") return patterns ? redactText(value) : value;
+  if (Array.isArray(value)) return value.map((item) => walk(item, patterns));
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        credentialKey.test(key) ? "[REDACTED]" : walk(item, patterns),
+      ]),
+    );
+  return value;
 }
 
 /** Pattern redaction is deliberately conservative, not a guarantee of anonymization. */
 export function redactCapture(value: JsonValue): JsonValue {
-  if (typeof value === "string") return redactText(value);
-  if (Array.isArray(value)) return value.map(redactCapture);
-  if (value && typeof value === "object")
-    return Object.fromEntries(Object.entries(value).map(([key, item]) =>
-      [key, credentialKey.test(key) ? "[REDACTED]" : redactCapture(item)]));
-  return value;
+  return walk(value, true);
 }
 
 export function capturePayload(value: JsonValue, policy: CapturePolicy) {
@@ -40,9 +239,16 @@ export function capturePayload(value: JsonValue, policy: CapturePolicy) {
   if (policy.mode === "metadata-only")
     return { value: { omitted: true } as JsonValue, truncated: false, complete: false };
   const custom = policy.redact ? policy.redact(structuredClone(value)) : value;
-  const clean = policy.mode === "redacted" ? redactCapture(custom) : custom;
-  const serialized = JSON.stringify(clean);
-  const bytes = Buffer.byteLength(serialized, "utf8");
+  const prepared = policy.mode === "redacted" ? walk(custom, false) : custom;
+  const preparedBytes = Buffer.byteLength(JSON.stringify(prepared), "utf8");
+  if (policy.mode === "redacted" && preparedBytes > maximum)
+    return {
+      value: { omitted: true, truncated: true, bytes: preparedBytes } as JsonValue,
+      truncated: true,
+      complete: false,
+    };
+  const clean = policy.mode === "redacted" ? walk(prepared, true) : prepared;
+  const bytes = Buffer.byteLength(JSON.stringify(clean), "utf8");
   // Omit whole oversized payloads, never store a partially redacted secret or invalid JSON.
   if (bytes > maximum)
     return { value: { omitted: true, truncated: true, bytes } as JsonValue, truncated: true, complete: false };

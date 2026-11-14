@@ -9,54 +9,232 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import Any
 
+# Shared with src/integrations/privacy.ts. Listed explicitly:
+# U+0009 TAB, U+000A LF, U+000B VT, U+000C FF, U+000D CR, U+0020 SPACE,
+# U+00A0 NO-BREAK SPACE, U+1680 OGHAM SPACE MARK,
+# U+2000 EN QUAD, U+2001 EM QUAD, U+2002 EN SPACE, U+2003 EM SPACE,
+# U+2004 THREE-PER-EM SPACE, U+2005 FOUR-PER-EM SPACE, U+2006 SIX-PER-EM SPACE,
+# U+2007 FIGURE SPACE, U+2008 PUNCTUATION SPACE, U+2009 THIN SPACE, U+200A HAIR SPACE,
+# U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR, U+202F NARROW NO-BREAK SPACE,
+# U+205F MEDIUM MATHEMATICAL SPACE, U+3000 IDEOGRAPHIC SPACE, U+FEFF BOM.
+_WS_CHARS = (
+    "\t\n\v\f\r \u00a0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+_WS_SET = frozenset(_WS_CHARS)
+_WS = f"[{_WS_CHARS}]"
+_NOT_WS = f"[^{_WS_CHARS}]"
 _FLAGS = re.IGNORECASE | re.ASCII
 _KEY = re.compile(
     r"^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|"
-    r"client_secret|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials|"
-    r"x[-_]?api[-_]?key|private[-_]?key|token)$",
+    r"client[-_]?secret|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials|"
+    r"x[-_]?api[-_]?key|private[-_]?key|token|session)$",
     _FLAGS,
 )
 _PRIVATE_KEY = re.compile(
     r"-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)",
     re.ASCII,
 )
-_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9+/_.=~-]+", _FLAGS)
-_BASIC = re.compile(r"\b[Bb][Aa][Ss][Ii][Cc]\s+(?![a-z]+\b)[A-Za-z0-9+/_.=~-]+", re.ASCII)
-_TOKEN = re.compile(
-    r"\b(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|gh[pousr]_[A-Za-z0-9_]{12,}|"
-    r"github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|"
-    r"(?:AKIA|ASIA)[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b",
+_BEARER = re.compile(rf"(?<![A-Za-z0-9_])Bearer{_WS}+[A-Za-z0-9+/_.=~-]+", _FLAGS)
+_BASIC = re.compile(
+    rf"(?<![A-Za-z0-9_])[Bb][Aa][Ss][Ii][Cc]{_WS}+(?![a-z]+(?![A-Za-z0-9_]))[A-Za-z0-9+/_.=~-]+",
     re.ASCII,
 )
-_URL_USERINFO = re.compile(r"(https?://)[^\s/@:]+:[^\s/@]+@", _FLAGS)
-_EMAIL = re.compile(
-    r"(?:^|(?<=\s))[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|"
+    r"gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|"
+    r"AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![A-Za-z0-9_])",
     re.ASCII,
+)
+_JWT = re.compile(
+    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])",
+    re.ASCII,
+)
+_AWS_SECRET = re.compile(
+    rf"(?<![A-Za-z0-9])([\"']?(?:aws[-_]?)?secret[-_]?access[-_]?key[\"']?{_WS}*[=:]{_WS}*[\"']?)"
+    r"[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])",
+    _FLAGS,
 )
 _ASSIGNED_SECRET = re.compile(
-    r"((?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*)[^\s&,;]+",
+    rf"((?:password|api[_-]?key|access[_-]?token|secret){_WS}*[=:]{_WS}*)[^{_WS_CHARS}&,;]+",
     _FLAGS,
 )
 _QUERY_TOKEN = re.compile(
-    r"((?:^|[\s?&#])(?:access_token|token)=)[^\s&#]+",
+    rf"((?:^|[{_WS_CHARS}?&#])(?:access_token|token)=)[^{_WS_CHARS}&#]+",
     _FLAGS,
 )
+_LOCAL = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-")
+_DOMAIN = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-")
+_SCHEME = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+.-")
+_LETTERS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+
+
+def json_size(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _redact_urls(value: str) -> str:
+    out: list[str] = []
+    i = 0
+    length = len(value)
+    while i < length:
+        at = value.find("://", i)
+        if at < 0:
+            out.append(value[i:])
+            break
+        s = at - 1
+        if s < i or value[s] not in _LETTERS:
+            out.append(value[i : at + 3])
+            i = at + 3
+            continue
+        while s > i and value[s - 1] in _SCHEME:
+            s -= 1
+        if value[s] not in _LETTERS:
+            out.append(value[i : at + 3])
+            i = at + 3
+            continue
+        j = at + 3
+        user_start = j
+        while j < length and value[j] not in _WS_SET and value[j] not in "/@:":
+            j += 1
+        if j == user_start or j >= length or value[j] != ":":
+            out.append(value[i : at + 3])
+            i = at + 3
+            continue
+        j += 1
+        pass_start = j
+        while j < length and value[j] not in _WS_SET and value[j] not in "/@":
+            j += 1
+        if j == pass_start or j >= length or value[j] != "@":
+            out.append(value[i : at + 3])
+            i = at + 3
+            continue
+        out.append(value[i:s] + value[s:at] + "://[REDACTED]@")
+        i = j + 1
+    return "".join(out)
+
+
+def _redact_emails(value: str) -> str:
+    out: list[str] = []
+    i = 0
+    length = len(value)
+    while i < length:
+        at = value.find("@", i)
+        if at < 0:
+            out.append(value[i:])
+            break
+        left = at
+        while left > i and value[left - 1] in _LOCAL:
+            left -= 1
+        prev = value[left - 1] if left > 0 else ""
+        boundary = left == 0 or prev in _WS_SET or prev in "<(:"
+        j = at + 1
+        while j < length and value[j] in _DOMAIN:
+            j += 1
+        domain = value[at + 1 : j]
+        dot = domain.rfind(".")
+        tld = domain[dot + 1 :] if dot >= 0 else ""
+        nxt = value[j] if j < length else ""
+        if (
+            left == at
+            or not boundary
+            or dot <= 0
+            or len(tld) < 2
+            or any(ch not in _LETTERS for ch in tld)
+            or (nxt != "" and nxt.isalnum() and nxt.isascii())
+        ):
+            out.append(value[i : at + 1])
+            i = at + 1
+            continue
+        out.append(value[i:left] + "[REDACTED]")
+        i = j
+    return "".join(out)
+
+
+def _luhn(digits: str) -> bool:
+    total = 0
+    alt = False
+    for ch in reversed(digits):
+        n = ord(ch) - 48
+        if alt:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+        alt = not alt
+    return total % 10 == 0
+
+
+def _redact_cards(value: str) -> str:
+    out: list[str] = []
+    i = 0
+    length = len(value)
+    while i < length:
+        code = ord(value[i])
+        prev = ord(value[i - 1]) if i else 0
+        if code < 48 or code > 57 or 48 <= prev <= 57:
+            out.append(value[i])
+            i += 1
+            continue
+        j = i
+        groups: list[str] = []
+        glued = False
+        while j < length and sum(len(group) for group in groups) < 19:
+            chunk: list[str] = []
+            while (
+                j < length
+                and value[j].isdigit()
+                and sum(len(group) for group in groups) + len(chunk) < 19
+            ):
+                chunk.append(value[j])
+                j += 1
+            if not chunk:
+                break
+            if j < length and value[j].isdigit():
+                glued = True
+                break
+            groups.append("".join(chunk))
+            if j < length and value[j] in " -" and j + 1 < length and value[j + 1].isdigit():
+                nxt = 0
+                k = j + 1
+                while k < length and value[k].isdigit():
+                    nxt += 1
+                    k += 1
+                if sum(len(group) for group in groups) + nxt > 19:
+                    break
+                j += 1
+                continue
+            break
+        digits = "".join(groups)
+        if not glued and 13 <= len(digits) <= 19 and _luhn(digits):
+            out.append("[REDACTED]")
+            i = j
+            continue
+        out.append(value[i])
+        i += 1
+    return "".join(out)
 
 
 def _redact_text(value: str) -> str:
     value = _BEARER.sub("Bearer [REDACTED]", value)
     value = _BASIC.sub("Basic [REDACTED]", value)
     value = _TOKEN.sub("[REDACTED]", value)
-    value = _URL_USERINFO.sub(r"\1[REDACTED]@", value)
-    value = _EMAIL.sub("[REDACTED]", value)
+    value = _JWT.sub("[REDACTED]", value)
+    value = _AWS_SECRET.sub(r"\1[REDACTED]", value)
     value = _ASSIGNED_SECRET.sub(r"\1[REDACTED]", value)
     value = _QUERY_TOKEN.sub(r"\1[REDACTED]", value)
-    return _PRIVATE_KEY.sub("[REDACTED]", value)
+    value = _PRIVATE_KEY.sub("[REDACTED]", value)
+    value = _redact_urls(value)
+    value = _redact_emails(value)
+    return _redact_cards(value)
 
 
-def redact_capture(value: Any) -> Any:
+def redact_capture(value: Any, patterns: bool = True) -> Any:
     """Pattern redaction is deliberately conservative, not a guarantee of anonymization."""
     if isinstance(value, str):
+        if not patterns:
+            return value
         redacted = _redact_text(str(value))
         if type(value) is str:
             return redacted
@@ -65,7 +243,7 @@ def redact_capture(value: Any) -> Any:
         redacted = {
             key: "[REDACTED]"
             if isinstance(key, str) and _KEY.fullmatch(key)
-            else redact_capture(item)
+            else redact_capture(item, patterns)
             for key, item in value.items()
         }
         if type(value) is dict:
@@ -77,7 +255,7 @@ def redact_capture(value: Any) -> Any:
         except (TypeError, ValueError):
             return redacted
     if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
-        items = [redact_capture(item) for item in value]
+        items = [redact_capture(item, patterns) for item in value]
         if type(value) is list:
             return items
         try:
@@ -85,10 +263,6 @@ def redact_capture(value: Any) -> Any:
         except (TypeError, ValueError):
             return items
     return value
-
-
-def _json_bytes(value: Any) -> int:
-    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
 def capture_payload(value: Any, policy: dict[str, Any]) -> dict[str, Any]:
@@ -101,8 +275,16 @@ def capture_payload(value: Any, policy: dict[str, Any]) -> dict[str, Any]:
     if mode == "metadata-only":
         return {"value": {"omitted": True}, "truncated": False, "complete": False}
     custom = policy["redact"](deepcopy(value)) if policy.get("redact") else value
-    clean = redact_capture(custom) if mode == "redacted" else custom
-    size = _json_bytes(clean)
+    prepared = redact_capture(custom, patterns=False) if mode == "redacted" else custom
+    prepared_size = json_size(prepared)
+    if mode == "redacted" and prepared_size > maximum:
+        return {
+            "value": {"omitted": True, "truncated": True, "bytes": prepared_size},
+            "truncated": True,
+            "complete": False,
+        }
+    clean = redact_capture(prepared, patterns=True) if mode == "redacted" else prepared
+    size = json_size(clean)
     if size > maximum:
         return {
             "value": {"omitted": True, "truncated": True, "bytes": size},

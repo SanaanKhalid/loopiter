@@ -51,12 +51,16 @@ async def import_batch(
         raise LoopiterError(
             "invalid_input", f"import batch exceeds the maximum of {max_records} records."
         )
-    result = {"accepted": 0, "conflicts": 0, "rejected": 0}
+    prepared: list[dict[str, Any] | None] = []
     for record in records:
         try:
             _assert_string_cap(record, max_string_length)
-            body = _normalize(record)
+            prepared.append(_normalize(record))
         except (LoopiterError, TypeError):
+            prepared.append(None)
+    result = {"accepted": 0, "conflicts": 0, "rejected": 0}
+    for body in prepared:
+        if body is None:
             result["rejected"] += 1
             continue
         async with loop.store.transaction(loop.namespace) as tx:
@@ -152,21 +156,27 @@ def _usage(value: Any) -> dict[str, Any]:
     return body
 
 
-def _assert_string_cap(value: Any, max_length: int, path: str = "record") -> None:
+_MAX_IMPORT_DEPTH = 32
+
+
+def _assert_string_cap(value: Any, max_length: int, depth: int = 0) -> None:
+    if depth > _MAX_IMPORT_DEPTH:
+        raise LoopiterError("invalid_input", "JSON nesting exceeds 32 levels.")
     if isinstance(value, str):
         if len(value) > max_length:
             raise LoopiterError(
-                "invalid_input", f"Import string exceeds the maximum length of {max_length}."
+                "invalid_input",
+                f"Import string exceeds the maximum length of {max_length} characters.",
             )
         return
     if isinstance(value, Mapping):
         for key, item in value.items():
-            _assert_string_cap(key, max_length, path)
-            _assert_string_cap(item, max_length, path)
+            _assert_string_cap(key, max_length, depth + 1)
+            _assert_string_cap(item, max_length, depth + 1)
         return
     if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
         for item in value:
-            _assert_string_cap(item, max_length, path)
+            _assert_string_cap(item, max_length, depth + 1)
 
 
 def _replay(value: Any) -> dict[str, Any]:

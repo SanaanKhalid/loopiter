@@ -46,17 +46,23 @@ export async function importBatch(
   if (!Number.isInteger(maxStringLength) || maxStringLength < 1)
     throw new TypeError("maxStringLength must be a positive integer.");
   if (records.length > maxRecords)
-    throw new RangeError(`import batch exceeds the maximum of ${maxRecords} records.`);
-  const result: ImportResult = { accepted: 0, conflicts: 0, rejected: 0 };
+    fail("invalid_input", `import batch exceeds the maximum of ${maxRecords} records.`);
+  const prepared: ({ body: JsonObject } | { rejected: true })[] = [];
   for (const record of records) {
-    let body: JsonObject;
     try {
       assertStringCap(record, maxStringLength);
-      body = normalize(record);
+      prepared.push({ body: normalize(record) });
     } catch {
+      prepared.push({ rejected: true });
+    }
+  }
+  const result: ImportResult = { accepted: 0, conflicts: 0, rejected: 0 };
+  for (const item of prepared) {
+    if (!("body" in item)) {
       result.rejected += 1;
       continue;
     }
+    const body = item.body;
     const outcome = await loop.store.transaction(loop.namespace, async (tx) => {
       const existing = await tx.get("historical", String(body.idempotencyKey));
       if (existing) {
@@ -150,20 +156,29 @@ function usage(value: unknown): JsonObject {
   return body;
 }
 
-function assertStringCap(value: unknown, maxLength: number): void {
+const maxImportDepth = 32;
+
+function codePointLength(value: string): number {
+  let count = 0;
+  for (const _ of value) count += 1;
+  return count;
+}
+
+function assertStringCap(value: unknown, maxLength: number, depth = 0): void {
+  if (depth > maxImportDepth) fail("invalid_input", "JSON nesting exceeds 32 levels.");
   if (typeof value === "string") {
-    if (value.length > maxLength)
-      fail("invalid_input", `Import string exceeds the maximum length of ${maxLength}.`);
+    if (codePointLength(value) > maxLength)
+      fail("invalid_input", `Import string exceeds the maximum length of ${maxLength} characters.`);
     return;
   }
   if (Array.isArray(value)) {
-    for (const item of value) assertStringCap(item, maxLength);
+    for (const item of value) assertStringCap(item, maxLength, depth + 1);
     return;
   }
   if (value && typeof value === "object") {
     for (const [key, item] of Object.entries(value)) {
-      assertStringCap(key, maxLength);
-      assertStringCap(item, maxLength);
+      assertStringCap(key, maxLength, depth + 1);
+      assertStringCap(item, maxLength, depth + 1);
     }
   }
 }

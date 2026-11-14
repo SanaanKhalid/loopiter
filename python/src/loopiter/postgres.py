@@ -22,10 +22,15 @@ def _migration_text(*names: str) -> str:
 def migration_sql() -> str:
     """Return versioned SQL for the application's migration process; execute explicitly.
 
-    Includes 003-historical.sql. Constructors never execute this text. A database that
-    has only applied 001 and 002 remains usable for every collection except historical.
+    Constructors never execute this text. Historical collection support is optional and
+    is not included here; call historical_sql() for that step.
     """
-    return _migration_text("001-python-store.sql", "002-autonomy.sql", "003-historical.sql")
+    return _migration_text("001-python-store.sql", "002-autonomy.sql")
+
+
+def historical_sql() -> str:
+    """Return 003-historical.sql. Not part of migration_sql(); never run on construction."""
+    return _migration_text("003-historical.sql")
 
 
 def historical_down_sql() -> str:

@@ -1,7 +1,10 @@
 -- Reverses 003-historical.sql. Not included in migration_sql(). Constructors never run it.
+-- Transaction 1 locks the table in SHARE ROW EXCLUSIVE MODE, under lock_timeout,
+-- before it looks for historical rows. An insert cannot land between that check and the drop.
 -- If any historical row exists, transaction 1 raises and rolls back. It does not delete rows.
 -- When no historical row exists, transaction 1 restores the version-2 check as NOT VALID
--- and commits. That ACCESS EXCLUSIVE lock ends before validation. New rows are still checked.
+-- and commits. DROP CONSTRAINT and ADD CONSTRAINT NOT VALID take ACCESS EXCLUSIVE and do
+-- not scan. That lock ends before validation. New rows are still checked.
 -- Transaction 2 validates only when pg_constraint.convalidated is false, under
 -- SHARE UPDATE EXCLUSIVE, so reads and writes can proceed during the scan.
 -- It also removes a version 3 marker if one was recorded, so max(version) stays 2.
@@ -11,6 +14,7 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SELECT pg_advisory_xact_lock(hashtextextended('loopiter/python/schema/v1', 0));
+LOCK TABLE loopiter_python_records IN SHARE ROW EXCLUSIVE MODE;
 DO $migration$
 DECLARE
   definition text;

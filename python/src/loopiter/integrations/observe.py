@@ -301,6 +301,7 @@ class _Bounded:
                 ),
             )
         self.queue.clear()
+        self._open.clear()
         self.active = 0
         self.reserved = 0
         self.active_deadline = False
@@ -317,6 +318,7 @@ class _Bounded:
         await self.force_flush(timeout_ms)
         if self._occupancy() > 0:
             self.abandon()
+        self._open.clear()
 
     def open_record(self, kwargs: dict[str, Any]) -> dict[str, Any] | None:
         """Admit one provider record and its later completion. Does not await the store."""
@@ -324,6 +326,9 @@ class _Bounded:
         if not fields.get("id"):
             fields["id"] = f"execution_{uuid4()}"
         ticket = self.generation
+        if fields["id"] in self._open:
+            self._drop()
+            return None
         holder: dict[str, Any] = {
             "ticket": ticket,
             "held": False,
@@ -389,7 +394,7 @@ class _Bounded:
         )
 
     def finish_record(self, key: str, complete_kwargs: dict[str, Any]) -> None:
-        holder = self._open.get(key)
+        holder = self._open.pop(key, None)
         if holder is None or not holder["held"]:
             return
         if self.generation != holder["ticket"]:

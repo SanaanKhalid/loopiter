@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FeedbackLoop, InMemoryStore } from "../src/index.js";
+import { FeedbackLoop, InMemoryStore, LoopiterError } from "../src/index.js";
 import { importBatch } from "../src/integrations/import-batch.js";
 
 const when = "2026-03-01T15:04:05.000Z";
@@ -100,8 +100,22 @@ test("historical import keeps source time, dedupes, and does not attach a releas
   assert.deepEqual((stored.original as { replay: { eligible: boolean } }).replay, { eligible: false });
   await assert.rejects(
     () => importBatch(loop, [record("a", "classify", "v"), record("b", "classify", "v")], { maxRecords: 1 }),
-    (error: unknown) => error instanceof RangeError,
+    (error: unknown) => error instanceof LoopiterError && error.code === "invalid_input",
   );
+  const emoji = "😀".repeat(24);
+  const characters = await importBatch(loop, [record(emoji, "c", "p")], { maxStringLength: 24 });
+  assert.equal(characters.accepted, 1);
+  const deeper = record("deep-ok", "classify", "support-ticket-v1");
+  const tooDeep = record("deep-bad", "classify", "support-ticket-v1");
+  let nested: unknown = "leaf";
+  for (let i = 0; i < 40; i += 1) nested = { child: nested };
+  (tooDeep as { versions: unknown }).versions = nested;
+  const mixed = await importBatch(loop, [deeper, tooDeep, record("deep-after", "classify", "support-ticket-v1")]);
+  assert.deepEqual(mixed, { accepted: 2, conflicts: 0, rejected: 1 });
+  const ids = (await loop.list("historical")).items.map((row) => row.id);
+  assert.equal(ids.includes("deep-ok"), true);
+  assert.equal(ids.includes("deep-after"), true);
+  assert.equal(ids.includes("deep-bad"), false);
   const lengthy = await importBatch(
     loop,
     [record("ticket-long", "classify", "x".repeat(5000))],

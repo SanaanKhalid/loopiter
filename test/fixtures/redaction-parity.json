@@ -4,13 +4,30 @@
       "authorization": "Bearer fixture-marker-alpha",
       "messages": [
         {
-          "content": "password=fixture-marker-beta https://fixture-user:fixture-marker-gamma@example.test sk-fixturekey123456 eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl AKIAFIXTUREEXAMPLE12 sk_live_fixturetoken xoxb-fixture-token AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA token=fixture-marker-zeta access_token=fixture-marker-eta fixture-marker-epsilon@example.test -----BEGIN FIXTURE PRIVATE KEY-----\nabc"
+          "content": "password=fixture-marker-beta https://fixture-user:fixture-marker-gamma@example.test sk-fixturekey123456 eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl AKIAFIXTUREEXAMPLE12 sk_live_fixturetoken xoxb-fixture-token AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA token=fixture-marker-zeta access_token=fixture-marker-eta fixture-marker-epsilon@example.test postgres://fixture-user:fixture-marker-lambda@db.internal aws_secret_access_key=fixtureSecretAccessKey0123456789ABCDEFGH \"secretAccessKey\": \"fixtureJsonSecretAccessKey0123456789ABCD\" 4242424242424242 and 4242-4242-4242-4242 and 4242 4242 4242 4242 <fixture-marker-nu@example.test> (fixture-marker-xi@example.test) contact:fixture-marker-omicron@example.test 1234567890123456 -----BEGIN FIXTURE PRIVATE KEY-----\nabc"
         }
       ],
       "apiKey": "fixture-marker-delta",
       "x-api-key": "fixture-marker-theta",
       "private_key": "fixture-marker-iota",
       "token": "fixture-marker-kappa",
+      "clientSecret": "fixture-marker-pi",
+      "session": "fixture-marker-rho",
+      "text": "kept-label"
+    },
+    "output": {
+      "authorization": "[REDACTED]",
+      "messages": [
+        {
+          "content": "password=[REDACTED] https://[REDACTED]@example.test [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] token=[REDACTED] access_token=[REDACTED] [REDACTED] postgres://[REDACTED]@db.internal aws_secret_access_key=[REDACTED] \"secretAccessKey\": \"[REDACTED]\" [REDACTED] and [REDACTED] and [REDACTED] <[REDACTED]> ([REDACTED]) contact:[REDACTED] 1234567890123456 [REDACTED]"
+        }
+      ],
+      "apiKey": "[REDACTED]",
+      "x-api-key": "[REDACTED]",
+      "private_key": "[REDACTED]",
+      "token": "[REDACTED]",
+      "clientSecret": "[REDACTED]",
+      "session": "[REDACTED]",
       "text": "kept-label"
     },
     "absent": [
@@ -24,20 +41,65 @@
       "fixture-marker-theta",
       "fixture-marker-iota",
       "fixture-marker-kappa",
+      "fixture-marker-lambda",
+      "fixture-marker-nu",
+      "fixture-marker-xi",
+      "fixture-marker-omicron",
+      "fixture-marker-pi",
+      "fixture-marker-rho",
       "eyJzdWIiOiJmaXh0dXJlIn0",
       "AKIAFIXTUREEXAMPLE12",
       "sk_live_fixturetoken",
       "xoxb-fixture-token",
       "AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
       "sk-fixturekey123456",
-      "BEGIN FIXTURE PRIVATE KEY"
+      "BEGIN FIXTURE PRIVATE KEY",
+      "fixtureSecretAccessKey0123456789ABCDEFGH",
+      "fixtureJsonSecretAccessKey0123456789ABCD",
+      "4242424242424242",
+      "4242-4242-4242-4242",
+      "4242 4242 4242 4242"
     ],
-    "present": ["kept-label"]
+    "present": [
+      "kept-label",
+      "1234567890123456"
+    ]
   },
+  "whitespace": [
+    {
+      "input": " Bearer fixture-marker-alpha",
+      "output": " Bearer [REDACTED]"
+    },
+    {
+      "input": " Basic QUJDREVGR0g",
+      "output": " Basic [REDACTED]"
+    },
+    {
+      "input": " fixture-marker-epsilon@example.test",
+      "output": " [REDACTED]"
+    },
+    {
+      "input": "password=fixture-marker-beta kept-label",
+      "output": "password=[REDACTED] kept-label"
+    },
+    {
+      "input": "https://fixture-user:fixture-marker-gamma@example.test tail",
+      "output": "https://[REDACTED]@example.test tail"
+    }
+  ],
   "boundaries": [
-    "éBearer fixture-marker-alpha",
-    "日本sk-fixturekey123456",
-    "ﬁsk-fixturekey123456"
+    {
+      "input": "éBearer fixture-marker-alpha",
+      "output": "éBearer [REDACTED]"
+    },
+    {
+      "input": "日本sk-fixturekey123456",
+      "output": "日本[REDACTED]"
+    },
+    {
+      "input": "ﬁsk-fixturekey123456",
+      "output": "ﬁ[REDACTED]"
+    }
   ],
   "credentialRepeat": {
     "key": "apiKey",

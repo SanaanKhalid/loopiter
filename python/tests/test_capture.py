@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import unittest
 
 from loopiter import FeedbackLoop, InMemoryStore, LoopiterError
@@ -291,13 +292,13 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         )
         raw = json.loads(json.dumps(parity["sensitive"]["input"]))
         redacted = capture_payload(raw, {"mode": "redacted"})
-        encoded = json.dumps(redacted["value"])
-        for marker in parity["sensitive"]["absent"]:
-            self.assertNotIn(marker, encoded)
-        for marker in parity["sensitive"]["present"]:
-            self.assertIn(marker, encoded)
+        self.assertEqual(redacted["value"], parity["sensitive"]["output"])
         self.assertEqual(raw["apiKey"], parity["sensitive"]["input"]["apiKey"])
         self.assertFalse(redacted["complete"])
+        for item in parity["whitespace"]:
+            self.assertEqual(redact_capture(item["input"]), item["output"])
+        for item in parity["boundaries"]:
+            self.assertEqual(redact_capture(item["input"]), item["output"])
         repeat = parity["credentialRepeat"]
         long = capture_payload(
             {repeat["key"]: repeat["unit"] * repeat["count"]},
@@ -312,10 +313,6 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             omitted["value"], {"omitted": True, "truncated": True, "bytes": oversized["bytes"]}
         )
-        for sample in parity["boundaries"]:
-            text = json.dumps(capture_payload(sample, {"mode": "redacted"})["value"])
-            self.assertNotIn("fixture-marker-alpha", text)
-            self.assertNotIn("fixturekey123456", text)
 
         class Marker(str):
             pass
@@ -420,6 +417,80 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
             await import_batch(loop, [plain, plain], max_records=1)
         lengthy = _record("ticket-long", "classify", "x" * 5000)
         self.assertEqual((await import_batch(loop, [lengthy], max_string_length=64))["rejected"], 1)
+        emoji = _record("😀" * 24, "c", "p")
+        self.assertEqual((await import_batch(loop, [emoji], max_string_length=24))["accepted"], 1)
+        deeper = _record("deep-ok", "classify", "support-ticket-v1")
+        too_deep = _record("deep-bad", "classify", "support-ticket-v1")
+        nested: object = "leaf"
+        for _ in range(40):
+            nested = {"child": nested}
+        too_deep["versions"] = nested
+        mixed = await import_batch(
+            loop,
+            [deeper, too_deep, _record("deep-after", "classify", "support-ticket-v1")],
+        )
+        self.assertEqual(mixed, {"accepted": 2, "conflicts": 0, "rejected": 1})
+        ids = [row["id"] for row in (await loop.list("historical"))["items"]]
+        self.assertIn("deep-ok", ids)
+        self.assertIn("deep-after", ids)
+        self.assertNotIn("deep-bad", ids)
+
+    def test_redaction_stays_inside_a_generous_time_bound(self):
+        self.assertEqual(
+            redact_capture("eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl"),
+            "[REDACTED]",
+        )
+        self.assertEqual(redact_capture("9000000000001"), "[REDACTED]")
+        self.assertEqual(redact_capture("9000000000000000001"), "[REDACTED]")
+        self.assertEqual(redact_capture("1234567890123456"), "1234567890123456")
+        bulky = "eyJ-" * 262144 + "9" * 262144 + "http://user:" + "a" * 262144
+        bulky += " secret_access_key=" + "A" * 39 + " a@"
+        started = time.perf_counter()
+        redact_capture(bulky)
+        self.assertLess(time.perf_counter() - started, 2)
+        capped = time.perf_counter()
+        omitted = capture_payload(bulky, {"mode": "redacted"})
+        self.assertLess(time.perf_counter() - capped, 2)
+        self.assertTrue(omitted["value"]["omitted"])
+
+    async def test_bounded_open_map_is_cleared(self):
+        loop = self.loop()
+        client = create_observer(loop, bounded={"queue_limit": 2, "write_timeout_ms": 50})
+        bounded = client._bounded
+        assert bounded is not None
+        first = await client.record_execution(id="held", kind="inference", input={"secret": "x"})
+        self.assertIsNotNone(first)
+        dropped = await client.record_execution(
+            id="dropped", kind="inference", input={"secret": "y"}
+        )
+        self.assertIsNone(dropped)
+        self.assertNotIn("dropped", bounded._open)
+        reused = await client.record_execution(id="held", kind="inference", input={"secret": "z"})
+        self.assertIsNone(reused)
+        self.assertEqual(bounded.reserved, 1)
+        self.assertEqual(list(bounded._open), ["held"])
+        await client.shutdown(20)
+        self.assertEqual(bounded._open, {})
+
+        delayed = self.loop()
+        original = delayed.record_execution
+
+        async def slow_write(**kwargs):
+            await asyncio.sleep(0.08)
+            return await original(**kwargs)
+
+        delayed.record_execution = slow_write
+        slow = create_observer(
+            delayed, bounded={"queue_limit": 4, "write_timeout_ms": 30, "shutdown_timeout_ms": 40}
+        )
+        assert slow._bounded is not None
+        opened = await slow.record_execution(id="slow", kind="inference", input={"secret": "slow"})
+        self.assertIsNotNone(opened)
+        await asyncio.sleep(0.05)
+        await slow.complete_execution("slow", expected_revision=1, output={"done": True})
+        self.assertEqual(slow._bounded._open, {})
+        await slow.shutdown(40)
+        self.assertEqual(slow._bounded._open, {})
 
 
 async def _wait(event):

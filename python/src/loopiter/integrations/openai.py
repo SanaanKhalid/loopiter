@@ -12,12 +12,13 @@ import base64
 import inspect
 import json
 from copy import deepcopy
+from typing import Any
 from uuid import uuid4
 
 from .._validation import LoopiterError
 from .context import guidance_messages, replace_guidance
 from .observe import CaptureClient
-from .privacy import capture_payload
+from .privacy import capture_payload, json_size
 
 
 def _json(value):
@@ -75,14 +76,14 @@ class _Capture:
         if policy and (policy.get("mode") == "metadata-only" or self.truncated):
             return
         data = _json(event)
-        self.size += len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+        self.size += json_size(data)
+        if self.size > self.owner.maximum_output_bytes:
+            raise ValueError("Captured stream exceeded maximum_output_bytes.")
         limit = _policy_limit(policy)
         if policy and limit is not None and self.size > limit:
             self.truncated = True
             self.events.clear()
             return
-        if self.size > self.owner.maximum_output_bytes:
-            raise ValueError("Captured stream exceeded maximum_output_bytes.")
         self.events.append(data)
 
     async def finish(self, status, output=None):
@@ -94,17 +95,22 @@ class _Capture:
                 value = None
             else:
                 value = {"events": self.events} if output is None else _json(output)
-            if policy:
-                captured_value, truncated = _apply_policy(value, policy)
-                self.truncated = self.truncated or truncated
-                value = {"omitted": True, "truncated": True} if self.truncated else captured_value
             if (
-                len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
-                > self.owner.maximum_output_bytes
+                value is not None
+                and (not policy or policy.get("mode") == "full")
+                and json_size(value) > self.owner.maximum_output_bytes
             ):
                 if status in ("completed", "incomplete"):
                     raise ValueError("Captured response exceeded maximum_output_bytes.")
                 value = None
+            elif policy and policy.get("mode") != "metadata-only":
+                captured_value, truncated = _apply_policy(value, policy)
+                self.truncated = self.truncated or truncated
+                value = {"omitted": True, "truncated": True} if self.truncated else captured_value
+                if value is not None and json_size(value) > self.owner.maximum_output_bytes:
+                    if status in ("completed", "incomplete"):
+                        raise ValueError("Captured response exceeded maximum_output_bytes.")
+                    value = None
             identity = dict(self.execution["metadata"]["loopiter_capture"])
             if policy:
                 identity["truncated"] = self.truncated or identity.get("truncated") is True
@@ -330,11 +336,13 @@ def with_loopiter(
     """
     if type(maximum_output_bytes) is not int or maximum_output_bytes < 1:
         raise ValueError("maximum_output_bytes must be a positive integer.")
-    writer = (
-        capture
-        if capture is not None
-        else CaptureClient(loop, failure_mode="closed", capture={"mode": "full"})
-    )
+    if capture is None:
+        policy: dict[str, Any] = {"mode": "full"}
+        if maximum_output_bytes >= 128:
+            policy["maximumBytes"] = min(maximum_output_bytes, 1_048_576)
+        writer = CaptureClient(loop, failure_mode="closed", capture=policy)
+    else:
+        writer = capture
     return _Client(
         client,
         loop=writer.loop,

@@ -172,7 +172,7 @@ def main():
                 r"""
 import asyncio, importlib.util
 from loopiter import FeedbackLoop, InMemoryStore
-from loopiter.postgres import migration_sql
+from loopiter.postgres import historical_sql, migration_sql
 from loopiter.testing import run_store_conformance
 from loopiter.onboarding import read_agent_guide, read_reference
 assert importlib.util.find_spec('psycopg') is None
@@ -184,6 +184,8 @@ from loopiter.integrations.import_batch import import_batch
 assert callable(with_loopiter) and callable(create_observer) and callable(import_batch)
 assert strip_guidance(replace_guidance('policy', 'guidance')) == 'policy'
 assert 'CREATE TABLE' in migration_sql()
+assert 'NOT VALID' not in migration_sql()
+assert 'NOT VALID' in historical_sql()
 assert 'self-hosted SDK/library' in read_agent_guide()
 assert 'prompt_workflow' in read_reference('workflows')
 import importlib.resources, pathlib, re, sys

@@ -1,16 +1,16 @@
--- Optional. Constructors never run this file. It does not insert a schema version.
+-- Optional. Constructors never run this file. migration_sql() does not include it.
+-- Call historical_sql() explicitly. It does not insert a schema version.
 -- Older Python SDKs still require max(version) = 2, and this script leaves that row in place.
 -- It only widens loopiter_python_records_collection_check so historical is allowed.
--- No rows are rewritten. migration_sql() includes this text only when executed.
--- A NOT VALID check is still enforced for new rows. Running the file twice is safe,
--- including after an interrupt between the two transactions.
+-- No rows are rewritten. A NOT VALID check is still enforced for new rows.
+-- Running the file twice is safe, including after an interrupt between the two transactions.
 -- The reverse script is 003-historical-down.sql and is not part of migration_sql().
 --
 -- Transaction 1 is brief. SET LOCAL lock_timeout = '5s' makes a blocked lock fail
 -- instead of waiting. The advisory lock serializes migration sessions until this
 -- transaction commits. DROP CONSTRAINT takes ACCESS EXCLUSIVE and does not scan.
--- ADD CONSTRAINT ... NOT VALID takes SHARE UPDATE EXCLUSIVE and does not scan.
--- That ACCESS EXCLUSIVE lock ends at this COMMIT, before validation.
+-- ADD CONSTRAINT ... NOT VALID takes ACCESS EXCLUSIVE and does not scan.
+-- Those locks end at this COMMIT, before validation.
 -- Transaction 2 takes the advisory lock again and VALIDATE CONSTRAINT only when
 -- pg_constraint.convalidated is false. Validation uses SHARE UPDATE EXCLUSIVE, so
 -- SELECT, INSERT, UPDATE, and DELETE can proceed during the scan.

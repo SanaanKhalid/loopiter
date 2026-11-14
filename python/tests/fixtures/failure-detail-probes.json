@@ -98,7 +98,7 @@
     },
     {
       "input": "postgres://admin:dsn-password-secret@db.internal:5432/app",
-      "output": "postgres://[redacted]@db.internal:5432/app"
+      "output": "postgres://[REDACTED]@db.internal:5432/app"
     },
     {
       "input": "Bearer sk-bearersecretvalue",

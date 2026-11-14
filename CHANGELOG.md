@@ -8,6 +8,7 @@
 
 ### Minor
 
+- Full capture now caps input at 64 KB.
 - A disabled worker no longer logs the missing-plan fallback warning. `LOOPITER_DISABLE=enable` and `LOOPITER_DISABLE=enabled` still disable, and the worker warns that those words do not turn work on. A `--disable` worker does not observe or roll back a canary that is already running; `pause` keeps observation and recovery, and rollback is an explicit adapter call.
 - `selfImproving: false` / `self_improving=False` pauses every mode, including recommend and experiment. A controller created with `mode: "recommend"` and that flag returns `self_improvement_disabled` and does not propose. `LOOPITER_DISABLE` is read inside `tick()`, not only by the worker command.
 - Node's public `loopiter/onboarding` helpers `autonomousActivationCurrent`, `autonomousActivationPrompt`, `moduleActivationNamespace`, `effectiveBudgetFingerprint`, `activationBudgetCurrent`, `recordAutonomousActivation`, and `clearAutonomousActivation` are deprecated warning no-ops. Activation confirmation is retired. The same Python helpers were not in `__all__` and are removed.
