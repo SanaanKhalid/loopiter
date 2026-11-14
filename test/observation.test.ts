@@ -49,6 +49,57 @@ test("stream observation is lazy, propagates cancellation, records failure, and 
   assert.equal(state((await loop.getExecution("failure"))!).status,"failed");
 });
 
+test("bounded capture does not wait on a stalled store, drops a full queue, counts write failures, and stops flushing at the shutdown timeout", async () => {
+  const hang = () => new Promise(() => {});
+  const stalled = {
+    getExecution: async () => undefined,
+    recordExecution: hang,
+    completeExecution: hang,
+  } as unknown as FeedbackLoop;
+  const slow = createObserver({
+    loop: stalled,
+    bounded: { queueLimit: 4, writeTimeoutMs: 5_000, shutdownTimeoutMs: 1_000 },
+  });
+  if (!("stats" in slow)) throw new Error("bounded observer missing stats");
+  const started = Date.now();
+  assert.equal(await slow.observe("slow", () => "served"), "served");
+  assert.ok(Date.now() - started < 50, "request waited on the store");
+  const tight = createObserver({
+    loop: stalled,
+    bounded: { queueLimit: 2, writeTimeoutMs: 5_000 },
+  });
+  if (!("stats" in tight)) throw new Error("bounded observer missing stats");
+  assert.equal(await tight.observe("first", () => 1), 1);
+  assert.equal(await tight.observe("second", () => 2), 2);
+  assert.equal(tight.stats().dropped, 2);
+  let failures = 0;
+  const broken = {
+    getExecution: async () => undefined,
+    recordExecution: async () => { throw new Error("storage down"); },
+    completeExecution: async () => { throw new Error("storage down"); },
+  } as unknown as FeedbackLoop;
+  const failing = createObserver({
+    loop: broken,
+    onError: () => { failures += 1; },
+    bounded: { queueLimit: 4, writeTimeoutMs: 1_000 },
+  });
+  if (!("flush" in failing) || !("stats" in failing)) throw new Error("bounded observer missing flush");
+  assert.equal(await failing.observe("broken", () => 7), 7);
+  await failing.flush(200);
+  assert.equal(failing.stats().failed, 1);
+  assert.equal(failures, 1);
+  const stopping = createObserver({
+    loop: stalled,
+    bounded: { queueLimit: 4, writeTimeoutMs: 5_000, shutdownTimeoutMs: 40 },
+  });
+  if (!("shutdown" in stopping) || !("stats" in stopping)) throw new Error("bounded observer missing shutdown");
+  await stopping.observe("hold", () => true);
+  const flushed = Date.now();
+  await stopping.shutdown();
+  assert.ok(Date.now() - flushed < 120, "shutdown flush ignored its timeout");
+  assert.ok(stopping.stats().dropped >= 1);
+});
+
 test("telemetry outage does not retry or replace application errors; strict capture fails before the call", async () => {
   const loop=setup(); loop.recordExecution=async()=>{throw Error("storage down");};let calls=0,errors=0;
   const observer=createObserver({loop,onError:()=>{errors++;}});
