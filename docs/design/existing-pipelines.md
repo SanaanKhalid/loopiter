@@ -2,7 +2,7 @@
 
 Design only. No release. One implementation pull request per letter, except (d) and (g), which ship in one pull request.
 
-Teams that already run a production AI service, in Python or Node, on a serverless function or a worker, should connect that service to Loopiter without replacing their feedback store, evaluator, or release process. A merge request plus CI is the reference release process. Names below are synthetic. No customer, company, or industry is assumed.
+Teams that already run a production AI service, in Python or Node, on a serverless function or a worker, should connect that service to Loopiter without replacing their feedback store, evaluator, or release process. A review request plus CI is the reference release process. Names below are synthetic. No customer, company, or industry is assumed.
 
 ## What already exists
 
@@ -61,7 +61,7 @@ Bounded async capture, opt-in, both SDKs:
 - A dropped or failed record is gone. It is not replayed and it is not retried as a second business call.
 - `replayEligible` stays false for live capture.
 
-Importer, both SDKs, matching the platform ingestion contract:
+Importer, both SDKs, using the record schema in this document (the platform ingestion API will implement this schema):
 
 - Original timestamps are kept. They are not replaced with import time.
 - Operational status is one of `success`, `partial`, `error`, `abstained`, `dropped`.
@@ -200,7 +200,7 @@ template(task).policy({ floor }) -> policy fragment
 
 **Exists.** Pending attempts, inspect, fenced `not_applied`, receipts, and predecessor rollback. No check-status reader. No serving-fingerprint reader.
 
-**Build.** A provider-neutral interface, then a fake implementation, then GitLab and GitHub as the first real clients. Neither real client comes before the other, and neither is required to use the interface.
+**Build.** A provider-neutral interface, then a fake implementation, then GitLab and GitHub as the first real clients. Both implement `ReleaseClient`. Neither real client comes before the other. A team can use the interface with the fake or its own client and needs neither.
 
 The default client is read-only. It reads check status and the serving fingerprint. It does not write to the team's repository.
 
