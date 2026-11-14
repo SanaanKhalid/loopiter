@@ -42,7 +42,7 @@ _PRIVATE_KEY = re.compile(
 )
 _BEARER = re.compile(rf"(?<![A-Za-z0-9_])Bearer{_WS}+[A-Za-z0-9+/_.=~-]+", _FLAGS)
 _BASIC = re.compile(
-    rf"(?<![A-Za-z0-9_])[Bb][Aa][Ss][Ii][Cc]{_WS}+(?![a-z]+(?![A-Za-z0-9_]))[A-Za-z0-9+/_.=~-]+",
+    rf"(?<![A-Za-z0-9_])[Bb][Aa][Ss][Ii][Cc]{_WS}+(?![a-z]+(?![A-Za-z0-9_/+.=~-]))[A-Za-z0-9+/_.=~-]+",
     re.ASCII,
 )
 _TOKEN = re.compile(
@@ -373,34 +373,10 @@ def _token_start(value: str, end: int) -> int:
     return secret
 
 
-def _apply(value: str, spans: list[tuple[int, int, str, int]]) -> str:
-    return _apply_spans(value, spans) if spans else value
-
-
-def _card_extends_past(value: str, start: int, end: int) -> bool:
-    if start >= end or any(not ("0" <= ch <= "9") for ch in value[start:end]):
-        return False
-    found: list[tuple[int, int, str, int]] = []
-    _card_spans(value, found)
-    return any(span[0] == start and span[1] > end for span in found)
-
-
-def _scheme_sub(pattern: re.Pattern[str], value: str, label: str) -> str:
-    def repl(match: re.Match[str]) -> str:
-        if _card_extends_past(value, _token_start(value, match.end()), match.end()):
-            return match.group(0)
-        return label
-
-    return pattern.sub(repl, value)
-
-
 def _redact_text(value: str) -> str:
     spans: list[tuple[int, int, str, int]] = []
     for match in _PRIVATE_KEY.finditer(value):
         spans.append((match.start(), match.end(), _MARKER, match.start()))
-    value = _apply(value, spans)
-
-    spans = []
     for match in _TOKEN.finditer(value):
         spans.append((match.start(), match.end(), _MARKER, match.start()))
     for match in _JWT.finditer(value):
@@ -408,29 +384,26 @@ def _redact_text(value: str) -> str:
     for match in _AWS_SECRET.finditer(value):
         label = match.start() + len(match.group(1))
         spans.append((match.start(), match.end(), match.group(1) + _MARKER, label))
-    value = _apply(value, spans)
-    value = _scheme_sub(_BEARER, value, "Bearer " + _MARKER)
-    value = _scheme_sub(_BASIC, value, "Basic " + _MARKER)
-
-    spans = []
-    _url_spans(value, spans)
-    value = _apply(value, spans)
-    spans = []
-    _email_spans(value, spans, [])
-    value = _apply(value, spans)
-
-    spans = []
+    for match in _BEARER.finditer(value):
+        spans.append(
+            (match.start(), match.end(), "Bearer " + _MARKER, _token_start(value, match.end()))
+        )
+    for match in _BASIC.finditer(value):
+        spans.append(
+            (match.start(), match.end(), "Basic " + _MARKER, _token_start(value, match.end()))
+        )
+    urls: list[tuple[int, int, str, int]] = []
+    _url_spans(value, urls)
+    spans.extend(urls)
+    _email_spans(value, spans, [(span[0], span[1]) for span in urls])
     _card_spans(value, spans)
-    value = _apply(value, spans)
-
-    spans = []
     for match in _ASSIGNED_SECRET.finditer(value):
         label = match.start() + len(match.group(1))
         spans.append((match.start(), match.end(), match.group(1) + _MARKER, label))
     for match in _QUERY_TOKEN.finditer(value):
         label = match.start() + len(match.group(1))
         spans.append((match.start(), match.end(), match.group(1) + _MARKER, label))
-    return _apply(value, spans)
+    return _apply_spans(value, spans)
 
 
 def redact_capture(value: Any, patterns: bool = True) -> Any:

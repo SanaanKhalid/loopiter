@@ -353,6 +353,82 @@
     {
       "input": "user4111111111111111@example.com",
       "output": "[REDACTED]"
+    },
+    {
+      "input": "Bearer sk-proj-abcdefghijkl.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic sk-proj-abcdefghijkl.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer sk_live_abcdefghijkl.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic sk_live_abcdefghijkl.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer ghp_abcdefghijkl.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic ghp_abcdefghijkl.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer github_pat_abcdefghijkl.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic github_pat_abcdefghijkl.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer xoxb-abcdefghijkl.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic xoxb-abcdefghijkl.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer AIzaabcdefghijklmnopqrstuvwxyz123456789.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic AIzaabcdefghijklmnopqrstuvwxyz123456789.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer AKIA12345678901234.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic AKIA12345678901234.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl+moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl+moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer secret_access_key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic secret_access_key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "user@example.compassword=hunter2",
+      "output": "[REDACTED]=[REDACTED]"
     }
   ],
   "boundaries": [
