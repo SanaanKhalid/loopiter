@@ -197,6 +197,7 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
     });
   }
   function enqueue(task: (timedOut: () => boolean) => Promise<void>) {
+    if (closed) return;
     queue.push(task);
     pump();
   }
@@ -234,11 +235,23 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
       const attemptId = randomUUID();
       let row: AiExecution | undefined;
       let late = false;
-      const admitted = !closed && occupancy() + 2 <= bounded.queueLimit;
-      if (!admitted) note(dropError());
-      if (!admitted) dropped += 1;
-      else reserved += 1;
+      const ticket = generation;
+      const stale = () => closed || generation !== ticket;
+      const admitted = !stale() && occupancy() + 2 <= bounded.queueLimit;
+      let held = admitted;
+      if (!admitted) {
+        dropped += 1;
+        note(dropError());
+      } else reserved += 1;
+      function releaseReservation() {
+        if (!held) return;
+        held = false;
+        if (stale()) return;
+        reserved -= 1;
+        if (reserved < 0) throw new Error("Capture reservation went negative.");
+      }
       const closeLate = async (recorded: AiExecution) => {
+        if (stale()) return;
         late = true;
         const captured = capturePayload(null, policy);
         await options.loop.completeExecution(recorded.id, { output: captured.value, metadata: {
@@ -250,6 +263,7 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
         try {
           if (context.id && await options.loop.getExecution(context.id))
             throw new Error("Observation already exists; inspect the original result instead of replaying.");
+          if (stale()) return;
           const captured = capturePayload(input.input ?? null, policy);
           const recorded = await options.loop.recordExecution({
             id: context.id ?? `observe_${attemptId}`, kind: input.kind ?? "workflow",
@@ -261,25 +275,32 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
             metadata: { ...captureJson(context) as JsonObject, observation: name, observeOnly: true,
               loopiterCapture: { attemptId, status: "pending", mode: policy.mode, truncated: captured.truncated, replayEligible: false } },
           });
+          if (stale()) return;
           if ((recorded.metadata.loopiterCapture as JsonObject)?.attemptId !== attemptId)
             throw new Error("Observation already exists; inspect the original result instead of replaying.");
           if (timedOut()) {
             await closeLate(recorded);
             return;
           }
+          if (stale()) return;
           row = recorded;
         } catch (error) {
-          if (!timedOut()) {
+          if (!timedOut() && !stale()) {
             failed += 1;
             note(error);
           }
         }
       });
       const finish = (status: string, value: unknown = null) => {
-        if (!admitted) return;
-        reserved -= 1;
+        if (!admitted || !held) return;
+        if (stale()) {
+          held = false;
+          return;
+        }
+        releaseReservation();
+        if (stale()) return;
         enqueue(async (timedOut) => {
-          if (!row || late) return;
+          if (stale() || !row || late) return;
           try {
             const captured = capturePayload(policy.mode === "metadata-only" ? null : captureJson(value), policy);
             await options.loop.completeExecution(row.id, { output: captured.value, metadata: {
@@ -287,9 +308,9 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
                 truncated: captured.truncated || (row.metadata.loopiterCapture as JsonObject).truncated === true,
                 replayEligible: false },
             } }, row.revision);
-            if (timedOut()) return;
+            if (stale() || timedOut()) return;
           } catch (error) {
-            if (!timedOut()) {
+            if (!timedOut() && !stale()) {
               failed += 1;
               note(error);
             }
