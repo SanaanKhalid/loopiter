@@ -75,10 +75,16 @@ field of a strict JSON schema, because the Azure Responses client used here
 only accepts that shape.
 
 Per-item provider failures are the same as IFBench: a content filter, a
-prompt-scoped 400, or an incomplete response scores 0 for that row. The report
-and summary record the row, arm, split, and reason. Five failures in a row, or
-more than 20% of any arm and split, stop the run. 401, 403, 404, 429, repeated
-5xx, and a systemic 400 still stop immediately. A 4xx with no token usage,
+prompt-scoped 400, or an incomplete response with no usable text scores 0
+for that row and the run continues. A truncation
+(`incomplete:max_output_tokens`) also scores 0, and it is listed in the same
+item-failure summary, but it does not count toward the content-filter
+fraction or the five-in-a-row stop. When truncations in one arm and split
+exceed 20% of that split, the run stops with `output_truncated`. The report
+and summary record the row, arm, split, and reason. The run still stops on
+401, 403, 404, 429, repeated 5xx, and a systemic 400. It also stops after 5
+non-truncation prediction failures in a row, or when those failures in one
+arm and split exceed 20% of that split. A 4xx with no token usage,
 including a 429, releases the pre-call reservation and costs $0. A timeout or
 a dropped connection after the request was sent is charged the full ceiling.
 
