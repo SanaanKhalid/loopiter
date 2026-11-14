@@ -6,6 +6,7 @@ fence expected versions and inspect ambiguous operations; database leases do not
 
 import asyncio
 import json
+import os
 import re
 from collections.abc import Callable
 from copy import deepcopy
@@ -28,6 +29,19 @@ from .improvement_evidence import (
 )
 
 TERMINAL = {"completed", "no_improvement", "failed", "timed_out", "rolled_back"}
+_DISABLE_OFF = {"0", "false", "no", "off"}
+
+
+def improvement_work_disabled(environment=None):
+    """Any non-empty LOOPITER_DISABLE except 0, false, no, or off pauses improvement work."""
+    environment = os.environ if environment is None else environment
+    raw = environment.get("LOOPITER_DISABLE", "")
+    raw = "" if raw is None else str(raw).strip().lower()
+    if not raw:
+        return False
+    return raw not in _DISABLE_OFF
+
+
 STATES = (
     "waiting_for_evidence proposing evaluating selected deploying observing completed "
     "no_improvement paused failed timed_out reconciliation_required rolling_back rolled_back"
@@ -166,8 +180,8 @@ class ImprovementController:
         loop: FeedbackLoop,
         *,
         workflows,
-        self_improving=False,
-        mode="recommend",
+        self_improving=True,
+        mode="autonomous",
         callback_timeout_ms=None,
         tick_timeout_ms=None,
         step_timeout_ms=None,
@@ -774,7 +788,7 @@ class ImprovementController:
             if not run:
                 if paused:
                     return await self._idle(w, "workflow_paused", "paused")
-                if self.mode == "autonomous" and not self.self_improving:
+                if not self.self_improving or improvement_work_disabled():
                     return await self._idle(w, "self_improvement_disabled", "paused")
                 if (
                     self.mode == "autonomous"
@@ -946,7 +960,7 @@ class ImprovementController:
                     "candidate_ids": d["candidate_ids"],
                 }
             if (
-                paused or (self.mode == "autonomous" and not self.self_improving)
+                paused or not self.self_improving or improvement_work_disabled()
             ) and not recovering:
                 reason = "workflow_paused" if paused else "self_improvement_disabled"
                 await self._save(rid, owner, {"reason": reason}, True)

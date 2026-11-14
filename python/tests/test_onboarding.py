@@ -1,14 +1,14 @@
 import asyncio
+import io
 import json
 import os
-import pty
 import re
-import select
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -63,34 +63,30 @@ class OnboardingTests(unittest.TestCase):
                 },
             )
             readme = (destination / "README.md").read_text()
-            self.assertIn("--enable --once", readme)
-            self.assertIn("--enable --mode recommend --once", readme)
+            self.assertIn("--mode recommend --once", readme)
+            self.assertNotIn("--disable --mode", readme)
             recipe = next(
                 line.strip()
                 for line in readme.splitlines()
                 if "loopiter worker" in line and "--mode" not in line
             )
-            self.assertIn("--enable --once", recipe)
+            self.assertIn("--once", recipe)
+            self.assertNotIn("--enable", recipe)
             self.assertNotIn("--mode", recipe)
-            self.assertIn("--enable authorizes improvement work and provider spending", readme)
-            self.assertIn("fails closed without an audit partition, a budget, or --enable", readme)
+            self.assertIn("The worker runs without --enable", readme)
+            self.assertIn("LOOPITER_DISABLE=1", readme)
+            self.assertIn("fails closed without an audit partition or a budget", readme)
             self.assertIn("The recipe above omits --mode, so plan.mode controls it", readme)
             self.assertIn("The --mode flag still overrides the plan", readme)
-            confirmation = (
-                "Before the first run with --enable --mode autonomous, stop and get explicit "
-                "confirmation from the human. That confirmation is one-time, for initial "
-                "activation and spend. A completed checklist, doctor report, or plan output "
-                "alone is not confirmation. After that one confirmation, autonomous runs "
-                "continue without per-candidate approval."
-            )
-            self.assertIn(confirmation, readme)
-            self.assertIn(confirmation, read_agent_guide())
+            migration = "An ImprovementController created with no mode is autonomous with self-improving on."
+            self.assertIn(migration, readme)
+            self.assertIn(migration, read_agent_guide())
             self.assertIn("cannot exceed two hours", read_agent_guide())
-            self.assertIn("effective budget on the application workflows", read_agent_guide())
+            self.assertIn("LOOPITER_DISABLE=1", read_agent_guide())
             self.assertIn("Namespace: app/shown", autonomous_activation_prompt("app/shown"))
             self.assertIn("Type activate to confirm:", autonomous_activation_prompt("app/shown"))
-            self.assertLess(readme.index(confirmation), readme.index(recipe))
-            self.assertLess(readme.index(recipe), readme.index("--enable --mode recommend --once"))
+            self.assertLess(readme.index(migration), readme.index(recipe))
+            self.assertLess(readme.index(recipe), readme.index("--mode recommend --once"))
             marker = destination / "user-owned.txt"
             marker.write_text("preserve me")
             with self.assertRaises(FileExistsError):
@@ -223,9 +219,12 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(report["checks"]), 5)
         self.assertTrue(all(check["passed"] for check in report["checks"]))
 
-    async def test_worker_requires_enable_before_importing_code(self):
-        with self.assertRaisesRegex(ValueError, "disabled"):
-            await run_self_hosted_worker("does-not-exist.py", mode="autonomous", once=True)
+    async def test_worker_validates_settings_before_importing_code(self):
+        paused = await run_self_hosted_worker(
+            "does-not-exist.py", mode="experiment", self_improving=False, once=True
+        )
+        self.assertEqual(paused[0]["reason"], "self_improvement_disabled")
+        self.assertEqual(paused[0]["state"], "paused")
         with self.assertRaises(ValueError):
             await run_self_hosted_worker("does-not-exist.py", self_improving=True, interval_ms=0)
         cancellation = asyncio.Event()
@@ -278,7 +277,9 @@ async def create_integration(*, cancellation):
     workflow = ImprovementWorkflow(id="worker",version="1",optimizer_version="1",evaluator_version="1",policy=policy,dataset=dataset,artifact=artifact,propose=propose,evaluate=evaluate,deployment=Registry(),observe=observe)
     return dict(loop=loop,workflows=[workflow],close=close)
 """)
-            result = await run_self_hosted_worker(module, self_improving=True, once=True)
+            result = await run_self_hosted_worker(
+                module, mode="recommend", self_improving=True, once=True
+            )
             self.assertEqual(len(result), 1)
             self.assertEqual(closed.read_text(), "closed")
 
@@ -365,70 +366,37 @@ async def create_integration(*, cancellation):
                 " deployment=Registry(), observe=observe)\n"
                 "    return dict(loop=loop, workflows=[workflow], close=loop.close)\n"
             )
-            denied = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "loopiter",
-                    "worker",
-                    "--module",
-                    str(module),
-                    "--enable",
-                    "--mode",
-                    "autonomous",
-                    "--once",
-                ],
-                cwd=root,
-                input="",
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(denied.returncode, 1)
-            self.assertIn("--confirm-activation or --yes", denied.stderr)
-            allowed = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "loopiter",
-                    "worker",
-                    "--module",
-                    str(module),
-                    "--enable",
-                    "--confirm-activation",
-                    "--once",
-                    "--step-timeout-ms",
-                    "180000",
-                ],
-                cwd=root,
-                input="",
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(allowed.returncode, 0, allowed.stderr)
-            self.assertIn("effective mode autonomous (source: plan)", allowed.stderr)
-            self.assertIn("effective step timeout 180000ms (source: flag)", allowed.stderr)
-            self.assertIn('"state": "evaluating"', allowed.stdout)
-            again = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "loopiter",
-                    "worker",
-                    "--module",
-                    str(module),
-                    "--enable",
-                    "--once",
-                ],
-                cwd=root,
-                input="",
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(again.returncode, 0, again.stderr)
-            self.assertNotIn("one-time confirmation", again.stderr)
+
+            def run_worker(extra, env=None):
+                return subprocess.run(
+                    [sys.executable, "-m", "loopiter", "worker", "--module", str(module), *extra],
+                    cwd=root,
+                    input="",
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env=None if env is None else {**os.environ, **env},
+                )
+
+            plain = run_worker(["--once", "--step-timeout-ms", "180000"])
+            self.assertEqual(plain.returncode, 0, plain.stderr)
+            self.assertIn("effective mode autonomous (source: plan)", plain.stderr)
+            self.assertIn("effective step timeout 180000ms (source: flag)", plain.stderr)
+            self.assertNotIn("deprecated", plain.stderr)
+            self.assertIn('"state": "evaluating"', plain.stdout)
+            self.assertFalse((Path(root) / ".state" / "activation.json").exists())
+            legacy = run_worker(["--enable", "--confirm-activation", "--yes", "--once"])
+            self.assertEqual(legacy.returncode, 0, legacy.stderr)
+            self.assertIn("--enable is deprecated and ignored", legacy.stderr)
+            self.assertIn("--confirm-activation is deprecated and ignored", legacy.stderr)
+            self.assertIn("--yes is deprecated and ignored", legacy.stderr)
+            disabled = run_worker(["--disable", "--once"])
+            self.assertEqual(disabled.returncode, 0, disabled.stderr)
+            self.assertIn('"reason": "self_improvement_disabled"', disabled.stdout)
+            for value in ("1", "true", "yes"):
+                env_disabled = run_worker(["--once"], {"LOOPITER_DISABLE": value})
+                self.assertEqual(env_disabled.returncode, 0, env_disabled.stderr)
+                self.assertIn('"reason": "self_improvement_disabled"', env_disabled.stdout)
             original_module = module.read_text()
             self.assertIn('\\"tokens\\": 1000', original_module)
             module.write_text(
@@ -437,148 +405,31 @@ async def create_integration(*, cancellation):
             cache = Path(root) / "__pycache__"
             if cache.exists():
                 shutil.rmtree(cache)
-            changed_module_budget = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "loopiter",
-                    "worker",
-                    "--module",
-                    str(module),
-                    "--enable",
-                    "--once",
-                ],
-                cwd=root,
-                input="",
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(
-                changed_module_budget.returncode,
-                1,
-                changed_module_budget.stdout + "\n" + changed_module_budget.stderr,
-            )
-            self.assertIn("one-time confirmation", changed_module_budget.stderr)
+            changed_module_budget = run_worker(["--once"])
+            self.assertEqual(changed_module_budget.returncode, 0, changed_module_budget.stderr)
+            self.assertNotIn("one-time confirmation", changed_module_budget.stderr)
             module.write_text(original_module)
-            stamp = json.loads((Path(root) / ".state" / "activation.json").read_text())
-            recorded = stamp["entries"]["app/dev"]
-            self.assertRegex(recorded["confirmedAt"], r"^\d{4}-\d{2}-\d{2}T")
-            self.assertTrue(recorded["confirmedBy"].strip())
-            self.assertEqual(len(recorded["planHash"]), 64)
-            self.assertEqual(recorded["mode"], "autonomous")
-            other_timeout = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "loopiter",
-                    "worker",
-                    "--module",
-                    str(module),
-                    "--enable",
-                    "--once",
-                    "--step-timeout-ms",
-                    "60000",
-                ],
-                cwd=root,
-                input="",
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(other_timeout.returncode, 0, other_timeout.stderr)
-            self.assertNotIn("one-time confirmation", other_timeout.stderr)
-            shifted = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "loopiter",
-                    "worker",
-                    "--module",
-                    str(module),
-                    "--enable",
-                    "--once",
-                ],
-                cwd=root,
-                input="",
-                text=True,
-                capture_output=True,
-                check=False,
-                env={**os.environ, "LOOPITER_NAMESPACE": "env/other"},
-            )
-            self.assertEqual(shifted.returncode, 1)
-            self.assertIn("one-time confirmation", shifted.stderr)
-            self.assertNotIn(
-                "env/other",
-                json.loads((Path(root) / ".state" / "activation.json").read_text())["entries"],
-            )
+            if cache.exists():
+                shutil.rmtree(cache)
             plan_path = Path(root) / "integration-plan.json"
             stored = json.loads(plan_path.read_text())
             stored["budget"] = {"tokens": 1000}
             plan_path.write_text(json.dumps(stored))
-            changed_budget = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "loopiter",
-                    "worker",
-                    "--module",
-                    str(module),
-                    "--enable",
-                    "--once",
-                ],
-                cwd=root,
-                input="",
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(changed_budget.returncode, 1)
-            self.assertIn("one-time confirmation", changed_budget.stderr)
+            changed_budget = run_worker(["--once"])
+            self.assertEqual(changed_budget.returncode, 0, changed_budget.stderr)
+            self.assertNotIn("one-time confirmation", changed_budget.stderr)
             del stored["budget"]
             stored["namespace"] = "app/other"
             plan_path.write_text(json.dumps(stored))
-            fresh = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "loopiter",
-                    "worker",
-                    "--module",
-                    str(module),
-                    "--enable",
-                    "--once",
-                ],
-                cwd=root,
-                input="",
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(fresh.returncode, 1)
-            self.assertIn("one-time confirmation", fresh.stderr)
+            fresh = run_worker(["--once"])
+            self.assertEqual(fresh.returncode, 0, fresh.stderr)
+            self.assertNotIn("one-time confirmation", fresh.stderr)
             stored["namespace"] = "app/dev"
             stored["audit"]["minimumUnits"] = 60
             plan_path.write_text(json.dumps(stored))
-            changed = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "loopiter",
-                    "worker",
-                    "--module",
-                    str(module),
-                    "--enable",
-                    "--once",
-                ],
-                cwd=root,
-                input="",
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(changed.returncode, 1)
-            self.assertIn("one-time confirmation", changed.stderr)
+            changed = run_worker(["--once"])
+            self.assertEqual(changed.returncode, 0, changed.stderr)
+            self.assertNotIn("one-time confirmation", changed.stderr)
 
     def test_documented_recipe_follows_plan_mode_recommend(self):
         with tempfile.TemporaryDirectory() as root:
@@ -590,7 +441,8 @@ async def create_integration(*, cancellation):
                 for line in readme.splitlines()
                 if "loopiter worker" in line and "--mode" not in line
             )
-            self.assertIn("--enable --once", recipe)
+            self.assertIn("--once", recipe)
+            self.assertNotIn("--enable", recipe)
             self.assertNotIn("--mode", recipe)
             plan_path = destination / "integration-plan.json"
             plan = json.loads(plan_path.read_text())
@@ -607,7 +459,6 @@ async def create_integration(*, cancellation):
                     "worker",
                     "--module",
                     str(module),
-                    "--enable",
                     "--once",
                 ],
                 cwd=destination,
@@ -665,8 +516,6 @@ async def create_integration(*, cancellation):
                         "worker",
                         "--module",
                         str(module),
-                        "--enable",
-                        "--confirm-activation",
                         "--once",
                     ],
                     cwd=root,
@@ -742,47 +591,26 @@ async def create_integration(*, cancellation):
                     }
                 )
             )
-            pid, fd = pty.fork()
-            if pid == 0:
-                os.chdir(root)
-                os.execv(
+            output = subprocess.run(
+                [
                     sys.executable,
-                    [
-                        sys.executable,
-                        "-m",
-                        "loopiter",
-                        "worker",
-                        "--module",
-                        str(module),
-                        "--enable",
-                        "--once",
-                    ],
-                )
-            data = b""
-            while b"Type activate to confirm" not in data:
-                ready, _, _ = select.select([fd], [], [], 8)
-                if not ready:
-                    break
-                chunk = os.read(fd, 4096)
-                if not chunk:
-                    break
-                data += chunk
-            os.write(fd, b"no\n")
-            while True:
-                ready, _, _ = select.select([fd], [], [], 1)
-                if not ready:
-                    break
-                try:
-                    extra = os.read(fd, 4096)
-                except OSError:
-                    break
-                if not extra:
-                    break
-                data += extra
-            os.waitpid(pid, 0)
-            text = data.decode("utf-8", "replace")
-            self.assertIn("Namespace: app/shown", text)
-            self.assertNotIn("imported too early", text)
+                    "-m",
+                    "loopiter",
+                    "worker",
+                    "--module",
+                    str(module),
+                    "--once",
+                ],
+                cwd=root,
+                input="",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(output.returncode, 0)
+            self.assertIn("imported too early", output.stderr)
+            self.assertNotIn("Type activate", output.stderr)
+            self.assertNotIn("one-time confirmation", output.stderr)
             self.assertFalse((Path(root) / ".state" / "activation.json").exists())
 
         policy = snake_policy(
@@ -844,8 +672,6 @@ async def create_integration(*, cancellation):
                     "worker",
                     "--module",
                     str(module),
-                    "--enable",
-                    "--confirm-activation",
                     "--once",
                 ],
                 cwd=root,
@@ -874,10 +700,12 @@ async def create_integration(*, cancellation):
                 capture_output=True,
                 check=False,
             )
-            self.assertEqual(again.returncode, 1)
-            self.assertIn("one-time confirmation", again.stderr)
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertIn("--enable is deprecated and ignored", again.stderr)
+            self.assertNotIn("one-time confirmation", again.stderr)
+            self.assertIn("callback_failed", again.stdout)
 
-    def test_legacy_stamp_gains_current_budget_hash(self):
+    def test_legacy_stamp_is_ignored_and_left_unchanged(self):
         policy = snake_policy(
             json.loads((ROOT / "python/tests/fixtures/autonomy.json").read_text())["policy"]
         )
@@ -944,6 +772,7 @@ async def create_integration(*, cancellation):
                     }
                 )
             )
+            original = (state / "activation.json").read_text()
             first = subprocess.run(
                 [
                     sys.executable,
@@ -952,7 +781,6 @@ async def create_integration(*, cancellation):
                     "worker",
                     "--module",
                     str(module),
-                    "--enable",
                     "--once",
                 ],
                 cwd=root,
@@ -962,10 +790,8 @@ async def create_integration(*, cancellation):
                 check=False,
             )
             self.assertEqual(first.returncode, 0, first.stderr)
-            stamp = json.loads((state / "activation.json").read_text())["entries"]["app/dev"]
-            self.assertEqual(stamp["confirmedAt"], confirmed_at)
-            self.assertEqual(stamp["confirmedBy"], "legacy")
-            self.assertRegex(stamp["budgetHash"], r"^[a-f0-9]{64}$")
+            self.assertNotIn("one-time confirmation", first.stderr)
+            self.assertEqual((state / "activation.json").read_text(), original)
             again = subprocess.run(
                 [
                     sys.executable,
@@ -984,6 +810,60 @@ async def create_integration(*, cancellation):
                 check=False,
             )
             self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertIn("--enable is deprecated and ignored", again.stderr)
+            self.assertEqual((state / "activation.json").read_text(), original)
+
+    def test_disabled_worker_does_not_import_the_application_in_any_mode(self):
+        with tempfile.TemporaryDirectory() as root:
+            module = Path(root) / "application.py"
+            module.write_text("raise RuntimeError('imported the application')\n")
+
+            def run(extra, env=None):
+                return subprocess.run(
+                    [sys.executable, "-m", "loopiter", "worker", "--module", str(module), *extra],
+                    cwd=root,
+                    input="",
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env={**os.environ, **(env or {})},
+                )
+
+            for mode in ("recommend", "experiment", "observe", "autonomous"):
+                result = run(["--disable", "--mode", mode, "--once"])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('"reason": "self_improvement_disabled"', result.stdout)
+                self.assertNotIn("imported the application", result.stderr + result.stdout)
+            enabled = run(["--mode", "experiment", "--once"], {"LOOPITER_DISABLE": "enabled"})
+            self.assertEqual(enabled.returncode, 0, enabled.stderr)
+            self.assertNotIn("imported the application", enabled.stderr)
+            off = run(["--once"], {"LOOPITER_DISABLE": "off"})
+            self.assertNotEqual(off.returncode, 0)
+            self.assertIn("imported the application", off.stderr)
+            self.assertIn("no integration plan found; falling back to autonomous", off.stderr)
+            flagged = run(["--mode", "recommend", "--once"], {"LOOPITER_DISABLE": "0"})
+            self.assertNotEqual(flagged.returncode, 0)
+            self.assertIn("imported the application", flagged.stderr)
+            self.assertNotIn("no integration plan found", flagged.stderr)
+
+    def test_plan_directory_fails_closed_and_missing_plan_warns(self):
+        with tempfile.TemporaryDirectory() as root:
+            module = Path(root) / "application.py"
+            module.write_text("raise RuntimeError('unused')\n")
+            (Path(root) / "integration-plan.json").mkdir()
+            with self.assertRaisesRegex(ValueError, "not a file"):
+                read_worker_settings(module)
+            (Path(root) / "integration-plan.json").rmdir()
+            err = io.StringIO()
+            with redirect_stderr(err):
+                settings = read_worker_settings(module)
+            self.assertEqual(settings["mode"], "autonomous")
+            self.assertEqual(settings["mode_source"], "default")
+            self.assertIn("no integration plan found; falling back to autonomous", err.getvalue())
+            err = io.StringIO()
+            with redirect_stderr(err):
+                read_worker_settings(module, mode="recommend", mode_source="flag")
+            self.assertNotIn("no integration plan found", err.getvalue())
 
     def test_clearing_a_stamp_surfaces_a_removal_error(self):
         with tempfile.TemporaryDirectory() as root:

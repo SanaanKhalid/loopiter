@@ -140,9 +140,9 @@ const workflow: ImprovementWorkflow = {
   observe: async input => ({ artifactVersion: version, configurationHash: 'fixed', startedAt: input.deployedAt,
     endedAt: now.toISOString(), complete: true, unitIds: Array.from({ length: 10 }, (_, i) => 'production-' + i), metrics: { errors: 0 } }),
 };
-const disabled = new ImprovementController(loop, { workflows: [workflow], mode: 'autonomous' });
-if ((await disabled.tick(workflow.id)).reason !== 'self_improvement_disabled') throw Error('Unsafe default');
-const controller = new ImprovementController(loop, { workflows: [workflow], mode: 'autonomous', selfImproving: true });
+const disabled = new ImprovementController(loop, { workflows: [workflow], mode: 'autonomous', selfImproving: false });
+if ((await disabled.tick(workflow.id)).reason !== 'self_improvement_disabled') throw Error('Opt-out failed');
+const controller = new ImprovementController(loop, { workflows: [workflow] });
 let state = '';
 for (let i = 0; i < 6; i++) {
   const result = await controller.tick(workflow.id);
@@ -221,7 +221,6 @@ export async function createIntegration() {
       "worker",
       "--module",
       "worker.mjs",
-      "--enable",
       "--once",
     ],
     { cwd: temporary, encoding: "utf8" },

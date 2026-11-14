@@ -42,14 +42,14 @@ async def scheduled_tick(controller: ImprovementController, workflow_id: str):
     return await controller.tick(workflow_id)`;
 
 const workerExample = `# Node. Omitting --mode follows plan.mode.
-npx --no-install loopiter worker --module ./loopiter/application.mjs --enable --once
+npx --no-install loopiter worker --module ./loopiter/application.mjs --once
 
 # Python.
-python -m loopiter worker --module loopiter/application.py --enable --once
+python -m loopiter worker --module loopiter/application.py --once
 
 # Store proposals and do not apply them.
-npx --no-install loopiter worker --module ./loopiter/application.mjs --enable --mode recommend --once
-python -m loopiter worker --module loopiter/application.py --enable --mode recommend --once`;
+npx --no-install loopiter worker --module ./loopiter/application.mjs --mode recommend --once
+python -m loopiter worker --module loopiter/application.py --mode recommend --once`;
 
 export function GraduatedAutonomyArticle({ post }: { post: Post }) {
   return (
@@ -69,7 +69,7 @@ export function GraduatedAutonomyArticle({ post }: { post: Post }) {
 
       <div className="manifesto-body">
         <p>
-          The controller has four modes: observe inspects eligible evidence and does not propose a change, recommend stores bounded proposals and does not approve or deploy them, experiment compares candidates and can audit them without deploying, and autonomous can approve, apply, observe, retain, or roll back when self-improving is on and the policy is complete. A fresh init in both languages records autonomous mode and self-improving on, and the plan starts incomplete. The worker refuses to start without <code>--enable</code>, and autonomous mode fails closed without an audit partition, a budget, or that flag.
+          The controller has four modes: observe inspects eligible evidence and does not propose a change, recommend stores bounded proposals and does not approve or deploy them, experiment compares candidates and can audit them without deploying, and autonomous can approve, apply, observe, retain, or roll back when self-improving is on and the policy is complete. A fresh init in both languages records autonomous mode and self-improving on, and the plan starts incomplete. The worker runs unless you pass <code>--disable</code> or set <code>LOOPITER_DISABLE=1</code>, and autonomous mode fails closed without an audit partition or a budget.
         </p>
         <p>
           Loopiter, in this repository, is an MIT-licensed library. It captures executions and verified feedback, evaluates an immutable candidate, and coordinates deployment or rollback through adapters your application owns. It is a library, with no hosted scheduler and no daemon in the core. The published npm alpha is <code>loopiter@0.3.0-alpha.1</code> and the published PyPI alpha is <code>loopiter==0.3.0a1</code>. Those archives predate the self-hosted init and worker described here. The commands below are the ones in this source tree. The <Link className="inline-link" href="/">home page</Link> shows the four modes. This note is how the SDK source actually selects among them.
@@ -114,7 +114,7 @@ export function GraduatedAutonomyArticle({ post }: { post: Post }) {
         <section aria-labelledby="change-level">
           <h2 id="change-level">How to change the level</h2>
           <p>
-            After doctor and verify, the recipe init writes omits <code>--mode</code>. The worker then follows <code>plan.mode</code>. On a fresh plan, that is autonomous. Pass <code>--mode</code> to override the plan: <code>observe</code>, <code>recommend</code>, <code>experiment</code>, or <code>autonomous</code>. With no integration plan file, the worker uses recommend.
+            After doctor and verify, the recipe init writes omits <code>--mode</code>. The worker then follows <code>plan.mode</code>. On a fresh plan, that is autonomous. Pass <code>--mode</code> to override the plan: <code>observe</code>, <code>recommend</code>, <code>experiment</code>, or <code>autonomous</code>. With no integration plan file, the worker uses autonomous.
           </p>
           <p>
             Set <code>plan.mode</code> to <code>recommend</code> when you want the recipe, which omits the flag, to store proposals and stop before apply. The flag form is <code>--mode recommend</code>. The same pattern selects observe or experiment.
@@ -123,17 +123,14 @@ export function GraduatedAutonomyArticle({ post }: { post: Post }) {
             <code>{workerExample}</code>
           </pre>
           <p>
-            The worker refuses to start without <code>--enable</code>. That flag authorizes improvement work and provider spending inside the existing gates. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Omit <code>--once</code> and the process keeps ticking in the foreground, on the interval you set. The CLI default for that interval is 30000 milliseconds. Your process manager has to keep it running. The process does not stay up after it exits.
-          </p>
-          <p>
-            The first enabled autonomous run for a namespace and plan asks for a one-time confirmation. On a terminal, type activate. When stdin is not a terminal, pass <code>--confirm-activation</code> or <code>--yes</code>. The worker stores the consent in <code>.state/activation.json</code>, with who confirmed it and when. The stamp is a consent record. It is not signed, and it is not bound to a machine. The hash covers schema version, effective mode, self-improving, the effective namespace (<code>LOOPITER_NAMESPACE</code> when set, otherwise the plan namespace), the plan step timeout, audit, policy, and budget. A one-off <code>--step-timeout-ms</code> is outside that hash. A later run reuses the stamp. A new namespace, or a change to a hashed field, asks again. A completed checklist or a doctor report is not that confirmation. After the one confirmation, autonomous runs continue without a per-candidate approval.
+            The worker runs without <code>--enable</code>. Pass <code>--disable</code> or set <code>LOOPITER_DISABLE=1</code> to pause improvement work. That does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. <code>--enable</code>, <code>--confirm-activation</code>, and <code>--yes</code> are ignored and log a deprecation warning. Omit <code>--once</code> and the process keeps ticking in the foreground, on the interval you set. The CLI default for that interval is 30000 milliseconds. Your process manager has to keep it running. The process does not stay up after it exits.
           </p>
         </section>
 
         <section aria-labelledby="gates">
           <h2 id="gates">What still gates a change</h2>
           <p>
-            Autonomous mode fails closed without an audit partition, a budget, or <code>--enable</code>. The target has to be exact. Node accepts <code>prompt</code>, <code>routing</code>, or <code>agent_release</code>, each with a key. Python accepts <code>prompt</code> or <code>routing</code> only. <code>agent_release</code> is a Node policy target. It is not a tool that edits agent code, spawns agents, or changes topology.
+            Autonomous mode fails closed without an audit partition or a budget. The target has to be exact. Node accepts <code>prompt</code>, <code>routing</code>, or <code>agent_release</code>, each with a key. Python accepts <code>prompt</code> or <code>routing</code> only. <code>agent_release</code> is a Node policy target. It is not a tool that edits agent code, spawns agents, or changes topology.
           </p>
           <p>
             The change has to match a bounded schema: permitted fields, required fields, no extra properties, and length or numeric bounds. Only optimization rows reach the proposer. Every candidate is scored against one frozen baseline. The audit split is held out. If you do not supply an audit method, the controller uses a fixed-sample paired Hoeffding bound, and that lower bound has to clear the configured minimum improvement. The assumption recorded with that check is independent units.
@@ -183,7 +180,7 @@ export function GraduatedAutonomyArticle({ post }: { post: Post }) {
         <section aria-labelledby="language-boundary">
           <h2 id="language-boundary">Where Node and Python differ</h2>
           <p>
-            Both languages share the four modes, the fresh-init preset, the <code>--enable</code> gate, and the activation stamp. The autonomous target kind <code>agent_release</code> is accepted by the Node policy validator only. Python’s autonomous targets are <code>prompt</code> and <code>routing</code>.
+            Both languages share the four modes, the fresh-init preset, and the <code>--disable</code> / <code>LOOPITER_DISABLE</code> opt-out. The autonomous target kind <code>agent_release</code> is accepted by the Node policy validator only. Python’s autonomous targets are <code>prompt</code> and <code>routing</code>.
           </p>
           <p>
             <code>JsonFileStore</code> and its legacy JSON migration CLI are Node-only. The Vercel AI SDK wrapper, <code>loopiter/integrations/ai-sdk</code>, is Node-only. The OpenTelemetry exporter, <code>loopiter/integrations/otel</code>, is Node-only. A trace from that exporter does not authorize an improvement. Optional OpenAI capture wrappers exist in both SDKs. Feedback stays explicit in your code.

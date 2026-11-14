@@ -65,12 +65,12 @@ export async function scheduledTick(controller: ImprovementController, workflowI
   </Tab>
 </Tabs>
 
-Omit `mode` and the self-improving flag for recommendations. A fresh `init`
-plan (schemaVersion 2, preset `autonomous-default`) records autonomous mode and
-self-improving on. The worker still spends only when started with `--enable`,
-which authorizes provider spending inside the existing gates and does not bypass
-audit, budgets, or rollback. Pass `--mode recommend` to store proposals without
-applying them. Select `experiment` for evaluation without deployment. Python
+Omitting `mode` and the self-improving flag is autonomous with self-improving on.
+Pass `mode: "recommend"` or `selfImproving: false` to stay on recommendations.
+A fresh `init` plan (schemaVersion 2, preset `autonomous-default`) records the
+same default. The worker runs unless `--disable` or `LOOPITER_DISABLE=1` is set.
+That does not bypass audit, budgets, or rollback. Pass `--mode recommend` to store
+proposals without applying them. Select `experiment` for evaluation without deployment. Python
 names use snake_case; Node names use camelCase. Existing schemaVersion 1 plans
 stay recommend and are not rewritten.
 
