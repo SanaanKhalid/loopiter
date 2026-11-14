@@ -38,6 +38,8 @@ export interface CaptureOptions {
   maximumOutputBytes?: number;
   /** Awaited after persistence, including the initial pending record. */
   onExecution?(execution: AiExecution): void | Promise<void>;
+  /** Called when a capture policy stores truncated output instead of failing the request. */
+  onError?(error: unknown): void;
 }
 
 export type CaptureStatus = "completed" | "incomplete" | "cancelled" | "failed";
@@ -134,6 +136,7 @@ export class CaptureSession {
   private finalization: Promise<void> | undefined;
   private bytes = 0;
   private truncated = false;
+  private overflowNoted = false;
   private readonly events: JsonValue[] = [];
   private constructor(
     private readonly options: CaptureOptions,
@@ -197,6 +200,7 @@ export class CaptureSession {
     if (this.bytes > this.maximum && this.options.capture) {
       this.truncated = true;
       this.events.length = 0;
+      this.noteOverflow();
       return;
     }
     if (this.bytes > this.maximum)
@@ -212,17 +216,29 @@ export class CaptureSession {
       const captured = capturePayload(value, this.options.capture);
       this.truncated ||= captured.truncated;
       value = this.truncated ? { omitted: true, truncated: true } : captured.value;
+      if (this.truncated) this.noteOverflow();
     }
     if (value !== null && Buffer.byteLength(JSON.stringify(value), "utf8") > this.maximum) {
       if (this.options.capture) {
         this.truncated = true;
         value = { omitted: true, truncated: true };
+        this.noteOverflow();
       } else if (status === "completed" || status === "incomplete") {
         throw new RangeError("Captured response exceeded maximumOutputBytes.");
       } else value = null;
     }
     this.finalization = this.finalize(status, value);
     return this.finalization;
+  }
+
+  private noteOverflow(): void {
+    if (this.overflowNoted) return;
+    this.overflowNoted = true;
+    try {
+      this.options.onError?.(new RangeError("Captured output exceeded maximumOutputBytes."));
+    } catch {
+      /* telemetry callbacks cannot fail the request */
+    }
   }
 
   private async finalize(status: CaptureStatus, value: JsonValue) {

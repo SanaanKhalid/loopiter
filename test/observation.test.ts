@@ -63,6 +63,101 @@ test("redaction stays inside a generous time bound and still redacts a normal jw
   assert.equal((omitted.value as { omitted?: boolean }).omitted, true);
 });
 
+test("seeded card fuzz does not undercount and long digit runs stay fast", () => {
+  const layouts = [[4, 4, 4, 4], [4, 4, 4, 4, 3], [4, 6, 5], [4, 6, 4], [4, 4, 5], [4, 4, 4, 3], [4, 4, 6]];
+  const digit = (value: string, index: number) => {
+    const code = value.charCodeAt(index);
+    return code >= 48 && code <= 57;
+  };
+  const luhn = (value: string) => {
+    let sum = 0;
+    let alt = false;
+    for (let i = value.length - 1; i >= 0; i -= 1) {
+      let n = value.charCodeAt(i) - 48;
+      if (alt) {
+        n *= 2;
+        if (n > 9) n -= 9;
+      }
+      sum += n;
+      alt = !alt;
+    }
+    return sum % 10 === 0;
+  };
+  const prefix = (groups: number[]) => layouts.some((layout) => layout.length >= groups.length && layout.slice(0, groups.length).every((size, index) => size === groups[index]));
+  const longer = (groups: number[]) => layouts.some((layout) => layout.length > groups.length && layout.slice(0, groups.length).every((size, index) => size === groups[index]));
+  const reference = (value: string) => {
+    let i = 0;
+    let count = 0;
+    while (i < value.length) {
+      if (!digit(value, i) || (i > 0 && digit(value, i - 1))) {
+        i += 1;
+        continue;
+      }
+      const start = i;
+      let j = i;
+      while (j < value.length && digit(value, j)) j += 1;
+      const first = j - start;
+      const grouped = j < value.length && (value[j] === " " || value[j] === "-") && j + 1 < value.length && digit(value, j + 1);
+      if (!grouped) {
+        if (first >= 13 && first <= 19 && luhn(value.slice(start, j))) count += 1;
+        i = j;
+        continue;
+      }
+      if (!prefix([first])) {
+        i = j + 1;
+        continue;
+      }
+      const groups = [first];
+      let total = first;
+      const sep = value[j]!;
+      while (j < value.length && value[j] === sep && j + 1 < value.length && digit(value, j + 1) && longer(groups)) {
+        let k = j + 1;
+        let nxt = 0;
+        while (k < value.length && digit(value, k)) {
+          nxt += 1;
+          k += 1;
+        }
+        if (total + nxt > 19 || !prefix(groups.concat(nxt))) break;
+        total += nxt;
+        groups.push(nxt);
+        j = k;
+      }
+      while (j > start && (value[j - 1] === " " || value[j - 1] === "-")) j -= 1;
+      const digits = value.slice(start, j).replace(/[ -]/g, "");
+      if (layouts.some((layout) => layout.length === groups.length && layout.every((size, index) => size === groups[index])) && luhn(digits)) {
+        count += 1;
+        i = j;
+        continue;
+      }
+      i = j < value.length && (value[j] === " " || value[j] === "-") ? j + 1 : j;
+    }
+    return count;
+  };
+  let state = 42;
+  const rnd = () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+  const alphabet = "0123456789 -";
+  let redacted = 0;
+  let baseline = 0;
+  for (let n = 0; n < 200; n += 1) {
+    const length = 24 + Math.floor(rnd() * 40);
+    let sample = "";
+    for (let k = 0; k < length; k += 1) sample += alphabet[Math.floor(rnd() * alphabet.length)];
+    if (rnd() < 0.3) sample += `${rnd() < 0.5 ? " " : "-"}4111111111111111`;
+    redacted += (String(redactCapture(sample)).match(/\[REDACTED\]/g) ?? []).length;
+    baseline += reference(sample);
+  }
+  assert.ok(redacted >= baseline);
+  assert.equal(redacted, 75);
+  const started = Date.now();
+  redactCapture("4 ".repeat(32768));
+  redactCapture("4 ".repeat(512 * 1024));
+  redactCapture("4111-".repeat(Math.floor((1024 * 1024) / 5)));
+  assert.ok(Date.now() - started < 2000);
+});
+
 test("observer retains lineage, defaults to no content, preserves return identity and never replays a durable ID", async () => {
   const loop=setup(), observer=createObserver({loop});
   const result={answer:"private"}; let calls=0;

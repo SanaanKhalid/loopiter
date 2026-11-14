@@ -325,10 +325,12 @@ test("OpenAI stream cancellation and capture overflow cannot report completion",
 
 test("a supplied capture policy truncates overflow and still yields the stream", async () => {
   const { loop, options } = setup();
+  const notes: unknown[] = [];
   const wrapped = wrapOpenAI(streamingClient(), {
     ...options,
     maximumOutputBytes: 30,
     capture: { mode: "full" },
+    onError: (error) => notes.push(error),
   });
   const parts = [];
   for await (const part of await wrapped.chat.completions.create({ ...call, stream: true }))
@@ -337,6 +339,8 @@ test("a supplied capture policy truncates overflow and still yields the stream",
   const row = (await loop.list("executions")).items[0]!;
   assert.equal((row.metadata.loopiterCapture as { truncated?: boolean }).truncated, true);
   assert.equal((row.output as { omitted?: boolean }).omitted, true);
+  assert.equal(notes.length, 1);
+  assert.ok(notes[0] instanceof RangeError);
 });
 
 test("Responses captures incomplete results and provider failures remain failed", async () => {

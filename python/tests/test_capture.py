@@ -6,7 +6,7 @@ import unittest
 from loopiter import FeedbackLoop, InMemoryStore, LoopiterError
 from loopiter.integrations.import_batch import import_batch
 from loopiter.integrations.observe import create_observer
-from loopiter.integrations.privacy import capture_payload, redact_capture
+from loopiter.integrations.privacy import _redact_cards, capture_payload, redact_capture
 
 WHEN = "2026-03-01T15:04:05.000Z"
 
@@ -456,6 +456,120 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         omitted = capture_payload(bulky, {"mode": "redacted"})
         self.assertLess(time.perf_counter() - capped, 2)
         self.assertTrue(omitted["value"]["omitted"])
+
+    def test_seeded_card_fuzz_does_not_undercount(self):
+        layouts = (
+            (4, 4, 4, 4),
+            (4, 4, 4, 4, 3),
+            (4, 6, 5),
+            (4, 6, 4),
+            (4, 4, 5),
+            (4, 4, 4, 3),
+            (4, 4, 6),
+        )
+
+        def digit(ch):
+            return "0" <= ch <= "9"
+
+        def luhn(value):
+            total = 0
+            alt = False
+            for ch in reversed(value):
+                n = ord(ch) - 48
+                if alt:
+                    n *= 2
+                    if n > 9:
+                        n -= 9
+                total += n
+                alt = not alt
+            return total % 10 == 0
+
+        def prefix(groups):
+            return any(layout[: len(groups)] == groups for layout in layouts)
+
+        def longer(groups):
+            return any(
+                len(layout) > len(groups) and layout[: len(groups)] == groups for layout in layouts
+            )
+
+        def reference(value):
+            i = 0
+            count = 0
+            n = len(value)
+            while i < n:
+                if not digit(value[i]) or (i and digit(value[i - 1])):
+                    i += 1
+                    continue
+                start = i
+                j = i
+                while j < n and digit(value[j]):
+                    j += 1
+                first = j - start
+                grouped = j < n and value[j] in " -" and j + 1 < n and digit(value[j + 1])
+                if not grouped:
+                    if 13 <= first <= 19 and luhn(value[start:j]):
+                        count += 1
+                    i = j
+                    continue
+                if not prefix((first,)):
+                    i = j + 1
+                    continue
+                groups = [first]
+                total = first
+                sep = value[j]
+                while (
+                    j < n
+                    and value[j] == sep
+                    and j + 1 < n
+                    and digit(value[j + 1])
+                    and longer(tuple(groups))
+                ):
+                    k = j + 1
+                    nxt = 0
+                    while k < n and digit(value[k]):
+                        nxt += 1
+                        k += 1
+                    if total + nxt > 19 or not prefix((*groups, nxt)):
+                        break
+                    total += nxt
+                    groups.append(nxt)
+                    j = k
+                while j > start and value[j - 1] in " -":
+                    j -= 1
+                digits = "".join(ch for ch in value[start:j] if digit(ch))
+                if tuple(groups) in layouts and luhn(digits):
+                    count += 1
+                    i = j
+                    continue
+                i = j + 1 if j < n and value[j] in " -" else j
+            return count
+
+        state = 42
+
+        def rnd():
+            nonlocal state
+            state = (1664525 * state + 1013904223) & 0xFFFFFFFF
+            return state / 4294967296
+
+        alphabet = "0123456789 -"
+        redacted = 0
+        baseline = 0
+        for _ in range(200):
+            length = 24 + int(rnd() * 40)
+            sample = "".join(alphabet[int(rnd() * len(alphabet))] for _k in range(length))
+            if rnd() < 0.3:
+                sample += (" " if rnd() < 0.5 else "-") + "4111111111111111"
+            redacted += redact_capture(sample).count("[REDACTED]")
+            baseline += reference(sample)
+        self.assertGreaterEqual(redacted, baseline)
+        self.assertEqual(redacted, 75)
+        started = time.perf_counter()
+        _redact_cards("4 " * 32768)
+        self.assertLess(time.perf_counter() - started, 0.05)
+        started = time.perf_counter()
+        _redact_cards("4 " * (512 * 1024))
+        _redact_cards("4111-" * (1024 * 1024 // 5))
+        self.assertLess(time.perf_counter() - started, 4)
 
     async def test_bounded_open_map_is_cleared(self):
         loop = self.loop()
