@@ -7,6 +7,10 @@
 # python3 is required. It checks targeted Terraform plans before apply.
 set -euo pipefail
 umask 077
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required to check Terraform plans." >&2
+  exit 1
+fi
 SUBSCRIPTION=d865e614-32e3-4149-860e-36ccec037536
 STATE_ACCOUNT=loopitertfstate7536
 STATE_CONTAINER=tfstate
@@ -28,10 +32,6 @@ case "$ACTION" in
   *) echo 'Choose plan, apply, or build' >&2; exit 2 ;;
 esac
 DRY=${LOOPITER_DEPLOY_DRY_RUN:-}
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is required to check Terraform plans." >&2
-  exit 1
-fi
 DRY_FAIL_APP=""
 DRY_FAIL_RESTORE=""
 DRY_FAIL_LOCK_RELEASE=""
