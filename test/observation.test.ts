@@ -71,10 +71,6 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
     const code = value.charCodeAt(index);
     return code >= 48 && code <= 57;
   };
-  const alnum = (value: string, index: number) => {
-    const code = value.charCodeAt(index);
-    return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
-  };
   const luhn = (digits: number[]) => {
     let sum = 0;
     let alt = false;
@@ -125,14 +121,14 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
       let group = 0;
       while (group < glens.length) {
         const startAt = starts[group]!;
-        if (startAt !== 0 && alnum(value, startAt - 1)) {
+        if (startAt !== 0 && digit(value, startAt - 1)) {
           group += 1;
           continue;
         }
         const glen = glens[group]!;
         if (glen >= 13 && glen <= 19 && luhn(digits.slice(offset[group], offset[group + 1]))) {
           const endAt = ends[group]!;
-          if (endAt === value.length || !alnum(value, endAt)) {
+          if (endAt === value.length || !digit(value, endAt)) {
             count += 1;
             group += 1;
             continue;
@@ -157,7 +153,7 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
           const endGroup = group + size;
           const endAt = ends[endGroup - 1]!;
           if (!luhn(digits.slice(offset[group], offset[endGroup]))) continue;
-          if (endAt !== value.length && alnum(value, endAt)) continue;
+          if (endAt !== value.length && digit(value, endAt)) continue;
           matched = endGroup;
           break;
         }
@@ -214,6 +210,24 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
   scales("sk-abcdefghijklmnop ".repeat(3276));
   scales("eyJa.b.c ".repeat(7281));
   scales("Basic 4111 ".repeat(5957));
+});
+
+test("detectors read the original text only", () => {
+  const sample = "Bearer sk-abcdefghijklmnop.SECRETTAIL";
+  const seen: string[] = [];
+  const original = RegExp.prototype[Symbol.matchAll];
+  RegExp.prototype[Symbol.matchAll] = function (text: string) {
+    seen.push(String(text));
+    return original.call(this, text);
+  };
+  try {
+    redactCapture(sample);
+  } finally {
+    RegExp.prototype[Symbol.matchAll] = original;
+  }
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every((text) => text === sample));
+  assert.equal(String(redactCapture(sample)), "Bearer [REDACTED]");
 });
 
 test("observer retains lineage, defaults to no content, preserves return identity and never replays a durable ID", async () => {

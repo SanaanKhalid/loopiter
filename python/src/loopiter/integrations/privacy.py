@@ -170,8 +170,8 @@ _LAYOUT_PREFIXES = frozenset(
 _MARKER = "[REDACTED]"
 
 
-def _alnum(ch: str) -> bool:
-    return ("A" <= ch <= "Z") or ("a" <= ch <= "z") or ("0" <= ch <= "9")
+def _ascii_digit(ch: str) -> bool:
+    return "0" <= ch <= "9"
 
 
 def _luhn_ok(even: list[int], odd: list[int], start: int, end: int) -> bool:
@@ -227,7 +227,7 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
         count = len(glens)
         while group < count:
             start_at = starts[group]
-            if start_at != 0 and _alnum(value[start_at - 1]):
+            if start_at != 0 and _ascii_digit(value[start_at - 1]):
                 group += 1
                 continue
             glen = glens[group]
@@ -235,7 +235,7 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
             if (
                 13 <= glen <= 19
                 and _luhn_ok(even, odd, gdigit[group], gdigit[group + 1])
-                and (group_end == length or not _alnum(value[group_end]))
+                and (group_end == length or not _ascii_digit(value[group_end]))
             ):
                 spans.append((start_at, group_end, _MARKER, start_at))
                 group += 1
@@ -260,11 +260,11 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
                     and glens[group + 4] == 3
                     and seps[group + 3] == sep
                     and _luhn_ok(even, odd, base, gdigit[group + 5])
-                    and (ends[group + 4] == length or not _alnum(value[ends[group + 4]]))
+                    and (ends[group + 4] == length or not _ascii_digit(value[ends[group + 4]]))
                 ):
                     matched = 5
                 elif _luhn_ok(even, odd, base, gdigit[group + 4]) and (
-                    ends[group + 3] == length or not _alnum(value[ends[group + 3]])
+                    ends[group + 3] == length or not _ascii_digit(value[ends[group + 3]])
                 ):
                     matched = 4
                 if matched:
@@ -289,7 +289,7 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
                 end_group = group + size
                 end_at = ends[end_group - 1]
                 if _luhn_ok(even, odd, base, gdigit[end_group]) and (
-                    end_at == length or not _alnum(value[end_at])
+                    end_at == length or not _ascii_digit(value[end_at])
                 ):
                     matched = end_group
                     break

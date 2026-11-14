@@ -77,9 +77,9 @@ const LAYOUT_PREFIXES = new Set(
 );
 const TOKEN_CHARS = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/_.=~-");
 
-function isAlnum(ch: string): boolean {
+function isAsciiDigit(ch: string): boolean {
   const code = ch.charCodeAt(0);
-  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+  return code >= 48 && code <= 57;
 }
 
 function pushUrls(value: string, spans: Span[]): void {
@@ -209,7 +209,7 @@ function pushCards(value: string, spans: Span[]): void {
     const count = glens.length;
     while (group < count) {
       const startAt = starts[group]!;
-      if (startAt !== 0 && isAlnum(value[startAt - 1]!)) {
+      if (startAt !== 0 && isAsciiDigit(value[startAt - 1]!)) {
         group += 1;
         continue;
       }
@@ -219,7 +219,7 @@ function pushCards(value: string, spans: Span[]): void {
         glen >= 13 &&
         glen <= 19 &&
         luhnOk(even, odd, gdigit[group]!, gdigit[group + 1]!) &&
-        (groupEnd === length || !isAlnum(value[groupEnd]!))
+        (groupEnd === length || !isAsciiDigit(value[groupEnd]!))
       ) {
         spans.push([startAt, groupEnd, MARKER, startAt]);
         group += 1;
@@ -247,12 +247,12 @@ function pushCards(value: string, spans: Span[]): void {
           glens[fifth] === 3 &&
           seps[group + 3] === sep &&
           luhnOk(even, odd, base, gdigit[group + 5]!) &&
-          (ends[fifth] === length || !isAlnum(value[ends[fifth]!]!))
+          (ends[fifth] === length || !isAsciiDigit(value[ends[fifth]!]!))
         ) {
           matched = 5;
         } else if (
           luhnOk(even, odd, base, gdigit[group + 4]!) &&
-          (ends[group + 3] === length || !isAlnum(value[ends[group + 3]!]!))
+          (ends[group + 3] === length || !isAsciiDigit(value[ends[group + 3]!]!))
         ) {
           matched = 4;
         }
@@ -276,7 +276,7 @@ function pushCards(value: string, spans: Span[]): void {
         if (!EXACT_LAYOUTS.has(lengths.slice(0, size).join(","))) continue;
         const endGroup = group + size;
         const endAt = ends[endGroup - 1]!;
-        if (luhnOk(even, odd, base, gdigit[endGroup]!) && (endAt === length || !isAlnum(value[endAt]!))) {
+        if (luhnOk(even, odd, base, gdigit[endGroup]!) && (endAt === length || !isAsciiDigit(value[endAt]!))) {
           matched = endGroup;
           break;
         }

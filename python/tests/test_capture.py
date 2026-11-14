@@ -529,21 +529,13 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
                 groups = len(glens)
                 while group < groups:
                     start_at = starts[group]
-                    if start_at and (
-                        "A" <= value[start_at - 1] <= "Z"
-                        or "a" <= value[start_at - 1] <= "z"
-                        or digit(value[start_at - 1])
-                    ):
+                    if start_at and digit(value[start_at - 1]):
                         group += 1
                         continue
                     glen = glens[group]
                     if 13 <= glen <= 19 and luhn(digits[offset[group] : offset[group + 1]]):
                         end_at = ends[group]
-                        if end_at == n or not (
-                            "A" <= value[end_at] <= "Z"
-                            or "a" <= value[end_at] <= "z"
-                            or digit(value[end_at])
-                        ):
+                        if end_at == n or not digit(value[end_at]):
                             count += 1
                             group += 1
                             continue
@@ -567,11 +559,7 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
                         end_at = ends[end_group - 1]
                         if not luhn(digits[offset[group] : offset[end_group]]):
                             continue
-                        if end_at != n and (
-                            "A" <= value[end_at] <= "Z"
-                            or "a" <= value[end_at] <= "z"
-                            or digit(value[end_at])
-                        ):
+                        if end_at != n and digit(value[end_at]):
                             continue
                         matched = end_group
                         break
@@ -640,6 +628,55 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         scales_text("sk-abcdefghijklmnop " * 3276)
         scales_text("eyJa.b.c " * 7281)
         scales_text("Basic 4111 " * 5957)
+
+    def test_detectors_read_the_original_text_only(self):
+        from unittest.mock import patch
+
+        import loopiter.integrations.privacy as privacy
+
+        sample = "Bearer sk-abcdefghijklmnop.SECRETTAIL"
+        seen: list[str] = []
+
+        class _Spy:
+            def __init__(self, pattern):
+                self.pattern = pattern
+
+            def finditer(self, text, *args, **kwargs):
+                seen.append(text)
+                return self.pattern.finditer(text, *args, **kwargs)
+
+            def sub(self, repl, text, *args, **kwargs):
+                seen.append(text)
+                return self.pattern.sub(repl, text, *args, **kwargs)
+
+        def wrap(name):
+            func = getattr(privacy, name)
+
+            def inner(value, *args, **kwargs):
+                seen.append(value)
+                return func(value, *args, **kwargs)
+
+            return inner
+
+        names = (
+            "_PRIVATE_KEY",
+            "_TOKEN",
+            "_JWT",
+            "_AWS_SECRET",
+            "_BEARER",
+            "_BASIC",
+            "_ASSIGNED_SECRET",
+            "_QUERY_TOKEN",
+        )
+        with (
+            patch.multiple(privacy, **{name: _Spy(getattr(privacy, name)) for name in names}),
+            patch.object(privacy, "_card_spans", wrap("_card_spans")),
+            patch.object(privacy, "_url_spans", wrap("_url_spans")),
+            patch.object(privacy, "_email_spans", wrap("_email_spans")),
+        ):
+            privacy._redact_text(sample)
+        self.assertGreater(len(seen), 0)
+        self.assertTrue(all(text == sample for text in seen))
 
     async def test_bounded_open_map_is_cleared(self):
         loop = self.loop()

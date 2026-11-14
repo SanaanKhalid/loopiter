@@ -429,6 +429,34 @@
     {
       "input": "user@example.compassword=hunter2",
       "output": "[REDACTED]=[REDACTED]"
+    },
+    {
+      "input": "Bearer sk-abcdefghijklmnop.SECRETTAIL",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Bearer AKIA12345678901234/SECRETTAIL",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Bearer xoxb-abcdefghijklmnop.SECRETTAIL",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic AKIA12345678901234+tail==",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl/tail",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl3782 822463 10005",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111 1111 1111 1111token=",
+      "output": "[REDACTED]token="
     }
   ],
   "boundaries": [
