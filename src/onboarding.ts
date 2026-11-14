@@ -1,5 +1,5 @@
 /** Node-only self-hosted onboarding. No platform account or external service is used. */
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { appendFile, lstat, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -92,18 +92,6 @@ function loadIntegrationPlan(
   return record;
 }
 
-type ActivationStamp = {
-  planHash: string;
-  budgetHash?: string;
-  confirmedBy: string;
-  confirmedAt: string;
-  mode: string;
-};
-
-function activationFile(modulePath: string): string {
-  return resolve(dirname(resolve(modulePath)), ".state", "activation.json");
-}
-
 export function activationActor(env: NodeJS.ProcessEnv = process.env): string {
   const provided = env.LOOPITER_ACTIVATION_ACTOR?.trim();
   if (provided) return provided;
@@ -149,129 +137,54 @@ export function autonomyPlanHash(
   });
 }
 
-function readActivationEntries(modulePath: string): Record<string, ActivationStamp> {
-  const path = activationFile(modulePath);
-  if (!existsSync(path)) return {};
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as {
-      entries?: Record<string, ActivationStamp>;
-    };
-    if (!parsed?.entries || typeof parsed.entries !== "object" || Array.isArray(parsed.entries))
-      return {};
-    return parsed.entries;
-  } catch {
-    return {};
-  }
-}
+const ACTIVATION_RETIRED =
+  "warning: activation confirmation is retired. This helper is a no-op. Use mode recommend or observe for suggest-only behavior, or --disable / LOOPITER_DISABLE to pause.";
 
 export function autonomousActivationCurrent(
-  modulePath: string,
-  mode?: ImprovementMode,
+  _modulePath: string,
+  _mode?: ImprovementMode,
 ): boolean {
-  const plan = loadIntegrationPlan(modulePath);
-  if (!plan) return false;
-  const effectiveMode = mode ?? (typeof plan.mode === "string" ? plan.mode : "recommend");
-  const namespace = effectiveNamespace(plan);
-  const stamp = readActivationEntries(modulePath)[namespace];
-  return (
-    !!stamp &&
-    stamp.mode === effectiveMode &&
-    stamp.planHash === autonomyPlanHash(plan, { namespace, mode: effectiveMode }) &&
-    typeof stamp.confirmedBy === "string" &&
-    stamp.confirmedBy.trim().length > 0 &&
-    typeof stamp.confirmedAt === "string" &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(stamp.confirmedAt)
-  );
+  console.error(ACTIVATION_RETIRED);
+  return false;
 }
 
 export function autonomousActivationPrompt(namespace: string): string {
-  return (
-    "Autonomous mode can spend provider budget and deploy a candidate that passes validation and audit.\n" +
-    `Namespace: ${namespace}\n` +
-    "Type activate to confirm: "
-  );
+  console.error(ACTIVATION_RETIRED);
+  return `Activation confirmation is no longer required.\nNamespace: ${namespace}\n`;
 }
 
 export function moduleActivationNamespace(modulePath: string): string {
+  console.error(ACTIVATION_RETIRED);
   return effectiveNamespace(loadIntegrationPlan(modulePath));
 }
 
-/** Daily limits and per-callback reservations the worker will actually enforce. */
+/** Retired with activation confirmation. The worker no longer fingerprints budgets for a stamp. */
 export function effectiveBudgetFingerprint(
-  workflows: readonly ImprovementWorkflow[],
+  _workflows: readonly ImprovementWorkflow[],
 ): string {
-  return hash(
-    workflows.map((workflow) => ({
-      id: workflow.id,
-      daily: workflow.policy.daily,
-      callbackReservation: workflow.policy.callbackReservation,
-    })),
-  );
+  console.error(ACTIVATION_RETIRED);
+  return "";
 }
 
-function writeActivationEntries(
-  modulePath: string,
-  entries: Record<string, ActivationStamp>,
-): void {
-  const path = activationFile(modulePath);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 1, entries }, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  renameSync(temporary, path);
-}
-
-export function activationBudgetCurrent(modulePath: string, budgetHash: string): boolean {
-  const namespace = effectiveNamespace(loadIntegrationPlan(modulePath));
-  const entries = readActivationEntries(modulePath);
-  const stamp = entries[namespace];
-  if (!stamp) return false;
-  if (stamp.budgetHash === budgetHash) return true;
-  if (typeof stamp.budgetHash === "string" && stamp.budgetHash.length > 0) return false;
-  entries[namespace] = { ...stamp, budgetHash };
-  writeActivationEntries(modulePath, entries);
-  return true;
+export function activationBudgetCurrent(
+  _modulePath: string,
+  _budgetHash: string,
+): boolean {
+  console.error(ACTIVATION_RETIRED);
+  return false;
 }
 
 export function recordAutonomousActivation(
-  modulePath: string,
-  actor = activationActor(),
-  mode?: ImprovementMode,
-  budgetHash?: string,
+  _modulePath: string,
+  _actor = activationActor(),
+  _mode?: ImprovementMode,
+  _budgetHash?: string,
 ): void {
-  const plan = loadIntegrationPlan(modulePath);
-  const effectiveMode =
-    mode ?? (typeof plan?.mode === "string" ? (plan.mode as ImprovementMode) : "recommend");
-  const namespace = effectiveNamespace(plan);
-  const entries = readActivationEntries(modulePath);
-  entries[namespace] = {
-    planHash: autonomyPlanHash(plan, { namespace, mode: effectiveMode }),
-    ...(budgetHash ? { budgetHash } : {}),
-    mode: effectiveMode,
-    confirmedBy: actor.trim() || "unknown",
-    confirmedAt: new Date().toISOString(),
-  };
-  writeActivationEntries(modulePath, entries);
+  console.error(ACTIVATION_RETIRED);
 }
 
-export function clearAutonomousActivation(modulePath: string): void {
-  const namespace = effectiveNamespace(loadIntegrationPlan(modulePath));
-  const entries = readActivationEntries(modulePath);
-  if (!Object.hasOwn(entries, namespace)) return;
-  delete entries[namespace];
-  const path = activationFile(modulePath);
-  if (Object.keys(entries).length === 0) {
-    try {
-      unlinkSync(path);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return;
-      throw error;
-    }
-    return;
-  }
-  writeActivationEntries(modulePath, entries);
+export function clearAutonomousActivation(_modulePath: string): void {
+  console.error(ACTIVATION_RETIRED);
 }
 
 export function readWorkerSettings(

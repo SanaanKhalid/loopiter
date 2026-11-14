@@ -2,8 +2,6 @@
 
 import argparse
 import asyncio
-import errno
-import getpass
 import importlib
 import importlib.resources
 import importlib.util
@@ -14,7 +12,6 @@ import shlex
 import signal
 import stat
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 from . import FeedbackLoop, ImprovementController
@@ -128,20 +125,6 @@ def read_worker_settings(
     }
 
 
-def activation_actor(environment=None):
-    environment = os.environ if environment is None else environment
-    provided = str(environment.get("LOOPITER_ACTIVATION_ACTOR", "")).strip()
-    if provided:
-        return provided
-    try:
-        name = getpass.getuser().strip()
-        if name:
-            return name
-    except Exception:
-        pass
-    return "unknown"
-
-
 def effective_namespace(plan, environment=None):
     """LOOPITER_NAMESPACE when set, otherwise the plan namespace."""
     environment = os.environ if environment is None else environment
@@ -177,142 +160,6 @@ def autonomy_plan_hash(plan, mode=None, environment=None):
             "budget": plan.get("budget"),
         }
     )
-
-
-def _activation_path(module_path):
-    return Path(module_path).resolve().parent / ".state" / "activation.json"
-
-
-def _activation_entries(module_path):
-    path = _activation_path(module_path)
-    if not path.is_file():
-        return {}
-    try:
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-        entries = parsed.get("entries") if isinstance(parsed, dict) else None
-        return entries if isinstance(entries, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def autonomous_activation_current(module_path, mode=None):
-    plan = _load_plan(module_path)
-    if plan is None:
-        return False
-    effective_mode = (
-        mode
-        if isinstance(mode, str)
-        else plan.get("mode")
-        if isinstance(plan.get("mode"), str)
-        else "recommend"
-    )
-    namespace = effective_namespace(plan)
-    stamp = _activation_entries(module_path).get(namespace)
-    if not isinstance(stamp, dict):
-        return False
-    confirmed_by = stamp.get("confirmedBy")
-    confirmed_at = stamp.get("confirmedAt")
-    return (
-        stamp.get("mode") == effective_mode
-        and stamp.get("planHash") == autonomy_plan_hash(plan, effective_mode)
-        and isinstance(confirmed_by, str)
-        and confirmed_by.strip()
-        and isinstance(confirmed_at, str)
-        and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z", confirmed_at)
-    )
-
-
-def autonomous_activation_prompt(namespace):
-    return (
-        "Autonomous mode can spend provider budget and deploy a candidate that passes validation and audit.\n"
-        f"Namespace: {namespace}\n"
-        "Type activate to confirm: "
-    )
-
-
-def effective_budget_fingerprint(workflows):
-    """Daily limits and per-callback reservations the worker will actually enforce."""
-    return fingerprint(
-        [
-            {
-                "id": workflow.id,
-                "daily": workflow.policy.get("daily"),
-                "callback_reservation": workflow.policy.get("callback_reservation"),
-            }
-            for workflow in workflows
-        ]
-    )
-
-
-def _write_activation_entries(module_path, entries):
-    path = _activation_path(module_path)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps({"schemaVersion": 1, "entries": entries}, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
-
-
-def activation_budget_current(module_path, budget_hash):
-    plan = _load_plan(module_path)
-    namespace = effective_namespace(plan)
-    entries = _activation_entries(module_path)
-    stamp = entries.get(namespace)
-    if not isinstance(stamp, dict):
-        return False
-    recorded = stamp.get("budgetHash")
-    if recorded == budget_hash:
-        return True
-    if isinstance(recorded, str) and recorded:
-        return False
-    entries[namespace] = {**stamp, "budgetHash": budget_hash}
-    _write_activation_entries(module_path, entries)
-    return True
-
-
-def record_autonomous_activation(module_path, actor=None, mode=None, budget_hash=None):
-    plan = _load_plan(module_path) or {}
-    effective_mode = (
-        mode
-        if isinstance(mode, str)
-        else plan.get("mode")
-        if isinstance(plan.get("mode"), str)
-        else "recommend"
-    )
-    namespace = effective_namespace(plan)
-    entries = _activation_entries(module_path)
-    entry = {
-        "planHash": autonomy_plan_hash(plan, effective_mode),
-        "mode": effective_mode,
-        "confirmedBy": (actor or activation_actor()).strip() or "unknown",
-        "confirmedAt": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-    }
-    if budget_hash:
-        entry["budgetHash"] = budget_hash
-    entries[namespace] = entry
-    _write_activation_entries(module_path, entries)
-
-
-def clear_autonomous_activation(module_path):
-    plan = _load_plan(module_path)
-    namespace = effective_namespace(plan)
-    entries = _activation_entries(module_path)
-    if namespace not in entries:
-        return
-    del entries[namespace]
-    path = _activation_path(module_path)
-    if not entries:
-        try:
-            path.unlink()
-        except OSError as error:
-            if error.errno == errno.ENOENT:
-                return
-            raise
-        return
-    _write_activation_entries(module_path, entries)
 
 
 def _audit_plan_messages(plan):

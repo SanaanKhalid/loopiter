@@ -13,15 +13,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from loopiter.onboarding import (
-    autonomous_activation_prompt,
     autonomy_plan_hash,
-    clear_autonomous_activation,
     initialize_self_hosted,
     inspect_self_hosted_setup,
     read_agent_guide,
     read_reference,
     read_worker_settings,
-    record_autonomous_activation,
     run_self_hosted_worker,
     verify_self_hosted_installation,
 )
@@ -83,8 +80,6 @@ class OnboardingTests(unittest.TestCase):
             self.assertIn(migration, read_agent_guide())
             self.assertIn("cannot exceed two hours", read_agent_guide())
             self.assertIn("LOOPITER_DISABLE=1", read_agent_guide())
-            self.assertIn("Namespace: app/shown", autonomous_activation_prompt("app/shown"))
-            self.assertIn("Type activate to confirm:", autonomous_activation_prompt("app/shown"))
             self.assertLess(readme.index(migration), readme.index(recipe))
             self.assertLess(readme.index(recipe), readme.index("--mode recommend --once"))
             marker = destination / "user-owned.txt"
@@ -874,28 +869,6 @@ async def create_integration(*, cancellation):
             with redirect_stderr(err):
                 read_worker_settings(module, mode="recommend", mode_source="flag")
             self.assertNotIn("no integration plan found", err.getvalue())
-
-    def test_clearing_a_stamp_surfaces_a_removal_error(self):
-        with tempfile.TemporaryDirectory() as root:
-            module = Path(root) / "application.py"
-            module.write_text("raise RuntimeError('unused')\n")
-            (Path(root) / "integration-plan.json").write_text(
-                json.dumps({"schemaVersion": 2, "mode": "autonomous", "namespace": "app/dev"})
-            )
-            record_autonomous_activation(
-                module, actor="tester", mode="autonomous", budget_hash="abc"
-            )
-            state = Path(root) / ".state"
-            os.chmod(state, 0o500)
-            try:
-                with self.assertRaises(OSError):
-                    clear_autonomous_activation(module)
-            finally:
-                os.chmod(state, 0o700)
-            stamp = json.loads((state / "activation.json").read_text())
-            self.assertEqual(stamp["entries"]["app/dev"]["confirmedBy"], "tester")
-            (state / "activation.json").unlink()
-            clear_autonomous_activation(module)
 
 
 def snake_policy(value):
