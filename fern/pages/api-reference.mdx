@@ -41,7 +41,7 @@ Do not manually alter targets/attempts/candidate states.
 `ImprovementController(loop, {workflows, mode?, selfImproving?})` is the 0.3 durable
 controller. Defaults are `mode: 'autonomous'` and `selfImproving: true`. Automatic
 approval still requires a valid exact-target policy, an audit partition, budgets,
-and the evidence gate. Pass `mode: 'recommend'` or `selfImproving: false` to opt out.
+and the evidence gate. Pass `mode: 'recommend'` or `mode: 'observe'` to store proposals without applying them. `selfImproving: false` pauses every mode before a provider callback. It does not select recommend.
 A fresh onboarding plan (schemaVersion 2, preset `autonomous-default`) records the
 same default. The worker runs unless `--disable` or `LOOPITER_DISABLE=1` is set.
 SchemaVersion 1 plans are unchanged. Methods: `tick(workflowId, signal?)`, `getRun(runId)`,

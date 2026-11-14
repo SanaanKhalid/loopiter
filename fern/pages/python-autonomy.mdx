@@ -17,7 +17,7 @@ Then follow the [integration walkthrough](/get-started/integrate-an-improvement-
 from loopiter import FeedbackLoop, ImprovementController, ImprovementWorkflow
 
 def reviewed_controller(loop: FeedbackLoop, workflow: ImprovementWorkflow):
-    return ImprovementController(loop, workflows=[workflow], mode="recommend", self_improving=False)
+    return ImprovementController(loop, workflows=[workflow], mode="recommend")
 
 def experiment_controller(loop: FeedbackLoop, workflow: ImprovementWorkflow):
     return ImprovementController(loop, workflows=[workflow], mode="experiment")
@@ -28,7 +28,7 @@ def autonomous_controller(loop: FeedbackLoop, workflow: ImprovementWorkflow):
     )
 ```
 
-`reviewed_controller` passes mode `recommend`, so it does not apply. Omitting mode
+`reviewed_controller` passes mode `recommend`, so it stores proposals and does not apply. `self_improving=False` pauses every mode before a provider callback. It does not select recommend. Omitting mode
 is autonomous with self-improving on. A fresh init plan records that same preset.
 The worker runs unless `--disable` or `LOOPITER_DISABLE=1` is set. Your scheduler calls `await controller.tick(workflow.id)`. Use `get_run`, paginated
 `list_runs`, `pause(workflow.id, reason)` and administrative `resume(workflow.id)`.

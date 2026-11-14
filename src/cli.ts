@@ -123,17 +123,22 @@ async function main() {
       throw Error("--module must name a local application integration module.");
     const modeFlag = flag("mode");
     const timeoutFlag = flag("step-timeout-ms");
-    const settings = readWorkerSettings(module, {
-      ...(modeFlag
-        ? { mode: modeFlag as ImprovementMode, modeSource: "flag" as const }
-        : {}),
-      ...(timeoutFlag
-        ? {
-            stepTimeoutMs: parseStepTimeout(timeoutFlag),
-            stepTimeoutSource: "flag" as const,
-          }
-        : {}),
-    });
+    const disabled = args.includes("--disable") || improvementWorkDisabled();
+    const settings = readWorkerSettings(
+      module,
+      {
+        ...(modeFlag
+          ? { mode: modeFlag as ImprovementMode, modeSource: "flag" as const }
+          : {}),
+        ...(timeoutFlag
+          ? {
+              stepTimeoutMs: parseStepTimeout(timeoutFlag),
+              stepTimeoutSource: "flag" as const,
+            }
+          : {}),
+      },
+      { warnMissingPlan: !disabled },
+    );
     if (args.includes("--enable"))
       console.error(
         "warning: --enable is deprecated and ignored. Improvement work runs unless --disable is set or LOOPITER_DISABLE is any value other than 0, false, no, or off.",
@@ -146,7 +151,6 @@ async function main() {
       console.error(
         "warning: --yes is deprecated and ignored. Activation confirmation is no longer required.",
       );
-    const disabled = args.includes("--disable") || improvementWorkDisabled();
     const shutdown = new AbortController();
     const stop = () => shutdown.abort();
     process.once("SIGINT", stop);

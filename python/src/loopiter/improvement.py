@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
@@ -40,6 +41,21 @@ def improvement_work_disabled(environment=None):
     if not raw:
         return False
     return raw not in _DISABLE_OFF
+
+
+def warn_ambiguous_improvement_disable(environment=None):
+    """enable and enabled still disable. Warn so that is not silent."""
+    environment = os.environ if environment is None else environment
+    shown = environment.get("LOOPITER_DISABLE", "")
+    shown = "" if shown is None else str(shown).strip()
+    if shown.lower() not in {"enable", "enabled"}:
+        return
+    print(
+        f"warning: LOOPITER_DISABLE={shown} disables improvement work. "
+        "It does not turn work on. Unset it, or set 0, false, no, or off, "
+        "to leave improvement work running.",
+        file=sys.stderr,
+    )
 
 
 STATES = (

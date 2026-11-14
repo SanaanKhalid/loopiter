@@ -6,7 +6,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { FeedbackLoop } from "./feedback-loop.js";
-import { ImprovementController, improvementWorkDisabled } from "./improvement-controller.js";
+import {
+  ImprovementController,
+  improvementWorkDisabled,
+  warnAmbiguousImprovementDisable,
+} from "./improvement-controller.js";
 import type {
   ImprovementMode,
   ImprovementWorkflow,
@@ -278,6 +282,7 @@ export function readWorkerSettings(
     stepTimeoutMs?: number;
     stepTimeoutSource?: "flag" | "option" | "plan" | "default";
   } = {},
+  options: { warnMissingPlan?: boolean } = {},
 ) {
   const plan = loadIntegrationPlan(modulePath);
   if (
@@ -294,7 +299,7 @@ export function readWorkerSettings(
     : plan?.mode
       ? "plan"
       : "default";
-  if (!plan && !overrides.mode)
+  if (!plan && !overrides.mode && options.warnMissingPlan !== false)
     console.error(
       "warning: no integration plan found; falling back to autonomous mode.",
     );
@@ -618,21 +623,27 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
   )
     throw Error("selfImproving must be boolean.");
   const selfImproving = options.selfImproving !== false;
+  const disabled = options.selfImproving === false || improvementWorkDisabled();
+  warnAmbiguousImprovementDisable();
   if (options.recordActivation || options.confirmBudget)
     console.error(
       "warning: activation confirmation is deprecated and ignored. Activation confirmation is no longer required.",
     );
-  const settings = readWorkerSettings(options.module, {
-    ...(options.mode
-      ? { mode: options.mode, modeSource: options.modeSource }
-      : {}),
-    ...(options.stepTimeoutMs !== undefined
-      ? {
-          stepTimeoutMs: options.stepTimeoutMs,
-          stepTimeoutSource: options.stepTimeoutSource,
-        }
-      : {}),
-  });
+  const settings = readWorkerSettings(
+    options.module,
+    {
+      ...(options.mode
+        ? { mode: options.mode, modeSource: options.modeSource }
+        : {}),
+      ...(options.stepTimeoutMs !== undefined
+        ? {
+            stepTimeoutMs: options.stepTimeoutMs,
+            stepTimeoutSource: options.stepTimeoutSource,
+          }
+        : {}),
+    },
+    { warnMissingPlan: !disabled },
+  );
   const interval = options.intervalMs ?? 30000;
   if (!Number.isSafeInteger(interval) || interval < 1000)
     throw Error("intervalMs must be an integer of at least 1000.");
@@ -643,7 +654,7 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
     `effective step timeout ${settings.stepTimeoutMs}ms (source: ${settings.stepTimeoutSource})`,
   );
   options.signal?.throwIfAborted();
-  if (options.selfImproving === false || improvementWorkDisabled()) {
+  if (disabled) {
     const paused: TickResult = {
       runId: null,
       state: "paused",

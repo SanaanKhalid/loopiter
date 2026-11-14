@@ -185,8 +185,12 @@ enough. Retain the failed strategy's evidence and outcome for future analysis.
 ## Pause, disable and resume are different controls
 
 - `pause(workflowId, reason)` / Python equivalent persists an administrative stop.
-- `selfImproving: false` / `self_improving=False` blocks new autonomous changes when
-  the configured controller is invoked. It is not a remote process kill signal.
+- `selfImproving: false` / `self_improving=False`, `--disable`, and `LOOPITER_DISABLE`
+  pause before a provider callback. A worker started that way never ticks, so it
+  does not observe or roll back a canary that is already running. Call
+  `pause(workflowId, reason)` to stop new work while observation and recovery
+  continue, or call rollback on the deployment adapter for the candidate that is
+  still serving.
 - `deploymentsEnabled` / `deployments_enabled` on the client provides an application
   switch for new applies; inspect/rollback remain recovery operations.
 - `resume` records an administrative action and resets the repeated-failure stop.

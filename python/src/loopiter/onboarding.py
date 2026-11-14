@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import FeedbackLoop, ImprovementController
 from ._validation import fingerprint
-from .improvement import improvement_work_disabled
+from .improvement import improvement_work_disabled, warn_ambiguous_improvement_disable
 from .improvement_evidence import describe_audit_floor, minimum_certifiable_audit_units
 
 REFERENCES = {
@@ -68,7 +68,13 @@ def _load_plan(module_path):
 
 
 def read_worker_settings(
-    module_path, *, mode=None, mode_source=None, step_timeout_ms=None, step_timeout_source=None
+    module_path,
+    *,
+    mode=None,
+    mode_source=None,
+    step_timeout_ms=None,
+    step_timeout_source=None,
+    warn_missing_plan=True,
 ):
     plan = _load_plan(module_path)
     if plan is not None and plan.get("mode") not in MODES:
@@ -85,7 +91,7 @@ def read_worker_settings(
         if plan and plan.get("mode")
         else "default"
     )
-    if plan is None and mode is None:
+    if plan is None and mode is None and warn_missing_plan:
         print(
             "warning: no integration plan found; falling back to autonomous mode.",
             file=sys.stderr,
@@ -591,6 +597,8 @@ async def run_self_hosted_worker(
 ):
     if type(self_improving) is not bool:
         raise ValueError("self_improving must be boolean.")
+    disabled = self_improving is False or improvement_work_disabled()
+    warn_ambiguous_improvement_disable()
     if record_activation or confirm_budget is not None:
         print(
             "warning: activation confirmation is deprecated and ignored. Activation confirmation is no longer required.",
@@ -602,6 +610,7 @@ async def run_self_hosted_worker(
         mode_source=mode_source,
         step_timeout_ms=step_timeout_ms,
         step_timeout_source=step_timeout_source,
+        warn_missing_plan=not disabled,
     )
     if type(interval_ms) is not int or interval_ms < 1000:
         raise ValueError("Choose a valid mode and an integer interval_ms of at least 1000.")
@@ -616,7 +625,7 @@ async def run_self_hosted_worker(
     cancellation = cancellation if cancellation is not None else asyncio.Event()
     if cancellation.is_set():
         raise asyncio.CancelledError
-    if self_improving is False or improvement_work_disabled():
+    if disabled:
         paused = {
             "run_id": None,
             "state": "paused",
@@ -745,12 +754,14 @@ def main(argv=None):
         elif args.command == "verify":
             report = asyncio.run(verify_self_hosted_installation())
         else:
+            disabled = args.disable or improvement_work_disabled()
             settings = read_worker_settings(
                 args.module,
                 mode=args.mode,
                 mode_source="flag" if args.mode else None,
                 step_timeout_ms=args.step_timeout_ms,
                 step_timeout_source="flag" if args.step_timeout_ms is not None else None,
+                warn_missing_plan=not disabled,
             )
             if args.enable:
                 print(
@@ -767,7 +778,6 @@ def main(argv=None):
                     "warning: --yes is deprecated and ignored. Activation confirmation is no longer required.",
                     file=sys.stderr,
                 )
-            disabled = args.disable or improvement_work_disabled()
 
             async def run():
                 cancellation = asyncio.Event()

@@ -59,9 +59,15 @@ These defaults are unreleased, on main. They are not in the published
 Existing schemaVersion 1 plans are left unchanged. Users who never set a mode
 previously stayed on recommend: pass `mode: "recommend"` (Python `mode="recommend"`)
 or set `plan.mode` to `recommend` or `observe` to keep that behavior.
-`--disable` and `LOOPITER_DISABLE=1` (`true` and `yes` also count) only pause
-the worker. That pause stops with `self_improvement_disabled` and stores no
-proposal. It is not mode recommend. `--enable`, `--confirm-activation`, and
+`--disable`, or `LOOPITER_DISABLE` set to any non-empty value except `0`, `false`,
+`no`, or `off` (trimmed and case-insensitive), pauses the worker. `enable` and
+`enabled` also pause, and the worker warns because those words look like the
+opposite. That pause stops with `self_improvement_disabled` before the
+application module is imported, stores no proposal, and does not observe or roll
+back a canary that is already running. It is not mode recommend. To stop new
+work while observation and recovery continue, call `pause(workflowId, reason)`
+(Python: `pause(workflow_id, reason)`). To restore a candidate that is still
+serving, call rollback on the deployment adapter. `--enable`, `--confirm-activation`, and
 `--yes` are ignored and log a deprecation warning. Validation, audit, budgets,
 and rollback are unchanged. No platform login or Loopiter project key is
 involved; you pay your own model/judge, database and hosting providers.
@@ -70,7 +76,7 @@ Read the guide with `python -m loopiter guide` or `npx --no-install loopiter gui
 Use `reference` for packaged source. New commands require this onboarding build;
 publishing a new npm/PyPI release is separate.
 
-## 0.3 opt-in autonomous alpha
+## Published 0.3.0 alpha
 
 Release versions: `loopiter@0.3.0-alpha.1` and Python `loopiter==0.3.0a1`.
 It adds policy-bounded `ImprovementController` APIs in both languages, durable

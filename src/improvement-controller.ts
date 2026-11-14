@@ -145,6 +145,7 @@ const plus = (time: string, ms: number) =>
 
 /** No background work. One tick advances one durable phase; application owns scheduling. */
 const IMPROVEMENT_DISABLE_OFF = new Set(["0", "false", "no", "off"]);
+const AMBIGUOUS_DISABLE = new Set(["enable", "enabled"]);
 
 /** Any non-empty LOOPITER_DISABLE except 0, false, no, or off pauses improvement work. */
 export function improvementWorkDisabled(
@@ -153,6 +154,18 @@ export function improvementWorkDisabled(
   const raw = (env.LOOPITER_DISABLE ?? "").trim().toLowerCase();
   if (!raw) return false;
   return !IMPROVEMENT_DISABLE_OFF.has(raw);
+}
+
+/** `enable` and `enabled` still disable. Warn once per process so that is not silent. */
+export function warnAmbiguousImprovementDisable(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const shown = (env.LOOPITER_DISABLE ?? "").trim();
+  const raw = shown.toLowerCase();
+  if (!AMBIGUOUS_DISABLE.has(raw)) return;
+  console.error(
+    `warning: LOOPITER_DISABLE=${shown} disables improvement work. It does not turn work on. Unset it, or set 0, false, no, or off, to leave improvement work running.`,
+  );
 }
 
 export class ImprovementController {

@@ -883,11 +883,23 @@ test("disabled worker does not import the application in any mode", async () => 
       assert.match(result.stdout, /"reason":"self_improvement_disabled"/);
       assert.doesNotMatch(`${result.stderr}\n${result.stdout}`, /imported the application/);
     }
-    const enabledWord = run(["worker", "--module", module, "--mode", "experiment", "--once"], {
+    const enabledWord = run(["worker", "--module", module, "--once"], {
       LOOPITER_DISABLE: "enabled",
     });
     assert.equal(enabledWord.status, 0, enabledWord.stderr);
     assert.doesNotMatch(enabledWord.stderr, /imported the application/);
+    assert.match(enabledWord.stderr, /LOOPITER_DISABLE=enabled disables improvement work/);
+    assert.doesNotMatch(enabledWord.stderr, /no integration plan found/);
+    const enableWord = run(["worker", "--module", module, "--once"], {
+      LOOPITER_DISABLE: " Enable ",
+    });
+    assert.equal(enableWord.status, 0, enableWord.stderr);
+    assert.match(enableWord.stderr, /LOOPITER_DISABLE=Enable disables improvement work/);
+    assert.doesNotMatch(enableWord.stderr, /no integration plan found/);
+    const flagOnly = run(["worker", "--module", module, "--disable", "--once"]);
+    assert.equal(flagOnly.status, 0, flagOnly.stderr);
+    assert.doesNotMatch(flagOnly.stderr, /no integration plan found/);
+    assert.doesNotMatch(flagOnly.stderr, /disables improvement work/);
     const off = run(["worker", "--module", module, "--once"], { LOOPITER_DISABLE: "off" });
     assert.equal(off.status, 1);
     assert.match(off.stderr, /imported the application/);
