@@ -112,6 +112,18 @@ jobs:
       - run: npm run test:integrations
       - run: python -m pip install './python[openai]'
       - run: python -m unittest discover -s python/tests -p test_openai_compat.py -v
+  otel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install './python[otel]'
+      - run: python -m unittest discover -s python/tests -p test_observation.py -v
   website:
     runs-on: ubuntu-latest
     timeout-minutes: 15
