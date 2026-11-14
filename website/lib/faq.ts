@@ -35,7 +35,7 @@ export const faqs = [
       'With no integration plan, the worker uses autonomous.',
       'Constructing ImprovementController without a mode is autonomous with self-improving on.',
       'These defaults are unreleased, on main, and are not in the published 0.3.0-alpha.1 or 0.3.0a1 packages.',
-      'Existing users who never set a mode previously stayed on recommend. Pass mode recommend or observe, or set plan.mode, to keep suggest-only behavior.',
+      'Existing users who never set a mode previously stayed on recommend. Pass mode recommend, or set plan.mode to recommend, to store proposals without applying them. Pass mode observe, or set plan.mode to observe, to inspect evidence without proposing.',
       'Pass --disable or set LOOPITER_DISABLE=1, true, or yes only to pause the worker. That pause stops with self_improvement_disabled and stores no proposal. It is not mode recommend.',
       '--enable, --confirm-activation, and --yes are ignored and log a deprecation warning.',
       'Validation, audit, budgets, and rollback still apply. Autonomous mode fails closed without an audit partition or a budget.',

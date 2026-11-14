@@ -59,7 +59,8 @@ not propose. Omitting `--mode` follows
 `ImprovementController` without a mode is autonomous with self-improving on.
 Existing schemaVersion 1 plans are left unchanged. Users who never set a mode
 previously stayed on recommend: pass `mode: "recommend"` (Python `mode="recommend"`)
-or set `plan.mode` to `recommend` or `observe` to keep that behavior.
+or set `plan.mode` to `recommend` to store proposals without applying them.
+Set mode or `plan.mode` to `observe` to inspect evidence without proposing.
 `--disable`, or `LOOPITER_DISABLE` set to any non-empty value except `0`, `false`,
 `no`, or `off` (trimmed and case-insensitive), pauses the worker. `enable` and
 `enabled` also pause, and the worker warns because those words look like the

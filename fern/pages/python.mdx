@@ -13,8 +13,8 @@ title: Python quickstart
 > The published worker still requires `--enable` before spending. On main, unreleased,
 > constructing the controller without a mode is autonomous with self-improving on,
 > and the worker runs unless `--disable` or `LOOPITER_DISABLE=1` is set.
-> `--disable` only pauses and stores no proposal. Mode `recommend` or `observe`
-> keeps suggest-only behavior. Storage upgrades stay
+> `--disable` only pauses and stores no proposal. Mode `recommend` stores proposals
+> without applying them. Mode `observe` inspects evidence without proposing. Storage upgrades stay
 > an explicit migration, and schemaVersion 1 plans are not rewritten.
 
 Native, async Python SDK for **reviewed, evidence-driven AI improvements**.
