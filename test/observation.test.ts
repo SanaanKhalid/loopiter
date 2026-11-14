@@ -312,6 +312,26 @@ test("shutdown drains admitted writes, and an open flush does not free a hung wr
   for (let i = 0; i < 5; i++) await repeated.forceFlush(15);
   assert.equal(calls, 2);
   await repeated.shutdown(15);
+  let releaseOverlap: (value: string) => void = () => {};
+  const overlap = createObserver({
+    loop,
+    bounded: { queueLimit: 4, writeTimeoutMs: 500, shutdownTimeoutMs: 40 },
+  });
+  const running = overlap.observe(
+    "overlap",
+    () => new Promise<string>((resolve) => { releaseOverlap = resolve; }),
+    { context: { id: "overlap-row" } },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const shortFlush = overlap.forceFlush(40);
+  const drainedShutdown = overlap.shutdown(400);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  releaseOverlap("done");
+  assert.equal(await running, "done");
+  await shortFlush;
+  await drainedShutdown;
+  assert.equal(state((await loop.getExecution("overlap-row"))!).status, "completed");
+  assert.equal(overlap.stats().dropped, 0);
 });
 
 test("telemetry outage does not retry or replace application errors; strict capture fails before the call", async () => {

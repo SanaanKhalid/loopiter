@@ -217,16 +217,14 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
     const deadline = Date.now() + timeoutMs;
     while (occupancy() > 0 && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 5));
-    // An open flush must not drop a reservation or free an in-flight write.
-    // Shutdown sets closed first, then counts whatever is still unfinished.
-    if (closed && occupancy() > 0) abandon();
   }
   return {
     stats: () => ({ dropped, failed, backlog: occupancy() }),
     forceFlush,
-    shutdown(timeoutMs = shutdownTimeoutMs) {
+    async shutdown(timeoutMs = shutdownTimeoutMs) {
       closed = true;
-      return forceFlush(timeoutMs);
+      await forceFlush(timeoutMs);
+      if (occupancy() > 0) abandon();
     },
     async observe<T>(name: string, operation: () => T | Promise<T>, input: {
       context?: ObservationContext; kind?: ExecutionKind; input?: JsonValue;
