@@ -49,6 +49,218 @@ test("stream observation is lazy, propagates cancellation, records failure, and 
   assert.equal(state((await loop.getExecution("failure"))!).status,"failed");
 });
 
+test("bounded capture does not wait on a stalled store, drops a full queue, counts write failures, and stops flushing at the shutdown timeout", async () => {
+  const hang = () => new Promise(() => {});
+  const stalled = {
+    getExecution: async () => undefined,
+    recordExecution: hang,
+    completeExecution: hang,
+  } as unknown as FeedbackLoop;
+  const slow = createObserver({
+    loop: stalled,
+    bounded: { queueLimit: 4, writeTimeoutMs: 60, shutdownTimeoutMs: 1_000 },
+  });
+  const started = Date.now();
+  assert.equal(await slow.observe("slow", () => "served"), "served");
+  assert.ok(Date.now() - started < 50, "request waited on the store");
+  await slow.shutdown(20);
+  const tight = createObserver({
+    loop: stalled,
+    bounded: { queueLimit: 2, writeTimeoutMs: 60 },
+  });
+  let droppedNotes = 0;
+  const dropping = createObserver({
+    loop: stalled,
+    onError: () => { droppedNotes += 1; },
+    bounded: { queueLimit: 1, writeTimeoutMs: 60 },
+  });
+  assert.equal(await dropping.observe("only", () => 1), 1);
+  assert.equal(dropping.stats().dropped, 1);
+  assert.equal(droppedNotes, 1);
+  await dropping.shutdown(20);
+  assert.equal(await tight.observe("first", () => 1), 1);
+  assert.equal(await tight.observe("second", () => 2), 2);
+  assert.equal(tight.stats().dropped, 1);
+  await tight.shutdown(20);
+  let failures = 0;
+  const broken = {
+    getExecution: async () => undefined,
+    recordExecution: async () => { throw new Error("storage down"); },
+    completeExecution: async () => { throw new Error("storage down"); },
+  } as unknown as FeedbackLoop;
+  const failing = createObserver({
+    loop: broken,
+    onError: () => { failures += 1; },
+    bounded: { queueLimit: 4, writeTimeoutMs: 200 },
+  });
+  assert.equal(await failing.observe("broken", () => 7), 7);
+  await failing.forceFlush(200);
+  assert.equal(failing.stats().failed, 1);
+  assert.equal(failures, 1);
+  await failing.shutdown(20);
+  const stopping = createObserver({
+    loop: stalled,
+    bounded: { queueLimit: 4, writeTimeoutMs: 60, shutdownTimeoutMs: 40 },
+  });
+  await stopping.observe("hold", () => true);
+  const flushed = Date.now();
+  await stopping.shutdown();
+  assert.ok(Date.now() - flushed < 120, "shutdown flush ignored its timeout");
+  assert.ok(stopping.stats().dropped >= 1);
+  assert.throws(
+    () => createObserver({ loop: stalled, failureMode: "closed", bounded: { queueLimit: 2, writeTimeoutMs: 20 } }),
+    /cannot be combined/,
+  );
+});
+
+test("bounded capture records a completed row, holds a timed-out slot, ignores the late result, and does not replay a durable id", async () => {
+  const loop = setup();
+  const saved = createObserver({
+    loop,
+    bounded: { queueLimit: 4, writeTimeoutMs: 500 },
+  });
+  assert.equal(await saved.observe("saved", () => "yes", { context: { id: "saved-row" } }), "yes");
+  await saved.forceFlush(200);
+  assert.equal(state((await loop.getExecution("saved-row"))!).status, "completed");
+  await saved.shutdown(20);
+  let calls = 0;
+  let release: (row: { id: string; revision: number; metadata: JsonObject }) => void = () => {};
+  const completes: string[] = [];
+  const gated = {
+    getExecution: async () => undefined,
+    recordExecution: (input: { id: string; metadata: JsonObject }) => {
+      calls += 1;
+      return new Promise((resolve) => {
+        release = resolve;
+      }).then(() => ({
+        id: input.id, revision: 1,
+        metadata: { loopiterCapture: { attemptId: (input.metadata.loopiterCapture as JsonObject).attemptId } },
+      }));
+    },
+    completeExecution: async (_id: string, patch: { metadata: JsonObject }) => {
+      completes.push(String((patch.metadata.loopiterCapture as JsonObject).status));
+    },
+  } as unknown as FeedbackLoop;
+  const timed = createObserver({
+    loop: gated,
+    bounded: { queueLimit: 2, writeTimeoutMs: 30 },
+  });
+  assert.equal(await timed.observe("late", () => "served"), "served");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(timed.stats().failed, 1);
+  assert.equal(calls, 1);
+  assert.ok(timed.stats().backlog >= 1);
+  assert.equal(await timed.observe("next", () => "nope"), "nope");
+  assert.equal(calls, 1);
+  assert.equal(timed.stats().dropped, 1);
+  release({ id: "late-row", revision: 1, metadata: { loopiterCapture: { attemptId: "ignored" } } });
+  await timed.forceFlush(200);
+  assert.deepEqual(completes, ["failed"]);
+  assert.equal(timed.stats().failed, 1);
+  await timed.shutdown(20);
+  await loop.recordExecution({ id: "kept", kind: "workflow", input: { marker: "original" } });
+  const before = (await loop.getExecution("kept"))!;
+  let ran = 0;
+  const durable = createObserver({
+    loop,
+    bounded: { queueLimit: 4, writeTimeoutMs: 200 },
+  });
+  assert.equal(await durable.observe("again", () => { ran += 1; return 3; }, { context: { id: "kept" } }), 3);
+  assert.equal(ran, 1);
+  await durable.forceFlush(200);
+  assert.equal(durable.stats().failed, 1);
+  assert.equal((await loop.getExecution("kept"))!.revision, before.revision);
+  await durable.shutdown(20);
+  const partial = {
+    getExecution: async () => undefined,
+    recordExecution: async (input: { id: string; metadata: JsonObject }) => ({
+      id: input.id, revision: 1,
+      metadata: { loopiterCapture: { attemptId: (input.metadata.loopiterCapture as JsonObject).attemptId } },
+    }),
+    completeExecution: async () => { throw new Error("complete down"); },
+  } as unknown as FeedbackLoop;
+  let completeNotes = 0;
+  const completer = createObserver({
+    loop: partial,
+    onError: () => { completeNotes += 1; },
+    bounded: { queueLimit: 4, writeTimeoutMs: 200 },
+  });
+  assert.equal(await completer.observe("partial", () => 9), 9);
+  await completer.forceFlush(200);
+  assert.equal(completer.stats().failed, 1);
+  assert.equal(completeNotes, 1);
+  await completer.shutdown(20);
+});
+
+test("shutdown ignores a hung record and does not finish after abandon", async () => {
+  let releaseRecord: () => void = () => {};
+  const writes: string[] = [];
+  const hung = {
+    getExecution: async () => undefined,
+    recordExecution: () => new Promise<void>((resolve) => {
+      releaseRecord = () => resolve();
+    }).then(() => {
+      writes.push("record");
+      return { id: "hung", revision: 1, metadata: { loopiterCapture: { attemptId: "x", truncated: false } } };
+    }),
+    completeExecution: async () => { writes.push("complete"); },
+  } as unknown as FeedbackLoop;
+  const mid = createObserver({
+    loop: hung,
+    bounded: { queueLimit: 4, writeTimeoutMs: 5_000, shutdownTimeoutMs: 30 },
+  });
+  const ran = mid.observe("mid", () => "ran");
+  await mid.shutdown();
+  assert.ok(mid.stats().backlog >= 0);
+  releaseRecord();
+  assert.equal(await ran, "ran");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(writes, ["record"]);
+  assert.ok(mid.stats().backlog >= 0);
+
+  let releaseOp: (value: string) => void = () => {};
+  const finishes: string[] = [];
+  const pausing = createObserver({
+    loop: {
+      getExecution: async () => undefined,
+      recordExecution: async (input: { id: string; metadata: JsonObject }) => ({
+        id: input.id, revision: 1,
+        metadata: { loopiterCapture: { attemptId: (input.metadata.loopiterCapture as JsonObject).attemptId, truncated: false } },
+      }),
+      completeExecution: async () => { finishes.push("complete"); },
+    } as unknown as FeedbackLoop,
+    bounded: { queueLimit: 4, writeTimeoutMs: 5_000, shutdownTimeoutMs: 40 },
+  });
+  const op = pausing.observe("op", () => new Promise<string>((resolve) => { releaseOp = resolve; }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await pausing.shutdown();
+  releaseOp("done");
+  assert.equal(await op, "done");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(finishes, []);
+  assert.ok(pausing.stats().backlog >= 0);
+
+  const streamWrites: string[] = [];
+  const streaming = createObserver({
+    loop: {
+      getExecution: async () => undefined,
+      recordExecution: async (input: { id: string; metadata: JsonObject }) => ({
+        id: input.id, revision: 1,
+        metadata: { loopiterCapture: { attemptId: (input.metadata.loopiterCapture as JsonObject).attemptId, truncated: false } },
+      }),
+      completeExecution: async () => { streamWrites.push("complete"); },
+    } as unknown as FeedbackLoop,
+    bounded: { queueLimit: 4, writeTimeoutMs: 5_000, shutdownTimeoutMs: 30 },
+  });
+  async function* pending() { yield 1; }
+  const wrapped = await streaming.observe("stream", pending);
+  await streaming.shutdown();
+  for await (const _chunk of wrapped) { /* consume after shutdown */ }
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(streamWrites, []);
+  assert.ok(streaming.stats().backlog >= 0);
+});
+
 test("telemetry outage does not retry or replace application errors; strict capture fails before the call", async () => {
   const loop=setup(); loop.recordExecution=async()=>{throw Error("storage down");};let calls=0,errors=0;
   const observer=createObserver({loop,onError:()=>{errors++;}});

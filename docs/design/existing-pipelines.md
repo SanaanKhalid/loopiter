@@ -12,7 +12,7 @@ Surveyed from `src/` and `python/src/loopiter/`. The hosted console is a separat
 | --- | --- |
 | Capture | `FeedbackLoop.recordExecution` / `record_execution` and `completeExecution` / `complete_execution`. Caller may set `startedAt` / `completedAt`. `parentExecutionId` must share the episode. Same id plus the same input hash returns the existing row; a different payload is a conflict. |
 | Versions on a call | `artifacts` may name `model`, `prompt`, `dataset`, `router`, and `policy`. There is no separate config fingerprint, stage id, or usage field on the execution. |
-| Observer | Node `createObserver` wraps a function, records a pending execution, then completes or fails it. Streams stay lazy and are not buffered. Telemetry defaults to fail-open; a caller-supplied id is claimed before the function runs and is never a cache. `replayEligible` is stored as false. The call awaits the store write. There is no queue limit, write deadline, drop counter, or shutdown flush. Python has no generic function observer. |
+| Observer | Node `createObserver` wraps a function, records a pending execution, then completes or fails it. Streams stay lazy and are not buffered. Telemetry defaults to fail-open; a caller-supplied id is claimed before the function runs and is never a cache. `replayEligible` is stored as false. The default call awaits the store write. Opt-in `bounded` capture queues writes with a limit, a write deadline, dropped/failed/backlog counters, and a shutdown flush. That mode does not await the store, and a durable id is claimed only by the queued write. Dropped and failed records are not replayed. Python has no generic function observer and no bounded capture. |
 | Privacy | Capture modes `full`, `redacted`, and `metadata-only`. Redaction is conservative, not anonymization. `full` is explicit consent. |
 | Signals | `recordSignal` / `record_signal` with `observedAt`, optional `executionId`, and a required `source`. A signal episode must match its execution. |
 | Modes | `observe`, `recommend`, `experiment`, `autonomous`. On main, a controller with no mode is autonomous and self-improving. The published `0.3.0-alpha.1` / `0.3.0a1` packages still default to recommend. `observe` does not propose. `recommend` stores proposals and does not apply. `experiment` audits and does not deploy. Autonomous still fails closed without an audit partition and a budget. |
@@ -45,7 +45,7 @@ a, then b, then c, then f, then d and g together, then e. One pull request per l
 
 ## (a) Capture client and batch importer
 
-**Exists.** Node observer and both `recordExecution` APIs, as above. Python has the record API and `with_loopiter`, which already captures `AsyncOpenAI` calls. Python has no generic observer. Dropped writes are not a concept yet: a failed write is either swallowed (fail-open) or thrown (fail-closed), and the function still runs except when a durable id must be claimed first.
+**Exists.** Node observer and both `recordExecution` APIs, as above. Python has the record API and `with_loopiter`, which already captures `AsyncOpenAI` calls. Python has no generic observer. The default Node path still awaits each write: a failed write is either swallowed (fail-open) or thrown (fail-closed), and the function still runs except when a durable id must be claimed first. Opt-in bounded capture can drop a write; that record is not replayed.
 
 **Build.** Two surfaces, same record contract.
 
