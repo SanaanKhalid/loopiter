@@ -269,13 +269,14 @@ test("the prompt cap is larger than 800 characters and enforced", () => {
   assert.ok(8000 > 800);
   validateChange({ fragment: "a".repeat(8000) }, policy.changeSchema);
   assert.throws(() => validateChange({ fragment: "a".repeat(8001) }, policy.changeSchema));
-  assert.equal(ifbenchTask.predict.defaultValue, 2048);
-  assert.equal(hotpotTask.predict.defaultValue, 1024);
+  assert.equal(ifbenchTask.predict.defaultValue, 8192);
+  assert.equal(hotpotTask.predict.defaultValue, 2048);
   assert.equal(ifbenchTask.predict.min, 1024);
-  assert.equal(ifbenchTask.predict.max, 2048);
+  assert.equal(ifbenchTask.predict.max, 8192);
+  assert.equal(hotpotTask.predict.max, 8192);
   assert.throws(() => resolveLimits({ LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS: "256" }, ifbenchTask));
   const limits = resolveLimits({}, ifbenchTask);
-  assert.equal(limits.predictMaxOutputTokens, 2048);
+  assert.equal(limits.predictMaxOutputTokens, 8192);
   assert.equal(limits.proposeMaxOutputTokens, 2048);
 });
 
@@ -322,8 +323,8 @@ test("estimate prints a per-arm plan for both datasets", () => {
   assert.equal(hotpot.arms.controller.length, 8255);
   assert.match(combined.stdout, /calls: 9005/);
   assert.match(combined.stdout, /calls: 8255/);
+  assert.match(combined.stdout, /Predict max output tokens: 8192/);
   assert.match(combined.stdout, /Predict max output tokens: 2048/);
-  assert.match(combined.stdout, /Predict max output tokens: 1024/);
   for (const script of ["../ifbench/run.js", "../hotpotqa/run.js"]) {
     const result = spawnSync(process.execPath, [fileURLToPath(new URL(script, import.meta.url)), "--estimate"], {
       cwd: root,

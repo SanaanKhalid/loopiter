@@ -21,7 +21,7 @@ export const hotpotTask: BenchmarkTask<HotpotExample> = {
   fullSizes: FULL_SIZES,
   smokeRows: SMOKE_ROWS,
   feedbackPredicts: false,
-  predict: { min: 1, max: 2048, defaultValue: 1024 },
+  predict: { min: 1, max: 8192, defaultValue: 2048 },
   propose: { min: 1, max: 4096, defaultValue: 2048 },
   fixtureSizes: FIXTURE_SIZES,
   fixtures: hotpotFixtures,

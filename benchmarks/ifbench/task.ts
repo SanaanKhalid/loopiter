@@ -21,7 +21,7 @@ export const ifbenchTask: BenchmarkTask<IfExample> = {
   fullSizes: FULL_SIZES,
   smokeRows: SMOKE_ROWS,
   feedbackPredicts: true,
-  predict: { min: 1024, max: 2048, defaultValue: 2048 },
+  predict: { min: 1024, max: 8192, defaultValue: 8192 },
   propose: { min: 1, max: 4096, defaultValue: 2048 },
   fixtureSizes: FIXTURE_SIZES,
   fixtures: ifbenchFixtures,

@@ -368,6 +368,39 @@ test("consecutive failures and the split fraction stop the run", async () => {
   assert.equal(fraction.fetches, 5);
 });
 
+test("output truncations score 0 and stop on their own rate", async () => {
+  const truncated = await runScript(10, (predicts) =>
+    predicts <= 3 ? incompleteResponse() : answerResponse("Paris"),
+  );
+  assert.equal(truncated.report.stopped?.reason, "output_truncated");
+  assert.match(truncated.report.stopped?.message ?? "", /max_output_tokens/);
+  assert.match(truncated.report.stopped?.message ?? "", /3 of 10/);
+  assert.equal(truncated.report.itemFailures.length, 3);
+  assert.ok(truncated.report.itemFailures.every((failure) => failure.reason === "incomplete:max_output_tokens"));
+
+  const mixed = await runScript(10, (predicts) => {
+    if (predicts === 1 || predicts === 3) return incompleteResponse();
+    if (predicts === 2) return contentFilterResponse();
+    return answerResponse("Paris");
+  });
+  assert.equal(mixed.report.stopped, null);
+  assert.equal(mixed.report.perSeed.length, 1);
+  assert.equal(
+    mixed.report.itemFailures.filter((failure) => failure.reason === "incomplete:max_output_tokens").length,
+    2,
+  );
+
+  const cluster = await runScript(30, (predicts) =>
+    predicts <= 5 ? incompleteResponse() : answerResponse("Paris"),
+  );
+  assert.equal(cluster.report.stopped, null);
+  assert.equal(cluster.report.perSeed.length, 1);
+  assert.equal(
+    cluster.report.itemFailures.filter((failure) => failure.reason === "incomplete:max_output_tokens").length,
+    5,
+  );
+});
+
 async function runScript(
   heldOut: number,
   onPredict: (predicts: number) => Response,

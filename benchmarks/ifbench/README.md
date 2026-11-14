@@ -108,26 +108,34 @@ system prompt while staying inside the provider input budget.
 
 Predict output is free-form text in a strict JSON `{ "text" }` field, because
 the existing Azure Responses client only accepts a JSON schema. `max_output_tokens`
-must be from 1024 to 2048. The default is 2048. A reasoning model counts
-reasoning tokens against that bound, and format-heavy prompts at effort `low`
-can spend most of 1024 before the answer, so the default is the top of the
-existing range. Propose defaults to 2048 so a prompt at the character cap can
-be returned. Override either bound with
+must be from 1024 to 8192. The default is 8192. The harness sends
+`reasoning.effort` (default `low`; `LOOPITER_BENCH_REASONING_EFFORT` can set
+`none`, `minimal`, `low`, `medium`, `high`, or `omit`). Reasoning tokens count
+against the same bound as the visible answer. Effort stays `low` so the
+benchmark still measures the reasoning model; the bound is what has to fit
+both the reasoning and a constraint-following answer. Propose defaults to 2048
+so a prompt at the character cap can be returned. Override either bound with
 `LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS` or
 `LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS`.
 
 A per-item content filter, a 400 whose code is clearly about that prompt
 (`context_length_exceeded`, `string_above_max_length`, `invalid_prompt`), or an
 incomplete response with no usable text scores 0 for that row and the run
-continues. The report lists each one by row id, arm, split, and reason code,
-and the summary counts them per arm and split. The log line is only the HTTP
-status, error code, error type, content-filter category and severity, or
-`incomplete_details.reason`, after the shared error sanitizer. Prompt text,
-response text, headers, and keys are not logged. The run still stops on 401,
-403, 404, 429 after the retry policy, repeated 5xx, and a 400 that is not
-clearly per item (invalid parameter, unknown model or deployment). It also
-stops after 5 failed predictions in a row, or when failures in one arm and
-split exceed 20% of that split. A 4xx with no token usage, including a 429,
+continues. A truncation (`incomplete:max_output_tokens`) also scores 0, and it
+is listed in the same item-failure summary, but it does not count toward the
+content-filter fraction or the five-in-a-row stop. When truncations in one arm
+and split exceed 20% of that split, the run stops with `output_truncated`
+instead of a mixed item-failure reason, so a cap that is too low for the
+reasoning effort cannot quietly become a score. The report lists each failure
+by row id, arm, split, and reason code, and the summary counts them per arm
+and split. The log line is only the HTTP status, error code, error type,
+content-filter category and severity, or `incomplete_details.reason`, after
+the shared error sanitizer. Prompt text, response text, headers, and keys are
+not logged. The run still stops on 401, 403, 404, 429 after the retry policy,
+repeated 5xx, and a 400 that is not clearly per item (invalid parameter,
+unknown model or deployment). It also stops after 5 non-truncation prediction
+failures in a row, or when those failures in one arm and split exceed 20% of
+that split. A 4xx with no token usage, including a 429,
 releases the pre-call reservation and costs $0. A timeout or a dropped
 connection after the request was sent is charged the full ceiling. The
 pre-call check still reserves that ceiling so concurrent calls cannot pass
