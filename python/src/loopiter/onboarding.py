@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import FeedbackLoop, ImprovementController
 from ._validation import fingerprint
+from .improvement import improvement_work_disabled
 from .improvement_evidence import describe_audit_floor, minimum_certifiable_audit_units
 
 REFERENCES = {
@@ -56,6 +57,8 @@ def _valid_step_timeout(value):
 
 def _load_plan(module_path):
     path = Path(module_path).resolve().parent / "integration-plan.json"
+    if path.exists() and not path.is_file():
+        raise ValueError("Integration plan path is not a file.")
     if not path.is_file():
         return None
     plan = json.loads(path.read_text(encoding="utf-8"))
@@ -82,6 +85,11 @@ def read_worker_settings(
         if plan and plan.get("mode")
         else "default"
     )
+    if plan is None and mode is None:
+        print(
+            "warning: no integration plan found; falling back to autonomous mode.",
+            file=sys.stderr,
+        )
     if (
         plan is not None
         and "stepTimeoutMs" in plan
@@ -433,7 +441,7 @@ Your agent creates application.py here, exporting async create_integration(*, ca
 
 This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.
 
-After doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 only to pause the worker. That pause stops with self_improvement_disabled and stores no proposal. It is not mode recommend. Set mode to recommend or observe, or set plan.mode, to store proposals without applying them. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
+After doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 to pause before the application module is imported, in every mode, including recommend and experiment. Any non-empty value pauses except 0, false, no, and off. The pause makes no provider call and stores no proposal. It is not mode recommend. Set mode to recommend or observe, or set plan.mode, to store proposals without applying them. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
 
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --once
 
@@ -608,6 +616,17 @@ async def run_self_hosted_worker(
     cancellation = cancellation if cancellation is not None else asyncio.Event()
     if cancellation.is_set():
         raise asyncio.CancelledError
+    if self_improving is False or improvement_work_disabled():
+        paused = {
+            "run_id": None,
+            "state": "paused",
+            "reason": "self_improvement_disabled",
+            "candidate_ids": [],
+            "budget": {"model_requests": 0, "tokens": 0, "deployments": 0},
+        }
+        if on_tick:
+            on_tick(paused)
+        return [paused]
     factory = _integration_factory(module_path)
     integration = await factory(cancellation=cancellation)
     try:
@@ -735,7 +754,7 @@ def main(argv=None):
             )
             if args.enable:
                 print(
-                    "warning: --enable is deprecated and ignored. Improvement work runs unless --disable or LOOPITER_DISABLE=1 is set.",
+                    "warning: --enable is deprecated and ignored. Improvement work runs unless --disable is set or LOOPITER_DISABLE is any value other than 0, false, no, or off.",
                     file=sys.stderr,
                 )
             if args.confirm_activation:
@@ -748,11 +767,7 @@ def main(argv=None):
                     "warning: --yes is deprecated and ignored. Activation confirmation is no longer required.",
                     file=sys.stderr,
                 )
-            disabled = args.disable or os.environ.get("LOOPITER_DISABLE", "").strip().lower() in {
-                "1",
-                "true",
-                "yes",
-            }
+            disabled = args.disable or improvement_work_disabled()
 
             async def run():
                 cancellation = asyncio.Event()

@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import os
 import re
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -218,10 +220,11 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(check["passed"] for check in report["checks"]))
 
     async def test_worker_validates_settings_before_importing_code(self):
-        with self.assertRaises(FileNotFoundError):
-            await run_self_hosted_worker(
-                "does-not-exist.py", mode="autonomous", self_improving=False, once=True
-            )
+        paused = await run_self_hosted_worker(
+            "does-not-exist.py", mode="experiment", self_improving=False, once=True
+        )
+        self.assertEqual(paused[0]["reason"], "self_improvement_disabled")
+        self.assertEqual(paused[0]["state"], "paused")
         with self.assertRaises(ValueError):
             await run_self_hosted_worker("does-not-exist.py", self_improving=True, interval_ms=0)
         cancellation = asyncio.Event()
@@ -809,6 +812,58 @@ async def create_integration(*, cancellation):
             self.assertEqual(again.returncode, 0, again.stderr)
             self.assertIn("--enable is deprecated and ignored", again.stderr)
             self.assertEqual((state / "activation.json").read_text(), original)
+
+    def test_disabled_worker_does_not_import_the_application_in_any_mode(self):
+        with tempfile.TemporaryDirectory() as root:
+            module = Path(root) / "application.py"
+            module.write_text("raise RuntimeError('imported the application')\n")
+
+            def run(extra, env=None):
+                return subprocess.run(
+                    [sys.executable, "-m", "loopiter", "worker", "--module", str(module), *extra],
+                    cwd=root,
+                    input="",
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env={**os.environ, **(env or {})},
+                )
+
+            for mode in ("recommend", "experiment", "observe", "autonomous"):
+                result = run(["--disable", "--mode", mode, "--once"])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('"reason": "self_improvement_disabled"', result.stdout)
+                self.assertNotIn("imported the application", result.stderr + result.stdout)
+            enabled = run(["--mode", "experiment", "--once"], {"LOOPITER_DISABLE": "enabled"})
+            self.assertEqual(enabled.returncode, 0, enabled.stderr)
+            self.assertNotIn("imported the application", enabled.stderr)
+            off = run(["--once"], {"LOOPITER_DISABLE": "off"})
+            self.assertNotEqual(off.returncode, 0)
+            self.assertIn("imported the application", off.stderr)
+            self.assertIn("no integration plan found; falling back to autonomous", off.stderr)
+            flagged = run(["--mode", "recommend", "--once"], {"LOOPITER_DISABLE": "0"})
+            self.assertNotEqual(flagged.returncode, 0)
+            self.assertIn("imported the application", flagged.stderr)
+            self.assertNotIn("no integration plan found", flagged.stderr)
+
+    def test_plan_directory_fails_closed_and_missing_plan_warns(self):
+        with tempfile.TemporaryDirectory() as root:
+            module = Path(root) / "application.py"
+            module.write_text("raise RuntimeError('unused')\n")
+            (Path(root) / "integration-plan.json").mkdir()
+            with self.assertRaisesRegex(ValueError, "not a file"):
+                read_worker_settings(module)
+            (Path(root) / "integration-plan.json").rmdir()
+            err = io.StringIO()
+            with redirect_stderr(err):
+                settings = read_worker_settings(module)
+            self.assertEqual(settings["mode"], "autonomous")
+            self.assertEqual(settings["mode_source"], "default")
+            self.assertIn("no integration plan found; falling back to autonomous", err.getvalue())
+            err = io.StringIO()
+            with redirect_stderr(err):
+                read_worker_settings(module, mode="recommend", mode_source="flag")
+            self.assertNotIn("no integration plan found", err.getvalue())
 
     def test_clearing_a_stamp_surfaces_a_removal_error(self):
         with tempfile.TemporaryDirectory() as root:

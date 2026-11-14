@@ -64,7 +64,7 @@ callbacks. Loopiter stores evidence, bounds orchestration and protects lifecycle
 - Durable deployment attempts, target reservations, receipts, inspect/reconcile and
   explicit predecessor-based rollback through your deployment adapter.
 - Node store v3 / Python store v2 contracts, optional PostgreSQL 16/17 reference adapters and conformance suites.
-- Controller default of recommend. Fresh onboarding plans record autonomous mode; spending still requires the explicit enable flag, independent audit, production observation and automatic rollback through application adapters.
+- On main, unreleased, the controller default is autonomous with self-improving on. Mode recommend or observe stores proposals and does not apply. `--disable` or `LOOPITER_DISABLE` (any non-empty value except 0, false, no, or off) pauses before the application module is imported, in every mode, and spends nothing. The published 0.3.0 alphas still default to recommend and still require `--enable`. Independent audit, production observation, and automatic rollback stay in place.
 - Native Python and Node.js autonomous workflow examples, plus offline fixtures.
 - A separate Node.js reviewed support-intent CLI with PostgreSQL and OpenAI/Azure integration.
 

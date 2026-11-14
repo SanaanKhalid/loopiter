@@ -211,8 +211,10 @@ blindly. An adapter must implement idempotent apply, durable inspect, fenced
 
 On main, unreleased, constructing the controller without a mode is autonomous
 with self-improving on. Mode `recommend` or `observe` stores proposals and does
-not apply. `--disable` and `LOOPITER_DISABLE=1` only pause the worker and store
-no proposal. The published `0.3.0-alpha.1` and `0.3.0a1` packages still recommend
+not apply. `--disable`, or `LOOPITER_DISABLE` set to any non-empty value except `0`,
+`false`, `no`, or `off`, pauses before the application module is imported, in
+every mode, and stores no proposal. The published `0.3.0-alpha.1` and `0.3.0a1`
+packages still recommend
 when no mode is set and still spend only with `--enable`. Every policy gate
 still applies. The removed experimental auto-apply path stays rejected.
 Callbacks run in your process; cancellation is cooperative, **not a sandbox**.

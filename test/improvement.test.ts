@@ -5,6 +5,7 @@ import {
   FeedbackLoop,
   InMemoryStore,
   ImprovementController,
+  improvementWorkDisabled,
   failureDetailText,
   prepareDataset,
   compare,
@@ -312,6 +313,84 @@ test("recommend mode stores a proposal and never applies", async () => {
   const again = await controller.tick("classification");
   assert.equal(again.reason, "unchanged_evidence");
   assert.equal(x.registry.applications, 0);
+});
+test("disable pauses every mode before a provider callback", async () => {
+  for (const mode of ["recommend", "experiment", "observe", "autonomous"] as const) {
+    const x = setup();
+    let calls = 0;
+    const touch = async () => {
+      calls += 1;
+      throw new Error("provider");
+    };
+    x.workflow.artifact = touch;
+    x.workflow.dataset = touch;
+    x.workflow.propose = touch;
+    const result = await new ImprovementController(x.loop, {
+      workflows: [x.workflow],
+      mode,
+      selfImproving: false,
+    }).tick("classification");
+    assert.equal(result.state, "paused", mode);
+    assert.equal(result.reason, "self_improvement_disabled", mode);
+    assert.equal(calls, 0, mode);
+    assert.equal(x.registry.applications, 0, mode);
+  }
+});
+test("null mode is rejected and LOOPITER_DISABLE fails closed", async () => {
+  const x = setup();
+  assert.throws(
+    () =>
+      new ImprovementController(x.loop, {
+        workflows: [x.workflow],
+        mode: null as never,
+      }),
+    { code: "invalid_input" },
+  );
+  const previous = process.env.LOOPITER_DISABLE;
+  const cases: Array<[string | undefined, boolean]> = [
+    [undefined, false],
+    ["", false],
+    ["0", false],
+    ["false", false],
+    ["NO", false],
+    [" off ", false],
+    ["1", true],
+    ["true", true],
+    ["yes", true],
+    ["on", true],
+    ["y", true],
+    ["enabled", true],
+    ["disable", true],
+    ["disabled", true],
+    [" TRUE ", true],
+  ];
+  try {
+    for (const [value, disabled] of cases) {
+      if (value === undefined) delete process.env.LOOPITER_DISABLE;
+      else process.env.LOOPITER_DISABLE = value;
+      assert.equal(improvementWorkDisabled(), disabled, JSON.stringify(value));
+      const run = setup();
+      let calls = 0;
+      run.workflow.propose = async () => {
+        calls += 1;
+        return [{ score: 1 }];
+      };
+      const result = await new ImprovementController(run.loop, {
+        workflows: [run.workflow],
+        mode: "experiment",
+      }).tick("classification");
+      if (disabled) {
+        assert.equal(result.reason, "self_improvement_disabled", JSON.stringify(value));
+        assert.equal(calls, 0, JSON.stringify(value));
+      } else {
+        assert.notEqual(result.reason, "self_improvement_disabled", JSON.stringify(value));
+        assert.equal(calls, 1, JSON.stringify(value));
+      }
+    }
+  } finally {
+    if (previous === undefined) delete process.env.LOOPITER_DISABLE;
+    else process.env.LOOPITER_DISABLE = previous;
+  }
 });
 test("default autonomous mode blocks a losing candidate", async () => {
   const x = setup({ name: "rejected", scores: [0], errors: 0 });

@@ -193,15 +193,14 @@ test("offline verification exercises measured acceptance, rejection, recovery an
 });
 
 test("worker validates settings before importing local application code", async () => {
-  await assert.rejects(
-    runSelfHostedWorker({
-      module: "/does-not-exist.mjs",
-      mode: "autonomous",
-      selfImproving: false,
-      once: true,
-    }),
-    /does-not-exist/,
-  );
+  const paused = await runSelfHostedWorker({
+    module: "/does-not-exist.mjs",
+    mode: "recommend",
+    selfImproving: false,
+    once: true,
+  });
+  assert.equal(paused[0]?.reason, "self_improvement_disabled");
+  assert.equal(paused[0]?.state, "paused");
   await assert.rejects(
     runSelfHostedWorker({
       module: "/does-not-exist.mjs",
@@ -853,6 +852,64 @@ export async function createIntegration() {
     assert.equal(again.status, 0, again.stderr);
     assert.match(again.stderr, /--enable is deprecated and ignored/);
     assert.equal(await readFile(join(root, ".state", "activation.json"), "utf8"), original);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("disabled worker does not import the application in any mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-disable-"));
+  try {
+    const module = join(root, "application.mjs");
+    await writeFile(module, "throw new Error('imported the application');\n");
+    const cli = new URL("../src/cli.js", import.meta.url);
+    const run = (args: string[], env: NodeJS.ProcessEnv = {}) =>
+      spawnSync(process.execPath, [cli.pathname, ...args], {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, ...env },
+      });
+    for (const mode of ["recommend", "experiment", "observe", "autonomous"]) {
+      const result = run([
+        "worker",
+        "--module",
+        module,
+        "--disable",
+        "--mode",
+        mode,
+        "--once",
+      ]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /"reason":"self_improvement_disabled"/);
+      assert.doesNotMatch(`${result.stderr}\n${result.stdout}`, /imported the application/);
+    }
+    const enabledWord = run(["worker", "--module", module, "--mode", "experiment", "--once"], {
+      LOOPITER_DISABLE: "enabled",
+    });
+    assert.equal(enabledWord.status, 0, enabledWord.stderr);
+    assert.doesNotMatch(enabledWord.stderr, /imported the application/);
+    const off = run(["worker", "--module", module, "--once"], { LOOPITER_DISABLE: "off" });
+    assert.equal(off.status, 1);
+    assert.match(off.stderr, /imported the application/);
+    assert.match(off.stderr, /no integration plan found; falling back to autonomous/);
+    const flagged = run(["worker", "--module", module, "--mode", "recommend", "--once"], {
+      LOOPITER_DISABLE: "0",
+    });
+    assert.equal(flagged.status, 1);
+    assert.match(flagged.stderr, /imported the application/);
+    assert.doesNotMatch(flagged.stderr, /no integration plan found/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a directory plan fails closed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-plan-dir-"));
+  try {
+    const module = join(root, "application.mjs");
+    await writeFile(module, "export {};\n");
+    await mkdir(join(root, "integration-plan.json"));
+    assert.throws(() => readWorkerSettings(module), /not a file/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

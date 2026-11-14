@@ -1,12 +1,12 @@
 /** Node-only self-hosted onboarding. No platform account or external service is used. */
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { appendFile, lstat, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { FeedbackLoop } from "./feedback-loop.js";
-import { ImprovementController } from "./improvement-controller.js";
+import { ImprovementController, improvementWorkDisabled } from "./improvement-controller.js";
 import type {
   ImprovementMode,
   ImprovementWorkflow,
@@ -77,6 +77,8 @@ function loadIntegrationPlan(
 ): Record<string, unknown> | undefined {
   const path = resolve(dirname(resolve(modulePath)), "integration-plan.json");
   if (!existsSync(path)) return undefined;
+  if (!statSync(path).isFile())
+    throw Error("Integration plan path is not a file.");
   const text = readFileSync(path, "utf8");
   const plan = JSON.parse(text) as unknown;
   if (!plan || typeof plan !== "object" || Array.isArray(plan))
@@ -292,6 +294,10 @@ export function readWorkerSettings(
     : plan?.mode
       ? "plan"
       : "default";
+  if (!plan && !overrides.mode)
+    console.error(
+      "warning: no integration plan found; falling back to autonomous mode.",
+    );
   if (plan?.stepTimeoutMs !== undefined && !validStepTimeout(plan.stepTimeoutMs))
     throw Error("Invalid stepTimeoutMs in integration plan.");
   const stepTimeoutMs =
@@ -457,7 +463,7 @@ export async function initializeSelfHosted(directory: string) {
     "integration-plan.json": JSON.stringify(plan, null, 2) + "\n",
     "verify.mjs":
       'import { verifySelfHostedInstallation } from "loopiter/onboarding";\nconsole.log(JSON.stringify(await verifySelfHostedInstallation(), null, 2));\n',
-    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 only to pause the worker. That pause stops with self_improvement_disabled and stores no proposal. It is not mode recommend. Set mode to recommend or observe, or set plan.mode, to store proposals without applying them. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --once\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --mode recommend --once\n\nThe recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. With no integration plan, the worker uses autonomous. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
+    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 to pause before the application module is imported, in every mode, including recommend and experiment. Any non-empty value pauses except 0, false, no, and off. The pause makes no provider call and stores no proposal. It is not mode recommend. Set mode to recommend or observe, or set plan.mode, to store proposals without applying them. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --once\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --mode recommend --once\n\nThe recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. With no integration plan, the worker uses autonomous. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
   };
   for (const [name, contents] of Object.entries(files)) {
     await writeFile(resolve(destination, name), contents, {
@@ -637,6 +643,17 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
     `effective step timeout ${settings.stepTimeoutMs}ms (source: ${settings.stepTimeoutSource})`,
   );
   options.signal?.throwIfAborted();
+  if (options.selfImproving === false || improvementWorkDisabled()) {
+    const paused: TickResult = {
+      runId: null,
+      state: "paused",
+      reason: "self_improvement_disabled",
+      candidateIds: [],
+      budget: { modelRequests: 0, tokens: 0, deployments: 0 },
+    };
+    options.onTick?.(paused);
+    return [paused];
+  }
   const loaded = (await import(
     pathToFileURL(resolve(options.module)).href
   )) as {

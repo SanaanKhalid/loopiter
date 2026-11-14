@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import time
 import unittest
@@ -261,6 +262,79 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         again = await controller.tick("classification")
         self.assertEqual(again["reason"], "unchanged_evidence")
         self.assertEqual(self.registry.calls, 0)
+
+    async def test_disable_pauses_every_mode_before_a_provider_callback(self):
+        for mode in ("recommend", "experiment", "observe", "autonomous"):
+            self.setup_workflow(FIXTURES["scenarios"][0])
+            calls = {"n": 0}
+
+            async def touch(*_args, _calls=calls):
+                _calls["n"] += 1
+                raise AssertionError("provider")
+
+            self.workflow = replace(self.workflow, artifact=touch, dataset=touch, propose=touch)
+            result = await ImprovementController(
+                self.loop, workflows=[self.workflow], mode=mode, self_improving=False
+            ).tick("classification")
+            self.assertEqual(result["state"], "paused", mode)
+            self.assertEqual(result["reason"], "self_improvement_disabled", mode)
+            self.assertEqual(calls["n"], 0, mode)
+            self.assertEqual(self.registry.calls, 0, mode)
+
+    async def test_null_mode_is_rejected_and_disable_env_fails_closed(self):
+        from loopiter.improvement import improvement_work_disabled
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        with self.assertRaises(LoopiterError) as error:
+            ImprovementController(self.loop, workflows=[self.workflow], mode=None)
+        self.assertEqual(error.exception.code, "invalid_input")
+        previous = os.environ.get("LOOPITER_DISABLE")
+        cases = [
+            (None, False),
+            ("", False),
+            ("0", False),
+            ("false", False),
+            ("NO", False),
+            (" off ", False),
+            ("1", True),
+            ("true", True),
+            ("yes", True),
+            ("on", True),
+            ("y", True),
+            ("enabled", True),
+            ("disable", True),
+            ("disabled", True),
+            (" TRUE ", True),
+        ]
+        try:
+            for value, disabled in cases:
+                if value is None:
+                    os.environ.pop("LOOPITER_DISABLE", None)
+                else:
+                    os.environ["LOOPITER_DISABLE"] = value
+                self.assertEqual(improvement_work_disabled(), disabled, repr(value))
+                self.setup_workflow(FIXTURES["scenarios"][0])
+                calls = {"n": 0}
+
+                async def propose(*_args, _calls=calls):
+                    _calls["n"] += 1
+                    return [{"score": 1}]
+
+                self.workflow = replace(self.workflow, propose=propose)
+                result = await ImprovementController(
+                    self.loop, workflows=[self.workflow], mode="experiment"
+                ).tick("classification")
+                if disabled:
+                    self.assertEqual(result["reason"], "self_improvement_disabled", repr(value))
+                    self.assertEqual(calls["n"], 0, repr(value))
+                else:
+                    self.assertNotEqual(result["reason"], "self_improvement_disabled", repr(value))
+                    self.assertEqual(calls["n"], 1, repr(value))
+        finally:
+            if previous is None:
+                os.environ.pop("LOOPITER_DISABLE", None)
+            else:
+                os.environ["LOOPITER_DISABLE"] = previous
 
     async def test_default_autonomous_mode_blocks_a_losing_candidate(self):
         rejected = next(

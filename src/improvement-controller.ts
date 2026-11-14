@@ -144,6 +144,17 @@ const plus = (time: string, ms: number) =>
   new Date(Date.parse(time) + ms).toISOString();
 
 /** No background work. One tick advances one durable phase; application owns scheduling. */
+const IMPROVEMENT_DISABLE_OFF = new Set(["0", "false", "no", "off"]);
+
+/** Any non-empty LOOPITER_DISABLE except 0, false, no, or off pauses improvement work. */
+export function improvementWorkDisabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const raw = (env.LOOPITER_DISABLE ?? "").trim().toLowerCase();
+  if (!raw) return false;
+  return !IMPROVEMENT_DISABLE_OFF.has(raw);
+}
+
 export class ImprovementController {
   private readonly options: ImprovementControllerOptions;
   private readonly workflows = new Map<string, ImprovementWorkflow>();
@@ -165,6 +176,7 @@ export class ImprovementController {
       typeof options.selfImproving !== "boolean"
     )
       fail("invalid_input", "selfImproving must be boolean.");
+    if (options.mode === null) fail("invalid_input", "Invalid mode.");
     const mode = options.mode ?? "autonomous";
     const selfImproving = options.selfImproving ?? true;
     enumeration(
@@ -887,7 +899,7 @@ export class ImprovementController {
         run = await this.getRun(String(lock.target.data.activeRun));
       if (!run) {
         if (lock.paused) return idle("workflow_paused", "paused");
-        if (mode === "autonomous" && this.options.selfImproving !== true)
+        if (this.options.selfImproving !== true || improvementWorkDisabled())
           return idle("self_improvement_disabled", "paused");
         if (
           mode === "autonomous" &&
@@ -1087,7 +1099,8 @@ export class ImprovementController {
       }
       if (
         (lock.paused ||
-          (mode === "autonomous" && this.options.selfImproving !== true)) &&
+          this.options.selfImproving !== true ||
+          improvementWorkDisabled()) &&
         !recovering
       ) {
         await this.save(
