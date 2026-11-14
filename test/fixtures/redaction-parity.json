@@ -165,6 +165,14 @@
     {
       "input": "secret=-----BEGIN FIXTURE PRIVATE KEY-----\nabc",
       "output": "secret=[REDACTED]"
+    },
+    {
+      "input": "0000 0000 0000 000000",
+      "output": "0000 [REDACTED]"
+    },
+    {
+      "input": "4111 1111 1111 1112 001",
+      "output": "[REDACTED]"
     }
   ],
   "boundaries": [

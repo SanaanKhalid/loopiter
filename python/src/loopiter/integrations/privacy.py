@@ -187,6 +187,17 @@ def _luhn_parts(*parts: tuple[int, ...]) -> bool:
     return total % 10 == 0
 
 
+def _exact_quad(value: str, at: int, length: int) -> bool:
+    return (
+        at + 3 < length
+        and "0" <= value[at] <= "9"
+        and "0" <= value[at + 1] <= "9"
+        and "0" <= value[at + 2] <= "9"
+        and "0" <= value[at + 3] <= "9"
+        and (at + 4 >= length or not "0" <= value[at + 4] <= "9")
+    )
+
+
 def _luhn_quads(value: str, pos: int) -> bool:
     """Luhn of four 4-digit groups separated by one character, starting at pos."""
     total = 0
@@ -280,33 +291,25 @@ def _redact_cards(value: str) -> str:
             continue
         sep = value[j]
         pos = start
-        while pos + 4 <= length:
-            if not (
-                "0" <= value[pos] <= "9"
-                and "0" <= value[pos + 1] <= "9"
-                and "0" <= value[pos + 2] <= "9"
-                and "0" <= value[pos + 3] <= "9"
-            ):
-                break
-            if pos + 4 < length and value[pos + 4] != sep:
-                break
+        while _exact_quad(value, pos, length) and (pos + 4 >= length or value[pos + 4] == sep):
             if (
-                pos + 19 <= length
+                pos + 14 < length
                 and value[pos + 4] == sep
                 and value[pos + 9] == sep
                 and value[pos + 14] == sep
-                and "0" <= value[pos + 5] <= "9"
-                and "0" <= value[pos + 15] <= "9"
-                and "0" <= value[pos + 18] <= "9"
+                and _exact_quad(value, pos + 5, length)
+                and _exact_quad(value, pos + 10, length)
+                and _exact_quad(value, pos + 15, length)
             ):
-                if (
-                    pos + 23 <= length
+                fifth = (
+                    pos + 22 < length
                     and value[pos + 19] == sep
                     and "0" <= value[pos + 20] <= "9"
+                    and "0" <= value[pos + 21] <= "9"
                     and "0" <= value[pos + 22] <= "9"
-                    and not ("0" <= value[pos + 23] <= "9" if pos + 23 < length else False)
-                    and _luhn_span(value, pos, pos + 23)
-                ):
+                    and (pos + 23 >= length or not "0" <= value[pos + 23] <= "9")
+                )
+                if fifth and _luhn_span(value, pos, pos + 23):
                     keep(pos)
                     out.append("[REDACTED]")
                     copied = pos + 23
@@ -329,15 +332,14 @@ def _redact_cards(value: str) -> str:
         spans: list[tuple[int, int, int, tuple[int, ...]]] = [(start, j, first, first_digits)]
         pos = j
         while (
-            pos < length
-            and value[pos] == sep
-            and pos + 1 < length
-            and "0" <= value[pos + 1] <= "9"
+            pos < length and value[pos] == sep and pos + 1 < length and "0" <= value[pos + 1] <= "9"
         ):
             k = pos + 1
             while k < length and "0" <= value[k] <= "9":
                 k += 1
-            spans.append((pos + 1, k, k - (pos + 1), tuple(ord(value[p]) - 48 for p in range(pos + 1, k))))
+            spans.append(
+                (pos + 1, k, k - (pos + 1), tuple(ord(value[p]) - 48 for p in range(pos + 1, k)))
+            )
             pos = k
         group_index = 0
         while group_index < len(spans):
@@ -357,12 +359,16 @@ def _redact_cards(value: str) -> str:
             ):
                 end4 = spans[group_index + 3][1]
                 fifth = spans[group_index + 4] if group_index + 4 < len(spans) else None
-                if fifth is not None and fifth[2] == 3 and _luhn_parts(
-                    spans[group_index][3],
-                    spans[group_index + 1][3],
-                    spans[group_index + 2][3],
-                    spans[group_index + 3][3],
-                    fifth[3],
+                if (
+                    fifth is not None
+                    and fifth[2] == 3
+                    and _luhn_parts(
+                        spans[group_index][3],
+                        spans[group_index + 1][3],
+                        spans[group_index + 2][3],
+                        spans[group_index + 3][3],
+                        fifth[3],
+                    )
                 ):
                     matched = fifth[1]
                 elif _luhn_parts(

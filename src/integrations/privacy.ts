@@ -202,9 +202,10 @@ function redactCards(value: string): string {
     if (first === 4) {
       const sepChar = value[j]!;
       let pos = start;
-      const quad = (at: number) =>
-        at + 4 <= value.length &&
-        digit(at) && digit(at + 1) && digit(at + 2) && digit(at + 3);
+      const exactQuad = (at: number) =>
+        at + 3 < value.length &&
+        digit(at) && digit(at + 1) && digit(at + 2) && digit(at + 3) &&
+        (at + 4 >= value.length || !digit(at + 4));
       const luhnQuads = (at: number) => {
         let sum = 0;
         let alt = false;
@@ -219,16 +220,42 @@ function redactCards(value: string): string {
         }
         return sum % 10 === 0;
       };
-      while (quad(pos) && (pos + 4 >= value.length || value[pos + 4] === sepChar)) {
+      const luhnSpan = (from: number, to: number) => {
+        let sum = 0;
+        let alt = false;
+        for (let index = to - 1; index >= from; index -= 1) {
+          if (!digit(index)) continue;
+          let n = value.charCodeAt(index) - 48;
+          if (alt) {
+            n *= 2;
+            if (n > 9) n -= 9;
+          }
+          sum += n;
+          alt = !alt;
+        }
+        return sum % 10 === 0;
+      };
+      while (exactQuad(pos) && (pos + 4 >= value.length || value[pos + 4] === sepChar)) {
         if (
-          pos + 19 <= value.length &&
+          pos + 14 < value.length &&
           value[pos + 4] === sepChar &&
           value[pos + 9] === sepChar &&
           value[pos + 14] === sepChar &&
-          quad(pos + 5) &&
-          quad(pos + 10) &&
-          quad(pos + 15)
+          exactQuad(pos + 5) &&
+          exactQuad(pos + 10) &&
+          exactQuad(pos + 15)
         ) {
+          const fifth =
+            pos + 22 < value.length &&
+            value[pos + 19] === sepChar &&
+            digit(pos + 20) && digit(pos + 21) && digit(pos + 22) &&
+            (pos + 23 >= value.length || !digit(pos + 23));
+          if (fifth && luhnSpan(pos, pos + 23)) {
+            out += value.slice(i, pos) + "[REDACTED]";
+            i = pos + 23;
+            pos += pos + 23 < value.length && value[pos + 23] === sepChar ? 24 : 23;
+            continue;
+          }
           if (luhnQuads(pos)) {
             out += value.slice(i, pos) + "[REDACTED]";
             i = pos + 19;
