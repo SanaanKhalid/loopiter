@@ -83,7 +83,7 @@ publishing a new npm/PyPI release is separate.
 Release versions: `loopiter@0.3.0-alpha.1` and Python `loopiter==0.3.0a1`.
 It adds policy-bounded `ImprovementController` APIs in both languages, durable
 experiments, single-winner selection, production observation and recovery.
-Constructing the controller without a mode still recommends and does not apply.
+Constructing the controller without a mode in 0.3.0-alpha.1 still recommends and does not apply.
 A fresh self-hosted init in this repository records autonomous mode and
 self-improving on, but that init and worker postdate these published archives.
 The published worker follows `plan.mode` unless `--mode` is set, spends only
