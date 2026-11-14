@@ -141,6 +141,22 @@
     {
       "input": "token=᠎abcdef",
       "output": "token=[REDACTED]"
+    },
+    {
+      "input": "4111 1111 1111 1111 123",
+      "output": "[REDACTED] 123"
+    },
+    {
+      "input": "Qty 2 4111 1111 1111 1111",
+      "output": "Qty 2 [REDACTED]"
+    },
+    {
+      "input": "ref 99 3782 822463 10005",
+      "output": "ref 99 [REDACTED]"
+    },
+    {
+      "input": "order 12345 4111111111111111",
+      "output": "order 12345 [REDACTED]"
     }
   ],
   "boundaries": [

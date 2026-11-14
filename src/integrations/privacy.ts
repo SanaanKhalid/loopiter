@@ -205,29 +205,37 @@ function redactCards(value: string): string {
       continue;
     }
     const groups = [first];
+    const ends = [j];
     let total = first;
     const sep = value[j]!;
-    while (j < value.length && (value[j] === sep) && j + 1 < value.length && digit(j + 1) && longerLayout(groups)) {
+    while (j < value.length && value[j] === sep && j + 1 < value.length && digit(j + 1) && longerLayout(groups)) {
       let k = j + 1;
-      let nxt = 0;
-      while (k < value.length && digit(k)) {
-        nxt += 1;
-        k += 1;
-      }
+      while (k < value.length && digit(k)) k += 1;
+      const nxt = k - (j + 1);
       if (total + nxt > 19 || !layoutPrefix(groups.concat(nxt))) break;
       total += nxt;
       groups.push(nxt);
+      ends.push(k);
       j = k;
     }
-    while (j > start && (value[j - 1] === " " || value[j - 1] === "-")) j -= 1;
-    if (exactLayout(groups) && luhn(value.slice(start, j).replace(/[ -]/g, ""))) {
+    let matched = -1;
+    for (let count = groups.length; count > 0; count -= 1) {
+      const prefix = groups.slice(0, count);
+      if (!exactLayout(prefix)) continue;
+      const end = ends[count - 1]!;
+      if (luhn(value.slice(start, end).replace(/[ -]/g, ""))) {
+        matched = end;
+        break;
+      }
+    }
+    if (matched >= 0) {
       out += "[REDACTED]";
-      i = j;
+      i = matched;
       continue;
     }
-    const nxt = nextGroup(start);
-    out += value.slice(start, nxt);
-    i = nxt;
+    const resume = nextGroup(start);
+    out += value.slice(start, resume);
+    i = resume;
   }
   return out;
 }

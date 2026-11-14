@@ -254,6 +254,7 @@ def _redact_cards(value: str) -> str:
             i = _next_card_group(value, start)
             continue
         groups = [first]
+        ends = [j]
         total = first
         sep = value[j]
         while (
@@ -264,23 +265,29 @@ def _redact_cards(value: str) -> str:
             and _longer_layout(tuple(groups))
         ):
             k = j + 1
-            nxt = 0
             while k < length and _ascii_digit(value[k]):
-                nxt += 1
                 k += 1
+            nxt = k - (j + 1)
             if total + nxt > 19 or not _layout_prefix((*groups, nxt)):
                 break
             total += nxt
             groups.append(nxt)
+            ends.append(k)
             j = k
-        while j > start and value[j - 1] in " -":
-            j -= 1
-        digits = "".join(ch for ch in value[start:j] if _ascii_digit(ch))
-        if _exact_layout(tuple(groups)) and _luhn(digits):
+        matched = None
+        for count in range(len(groups), 0, -1):
+            if not _exact_layout(tuple(groups[:count])):
+                continue
+            end = ends[count - 1]
+            digits = "".join(ch for ch in value[start:end] if "0" <= ch <= "9")
+            if _luhn(digits):
+                matched = end
+                break
+        if matched is not None:
             keep(start)
             out.append("[REDACTED]")
-            copied = j
-            i = j
+            copied = matched
+            i = matched
             continue
         i = _next_card_group(value, start)
     keep(length)

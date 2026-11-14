@@ -515,6 +515,7 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
                     i = j + 1
                     continue
                 groups = [first]
+                ends = [j]
                 total = first
                 sep = value[j]
                 while (
@@ -525,23 +526,30 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
                     and longer(tuple(groups))
                 ):
                     k = j + 1
-                    nxt = 0
                     while k < n and digit(value[k]):
-                        nxt += 1
                         k += 1
+                    nxt = k - (j + 1)
                     if total + nxt > 19 or not prefix((*groups, nxt)):
                         break
                     total += nxt
                     groups.append(nxt)
+                    ends.append(k)
                     j = k
-                while j > start and value[j - 1] in " -":
-                    j -= 1
-                digits = "".join(ch for ch in value[start:j] if digit(ch))
-                if tuple(groups) in layouts and luhn(digits):
+                matched = None
+                for size in range(len(groups), 0, -1):
+                    if tuple(groups[:size]) not in layouts:
+                        continue
+                    end = ends[size - 1]
+                    digits = "".join(ch for ch in value[start:end] if digit(ch))
+                    if luhn(digits):
+                        matched = end
+                        break
+                if matched is not None:
                     count += 1
-                    i = j
+                    i = matched
                     continue
-                i = j + 1 if j < n and value[j] in " -" else j
+                end0 = ends[0]
+                i = end0 + 1 if end0 < n and value[end0] in " -" else end0
             return count
 
         state = 42

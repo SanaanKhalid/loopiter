@@ -108,28 +108,36 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
         continue;
       }
       const groups = [first];
+      const ends = [j];
       let total = first;
       const sep = value[j]!;
       while (j < value.length && value[j] === sep && j + 1 < value.length && digit(value, j + 1) && longer(groups)) {
         let k = j + 1;
-        let nxt = 0;
-        while (k < value.length && digit(value, k)) {
-          nxt += 1;
-          k += 1;
-        }
+        while (k < value.length && digit(value, k)) k += 1;
+        const nxt = k - (j + 1);
         if (total + nxt > 19 || !prefix(groups.concat(nxt))) break;
         total += nxt;
         groups.push(nxt);
+        ends.push(k);
         j = k;
       }
-      while (j > start && (value[j - 1] === " " || value[j - 1] === "-")) j -= 1;
-      const digits = value.slice(start, j).replace(/[ -]/g, "");
-      if (layouts.some((layout) => layout.length === groups.length && layout.every((size, index) => size === groups[index])) && luhn(digits)) {
+      let matched = -1;
+      for (let size = groups.length; size > 0; size -= 1) {
+        const head = groups.slice(0, size);
+        if (!layouts.some((layout) => layout.length === head.length && layout.every((n, index) => n === head[index]))) continue;
+        const end = ends[size - 1]!;
+        if (luhn(value.slice(start, end).replace(/[ -]/g, ""))) {
+          matched = end;
+          break;
+        }
+      }
+      if (matched >= 0) {
         count += 1;
-        i = j;
+        i = matched;
         continue;
       }
-      i = j < value.length && (value[j] === " " || value[j] === "-") ? j + 1 : j;
+      const end0 = ends[0]!;
+      i = end0 < value.length && (value[end0] === " " || value[end0] === "-") ? end0 + 1 : end0;
     }
     return count;
   };
