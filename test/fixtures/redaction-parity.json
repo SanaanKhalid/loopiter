@@ -85,6 +85,26 @@
     {
       "input": "https://fixture-user:fixture-marker-gamma@example.test tail",
       "output": "https://[REDACTED]@example.test tail"
+    },
+    {
+      "input": "Bearer​fixture-marker-alpha",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Bearer᠎fixture-marker-alpha",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Bearerfixture-marker-alpha",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "-----BEGIN FIXTURE PRIVATE KEY-----\nabc\n",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "４２４２４２４２４２４２４２４２",
+      "output": "４２４２４２４２４２４２４２４２"
     }
   ],
   "boundaries": [

@@ -33,12 +33,17 @@ and do not automatically enable autonomy while upgrading storage or code.
    row exists, `ADD CONSTRAINT` fails and the transaction rolls back, so the wide check
    and the rows remain and the store stays usable. If no `historical` row exists, that
    older script replaces the wide check with the narrow one; run `historical_sql()` again
-   to allow `historical`. `historical_down_sql()` reads `003-historical-down.sql`, which
-   is not part of `migration_sql()` and uses the same two-transaction shape. Transaction 1
-   takes `LOCK TABLE loopiter_python_records IN SHARE ROW EXCLUSIVE MODE` before it looks
-   for historical rows, so an insert cannot land between that check and the drop. It
-   restores the version-2 check when no `historical` row exists, and rolls back without
-   deleting rows when one does.
+   to allow `historical`. After `historical_sql()`, do not run `migration_sql()` from
+   SDK `0.3.0a1` or earlier. If that older script already ran and no historical rows
+   existed, run `historical_sql()` again. `historical_down_sql()` reads
+   `003-historical-down.sql`, which is not part of `migration_sql()` and uses the same
+   two-transaction shape. Transaction 1 takes `LOCK TABLE loopiter_python_records IN
+   SHARE ROW EXCLUSIVE MODE` before it looks for historical rows, so an insert cannot
+   land between that check and the drop. That lock blocks writes for the whole scan,
+   and on PostgreSQL 16 and 17 the check does not use the collection index by itself,
+   so the scan reads the table. Run the down script in a quiet window. It restores the
+   version-2 check when no `historical` row exists, and rolls back without deleting
+   rows when one does.
 4. Upgrade adapters: Node contract version **3**, Python adapter contract version **2**.
    Python SQL schema version 2 still satisfies that adapter after `003-historical.sql`.
    New collections are

@@ -67,6 +67,7 @@ class _Capture:
         self.owner, self.execution = owner, execution
         self.events, self.size, self.finished, self.truncated = [], 0, False, False
         self.lock = asyncio.Lock()
+        self._noted = False
         identity = execution["metadata"]["loopiter_capture"]
         if identity.get("truncated") is True:
             self.truncated = True
@@ -77,14 +78,34 @@ class _Capture:
             return
         data = _json(event)
         self.size += json_size(data)
-        if self.size > self.owner.maximum_output_bytes:
-            raise ValueError("Captured stream exceeded maximum_output_bytes.")
         limit = _policy_limit(policy)
-        if policy and limit is not None and self.size > limit:
-            self.truncated = True
-            self.events.clear()
+        over_policy = bool(policy and limit is not None and self.size > limit)
+        over_hard = self.size > self.owner.maximum_output_bytes
+        if self.owner.strict_output_bytes:
+            if over_hard:
+                raise ValueError("Captured stream exceeded maximum_output_bytes.")
+            if over_policy:
+                self.truncated = True
+                self.events.clear()
+                return
+        elif over_policy or over_hard:
+            self._mark_overflow("Captured stream exceeded maximum_output_bytes.")
             return
         self.events.append(data)
+
+    def _mark_overflow(self, message: str) -> None:
+        self.truncated = True
+        self.events.clear()
+        if self._noted:
+            return
+        self._noted = True
+        callback = getattr(self.owner.capture, "on_error", None)
+        if callback is None:
+            return
+        try:
+            callback(ValueError(message))
+        except Exception:
+            return
 
     async def finish(self, status, output=None):
         async with self.lock:
@@ -95,7 +116,7 @@ class _Capture:
                 value = None
             else:
                 value = {"events": self.events} if output is None else _json(output)
-            if (
+            if self.owner.strict_output_bytes and (
                 value is not None
                 and (not policy or policy.get("mode") == "full")
                 and json_size(value) > self.owner.maximum_output_bytes
@@ -108,9 +129,12 @@ class _Capture:
                 self.truncated = self.truncated or truncated
                 value = {"omitted": True, "truncated": True} if self.truncated else captured_value
                 if value is not None and json_size(value) > self.owner.maximum_output_bytes:
-                    if status in ("completed", "incomplete"):
+                    if self.owner.strict_output_bytes and status in ("completed", "incomplete"):
                         raise ValueError("Captured response exceeded maximum_output_bytes.")
-                    value = None
+                    self._mark_overflow("Captured response exceeded maximum_output_bytes.")
+                    value = {"omitted": True, "truncated": True}
+                elif self.truncated and not self.owner.strict_output_bytes:
+                    self._mark_overflow("Captured response exceeded maximum_output_bytes.")
             identity = dict(self.execution["metadata"]["loopiter_capture"])
             if policy:
                 identity["truncated"] = self.truncated or identity.get("truncated") is True
@@ -211,11 +235,22 @@ class _Facade:
 
 
 class _Client(_Facade):
-    def __init__(self, client, *, loop, context, on_execution, maximum_output_bytes, capture):
+    def __init__(
+        self,
+        client,
+        *,
+        loop,
+        context,
+        on_execution,
+        maximum_output_bytes,
+        capture,
+        strict_output_bytes,
+    ):
         self.base = client.base if isinstance(client, _Client) else client
         self.capture = capture
         self.loop, self.context, self.on_execution = loop, context, on_execution
         self.maximum_output_bytes = maximum_output_bytes
+        self.strict_output_bytes = strict_output_bytes
         super().__init__(
             self.base,
             chat=_Facade(
@@ -350,4 +385,5 @@ def with_loopiter(
         on_execution=on_execution,
         maximum_output_bytes=maximum_output_bytes,
         capture=writer,
+        strict_output_bytes=capture is None,
     )

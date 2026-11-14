@@ -10,14 +10,16 @@ export interface CapturePolicy {
 
 // Shared with python/src/loopiter/integrations/privacy.py. Listed explicitly:
 // U+0009 TAB, U+000A LF, U+000B VT, U+000C FF, U+000D CR, U+0020 SPACE,
-// U+00A0 NO-BREAK SPACE, U+1680 OGHAM SPACE MARK,
+// U+0085 NEXT LINE, U+00A0 NO-BREAK SPACE, U+1680 OGHAM SPACE MARK,
+// U+180E MONGOLIAN VOWEL SEPARATOR,
 // U+2000 EN QUAD, U+2001 EM QUAD, U+2002 EN SPACE, U+2003 EM SPACE,
 // U+2004 THREE-PER-EM SPACE, U+2005 FOUR-PER-EM SPACE, U+2006 SIX-PER-EM SPACE,
 // U+2007 FIGURE SPACE, U+2008 PUNCTUATION SPACE, U+2009 THIN SPACE, U+200A HAIR SPACE,
+// U+200B ZERO WIDTH SPACE,
 // U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR, U+202F NARROW NO-BREAK SPACE,
 // U+205F MEDIUM MATHEMATICAL SPACE, U+3000 IDEOGRAPHIC SPACE, U+FEFF BOM.
 const WS_CHARS =
-  "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+  "\t\n\v\f\r \u0085\u00a0\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u200b\u2028\u2029\u202f\u205f\u3000\ufeff";
 const WS_SET = new Set(WS_CHARS);
 const WS = `[${WS_CHARS}]`;
 const NOT_WS = `[^${WS_CHARS}]`;
@@ -141,55 +143,97 @@ function luhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
+const cardLayouts: readonly (readonly number[])[] = [
+  [4, 4, 4, 4],
+  [4, 4, 4, 4, 3],
+  [4, 6, 5],
+  [4, 6, 4],
+  [4, 4, 5],
+  [4, 4, 4, 3],
+  [4, 4, 6],
+];
+
+function layoutPrefix(groups: readonly number[]): boolean {
+  return cardLayouts.some((layout) => layout.length >= groups.length && layout.slice(0, groups.length).every((size, index) => size === groups[index]));
+}
+
+function longerLayout(groups: readonly number[]): boolean {
+  return cardLayouts.some((layout) => layout.length > groups.length && layout.slice(0, groups.length).every((size, index) => size === groups[index]));
+}
+
+function exactLayout(groups: readonly number[]): boolean {
+  return cardLayouts.some((layout) => layout.length === groups.length && layout.every((size, index) => size === groups[index]));
+}
+
 function redactCards(value: string): string {
   let out = "";
   let i = 0;
-  const digit = (c: number) => c >= 48 && c <= 57;
-  while (i < value.length) {
-    const code = value.charCodeAt(i);
-    const prev = i > 0 ? value.charCodeAt(i - 1) : 0;
-    if (!digit(code) || digit(prev)) {
-      out += value[i];
-      i += 1;
-      continue;
-    }
-    let j = i;
-    const groups: string[] = [];
-    let glued = false;
-    const total = () => groups.reduce((sum, group) => sum + group.length, 0);
-    while (j < value.length && total() < 19) {
-      let chunk = "";
-      while (j < value.length && digit(value.charCodeAt(j)) && total() + chunk.length < 19) {
-        chunk += value[j];
+  const digit = (index: number) => {
+    const code = value.charCodeAt(index);
+    return code >= 48 && code <= 57;
+  };
+  const skipRun = (from: number) => {
+    let j = from;
+    while (j < value.length) {
+      if (digit(j)) {
         j += 1;
+        continue;
       }
-      if (!chunk) break;
-      if (j < value.length && digit(value.charCodeAt(j))) {
-        glued = true;
-        break;
-      }
-      groups.push(chunk);
-      if (j < value.length && (value[j] === " " || value[j] === "-") && j + 1 < value.length && digit(value.charCodeAt(j + 1))) {
-        let nxt = 0;
-        let k = j + 1;
-        while (k < value.length && digit(value.charCodeAt(k))) {
-          nxt += 1;
-          k += 1;
-        }
-        if (total() + nxt > 19) break;
+      if ((value[j] === " " || value[j] === "-") && j + 1 < value.length && digit(j + 1)) {
         j += 1;
         continue;
       }
       break;
     }
-    const digits = groups.join("");
-    if (!glued && digits.length >= 13 && digits.length <= 19 && luhn(digits)) {
+    return j;
+  };
+  while (i < value.length) {
+    if (!digit(i) || (i > 0 && digit(i - 1))) {
+      out += value[i];
+      i += 1;
+      continue;
+    }
+    const start = i;
+    let j = i;
+    while (j < value.length && digit(j)) j += 1;
+    const first = j - start;
+    const grouped = j < value.length && (value[j] === " " || value[j] === "-") && j + 1 < value.length && digit(j + 1);
+    if (!grouped) {
+      if (first >= 13 && first <= 19 && luhn(value.slice(start, j))) out += "[REDACTED]";
+      else out += value.slice(start, j);
+      i = j;
+      continue;
+    }
+    if (!layoutPrefix([first])) {
+      const end = skipRun(start);
+      out += value.slice(start, end);
+      i = end;
+      continue;
+    }
+    const groups = [first];
+    let total = first;
+    const sep = value[j]!;
+    while (j < value.length && (value[j] === sep) && j + 1 < value.length && digit(j + 1) && longerLayout(groups)) {
+      let k = j + 1;
+      let nxt = 0;
+      while (k < value.length && digit(k)) {
+        nxt += 1;
+        k += 1;
+      }
+      if (total + nxt > 19 || !layoutPrefix(groups.concat(nxt))) break;
+      total += nxt;
+      groups.push(nxt);
+      j = k;
+    }
+    while (j > start && (value[j - 1] === " " || value[j - 1] === "-")) j -= 1;
+    if (exactLayout(groups) && luhn(value.slice(start, j).replace(/[ -]/g, ""))) {
       out += "[REDACTED]";
       i = j;
       continue;
     }
-    out += value[i];
-    i += 1;
+    const run = skipRun(start);
+    out += value.slice(start, run);
+    i = run;
   }
   return out;
 }

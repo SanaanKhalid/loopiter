@@ -445,8 +445,12 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(redact_capture("1234567890123456"), "1234567890123456")
         bulky = "eyJ-" * 262144 + "9" * 262144 + "http://user:" + "a" * 262144
         bulky += " secret_access_key=" + "A" * 39 + " a@"
+        spaced = "4 " * 32768
+        dashed = "4111-" * 8192
         started = time.perf_counter()
         redact_capture(bulky)
+        redact_capture(spaced)
+        redact_capture(dashed)
         self.assertLess(time.perf_counter() - started, 2)
         capped = time.perf_counter()
         omitted = capture_payload(bulky, {"mode": "redacted"})

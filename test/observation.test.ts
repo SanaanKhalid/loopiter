@@ -54,6 +54,8 @@ test("redaction stays inside a generous time bound and still redacts a normal jw
     " a@";
   const started = Date.now();
   redactCapture(bulky);
+  redactCapture("4 ".repeat(32768));
+  redactCapture("4111-".repeat(8192));
   assert.ok(Date.now() - started < 2000);
   const capped = Date.now();
   const omitted = capturePayload(bulky, { mode: "redacted" });

@@ -255,6 +255,58 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         streamed = json.dumps((await self.rows(loop))[-1]["output"])
         self.assertIn(payload, streamed)
 
+    async def test_bounded_client_truncates_a_large_response(self):
+        payload = "x" * 70_000
+        for mode in ("full", "redacted"):
+            for stream in (False, True):
+                _loop, create, base, _wrapped = self.setup_capture()
+                del _loop, _wrapped
+                notes = []
+                loop = FeedbackLoop(store=InMemoryStore(), namespace=f"cap-{mode}-{stream}")
+                client = create_observer(
+                    loop,
+                    bounded={"queue_limit": 4, "write_timeout_ms": 1000},
+                    capture={"mode": mode},
+                    on_error=notes.append,
+                )
+                wrapped = with_loopiter(
+                    base,
+                    loop=loop,
+                    context=lambda _request: {"artifacts": {"prompt": "v1"}},
+                    capture=client,
+                )
+                if stream:
+                    create.return_value = Stream(
+                        [
+                            {
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {"content": payload},
+                                        "finish_reason": "stop",
+                                    }
+                                ]
+                            }
+                        ]
+                    )
+                    async for _event in await wrapped.chat.completions.create(
+                        **PARAMS, stream=True
+                    ):
+                        pass
+                else:
+                    create.return_value = {
+                        "choices": [
+                            {"index": 0, "message": {"content": payload}, "finish_reason": "stop"}
+                        ]
+                    }
+                    await wrapped.chat.completions.create(**PARAMS)
+                await client.force_flush(1000)
+                row = (await loop.list("executions"))["items"][0]
+                self.assertTrue(row["metadata"]["loopiter_capture"]["truncated"])
+                self.assertNotIn(payload, json.dumps(row["output"]))
+                self.assertTrue(notes)
+                await client.shutdown(1000)
+
     async def test_failure_and_responses(self):
         loop, create, _base, wrapped = self.setup_capture()
         create.side_effect = ValueError("provider failure")

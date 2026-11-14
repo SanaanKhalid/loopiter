@@ -11,15 +11,17 @@ from typing import Any
 
 # Shared with src/integrations/privacy.ts. Listed explicitly:
 # U+0009 TAB, U+000A LF, U+000B VT, U+000C FF, U+000D CR, U+0020 SPACE,
-# U+00A0 NO-BREAK SPACE, U+1680 OGHAM SPACE MARK,
+# U+0085 NEXT LINE, U+00A0 NO-BREAK SPACE, U+1680 OGHAM SPACE MARK,
+# U+180E MONGOLIAN VOWEL SEPARATOR,
 # U+2000 EN QUAD, U+2001 EM QUAD, U+2002 EN SPACE, U+2003 EM SPACE,
 # U+2004 THREE-PER-EM SPACE, U+2005 FOUR-PER-EM SPACE, U+2006 SIX-PER-EM SPACE,
 # U+2007 FIGURE SPACE, U+2008 PUNCTUATION SPACE, U+2009 THIN SPACE, U+200A HAIR SPACE,
+# U+200B ZERO WIDTH SPACE,
 # U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR, U+202F NARROW NO-BREAK SPACE,
 # U+205F MEDIUM MATHEMATICAL SPACE, U+3000 IDEOGRAPHIC SPACE, U+FEFF BOM.
 _WS_CHARS = (
-    "\t\n\v\f\r \u00a0\u1680"
-    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\t\n\v\f\r \u0085\u00a0\u1680\u180e"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u200b"
     "\u2028\u2029\u202f\u205f\u3000\ufeff"
 )
 _WS_SET = frozenset(_WS_CHARS)
@@ -33,7 +35,7 @@ _KEY = re.compile(
     _FLAGS,
 )
 _PRIVATE_KEY = re.compile(
-    r"-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)",
+    r"-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|\Z)",
     re.ASCII,
 )
 _BEARER = re.compile(rf"(?<![A-Za-z0-9_])Bearer{_WS}+[A-Za-z0-9+/_.=~-]+", _FLAGS)
@@ -166,53 +168,106 @@ def _luhn(digits: str) -> bool:
     return total % 10 == 0
 
 
+def _ascii_digit(ch: str) -> bool:
+    return "0" <= ch <= "9"
+
+
+_CARD_LAYOUTS = (
+    (4, 4, 4, 4),
+    (4, 4, 4, 4, 3),
+    (4, 6, 5),
+    (4, 6, 4),
+    (4, 4, 5),
+    (4, 4, 4, 3),
+    (4, 4, 6),
+)
+
+
+def _layout_prefix(groups: tuple[int, ...]) -> bool:
+    return any(layout[: len(groups)] == groups for layout in _CARD_LAYOUTS)
+
+
+def _longer_layout(groups: tuple[int, ...]) -> bool:
+    return any(
+        len(layout) > len(groups) and layout[: len(groups)] == groups for layout in _CARD_LAYOUTS
+    )
+
+
+def _exact_layout(groups: tuple[int, ...]) -> bool:
+    return groups in _CARD_LAYOUTS
+
+
+def _skip_card_run(value: str, start: int) -> int:
+    j = start
+    length = len(value)
+    while j < length:
+        if _ascii_digit(value[j]):
+            j += 1
+            continue
+        if value[j] in " -" and j + 1 < length and _ascii_digit(value[j + 1]):
+            j += 1
+            continue
+        break
+    return j
+
+
 def _redact_cards(value: str) -> str:
     out: list[str] = []
     i = 0
     length = len(value)
     while i < length:
-        code = ord(value[i])
-        prev = ord(value[i - 1]) if i else 0
-        if code < 48 or code > 57 or 48 <= prev <= 57:
+        if not _ascii_digit(value[i]) or (i > 0 and _ascii_digit(value[i - 1])):
             out.append(value[i])
             i += 1
             continue
+        start = i
         j = i
-        groups: list[str] = []
-        glued = False
-        while j < length and sum(len(group) for group in groups) < 19:
-            chunk: list[str] = []
-            while (
-                j < length
-                and value[j].isdigit()
-                and sum(len(group) for group in groups) + len(chunk) < 19
-            ):
-                chunk.append(value[j])
-                j += 1
-            if not chunk:
+        while j < length and _ascii_digit(value[j]):
+            j += 1
+        first = j - start
+        grouped = j < length and value[j] in " -" and j + 1 < length and _ascii_digit(value[j + 1])
+        if not grouped:
+            if 13 <= first <= 19 and _luhn(value[start:j]):
+                out.append("[REDACTED]")
+            else:
+                out.append(value[start:j])
+            i = j
+            continue
+        if not _layout_prefix((first,)):
+            end = _skip_card_run(value, start)
+            out.append(value[start:end])
+            i = end
+            continue
+        groups = [first]
+        total = first
+        sep = value[j]
+        while (
+            j < length
+            and value[j] == sep
+            and j + 1 < length
+            and _ascii_digit(value[j + 1])
+            and _longer_layout(tuple(groups))
+        ):
+            k = j + 1
+            nxt = 0
+            while k < length and _ascii_digit(value[k]):
+                nxt += 1
+                k += 1
+            if total + nxt > 19 or not _layout_prefix((*groups, nxt)):
                 break
-            if j < length and value[j].isdigit():
-                glued = True
-                break
-            groups.append("".join(chunk))
-            if j < length and value[j] in " -" and j + 1 < length and value[j + 1].isdigit():
-                nxt = 0
-                k = j + 1
-                while k < length and value[k].isdigit():
-                    nxt += 1
-                    k += 1
-                if sum(len(group) for group in groups) + nxt > 19:
-                    break
-                j += 1
-                continue
-            break
-        digits = "".join(groups)
-        if not glued and 13 <= len(digits) <= 19 and _luhn(digits):
+            total += nxt
+            groups.append(nxt)
+            j = k
+        while j > start and value[j - 1] in " -":
+            j -= 1
+        digits = "".join(ch for ch in value[start:j] if _ascii_digit(ch))
+        if _exact_layout(tuple(groups)) and _luhn(digits):
             out.append("[REDACTED]")
             i = j
             continue
-        out.append(value[i])
-        i += 1
+        end = _skip_card_run(value, start)
+        out.append(value[start:end])
+        i = end
     return "".join(out)
 
 

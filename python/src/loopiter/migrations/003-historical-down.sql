@@ -1,6 +1,8 @@
 -- Reverses 003-historical.sql. Not included in migration_sql(). Constructors never run it.
 -- Transaction 1 locks the table in SHARE ROW EXCLUSIVE MODE, under lock_timeout,
 -- before it looks for historical rows. An insert cannot land between that check and the drop.
+-- The lock blocks writes for the whole scan. On PostgreSQL 16 and 17 that check does not
+-- use the collection index by itself, so the scan reads the table. Run this in a quiet window.
 -- If any historical row exists, transaction 1 raises and rolls back. It does not delete rows.
 -- When no historical row exists, transaction 1 restores the version-2 check as NOT VALID
 -- and commits. DROP CONSTRAINT and ADD CONSTRAINT NOT VALID take ACCESS EXCLUSIVE and do
