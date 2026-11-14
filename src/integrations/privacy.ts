@@ -21,8 +21,10 @@ export interface CapturePolicy {
 const WS_CHARS =
   "\t\n\v\f\r \u0085\u00a0\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u200b\u2028\u2029\u202f\u205f\u3000\ufeff";
 const WS_SET = new Set(WS_CHARS);
+// U+180E and U+200B may separate a label from a value. They do not end the value.
+const FORMAT_WS = new Set(["\u180e", "\u200b"]);
+const VALUE_BREAK = [...WS_CHARS].filter((ch) => !FORMAT_WS.has(ch)).join("");
 const WS = `[${WS_CHARS}]`;
-const NOT_WS = `[^${WS_CHARS}]`;
 const credentialKey = new RegExp(
   "^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|client[-_]?secret|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials|x[-_]?api[-_]?key|private[-_]?key|token|session)$",
   "i",
@@ -39,11 +41,11 @@ const awsSecret = new RegExp(
   "gi",
 );
 const assigned = new RegExp(
-  `((?:password|api[_-]?key|access[_-]?token|secret)${WS}*[=:]${WS}*)[^${WS_CHARS}&,;]+`,
+  `((?:password|api[_-]?key|access[_-]?token|secret)${WS}*[=:]${WS}*)[^${VALUE_BREAK}&,;]+`,
   "gi",
 );
 const queryToken = new RegExp(
-  `((?:^|[${WS_CHARS}?&#])(?:access_token|token)=)[^${WS_CHARS}&#]+`,
+  `((?:^|[${WS_CHARS}?&#])(?:access_token|token)=)[^${VALUE_BREAK}&#]+`,
   "gi",
 );
 const privateKey = /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g;
@@ -172,19 +174,11 @@ function redactCards(value: string): string {
     const code = value.charCodeAt(index);
     return code >= 48 && code <= 57;
   };
-  const skipRun = (from: number) => {
+  const nextGroup = (from: number) => {
     let j = from;
-    while (j < value.length) {
-      if (digit(j)) {
-        j += 1;
-        continue;
-      }
-      if ((value[j] === " " || value[j] === "-") && j + 1 < value.length && digit(j + 1)) {
-        j += 1;
-        continue;
-      }
-      break;
-    }
+    while (j < value.length && digit(j)) j += 1;
+    if (j < value.length && (value[j] === " " || value[j] === "-") && j + 1 < value.length && digit(j + 1))
+      return j + 1;
     return j;
   };
   while (i < value.length) {
@@ -205,9 +199,9 @@ function redactCards(value: string): string {
       continue;
     }
     if (!layoutPrefix([first])) {
-      const end = skipRun(start);
-      out += value.slice(start, end);
-      i = end;
+      const nxt = nextGroup(start);
+      out += value.slice(start, nxt);
+      i = nxt;
       continue;
     }
     const groups = [first];
@@ -231,9 +225,9 @@ function redactCards(value: string): string {
       i = j;
       continue;
     }
-    const run = skipRun(start);
-    out += value.slice(start, run);
-    i = run;
+    const nxt = nextGroup(start);
+    out += value.slice(start, nxt);
+    i = nxt;
   }
   return out;
 }

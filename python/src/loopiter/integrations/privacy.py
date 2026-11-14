@@ -25,8 +25,10 @@ _WS_CHARS = (
     "\u2028\u2029\u202f\u205f\u3000\ufeff"
 )
 _WS_SET = frozenset(_WS_CHARS)
+# U+180E and U+200B may separate a label from a value. They do not end the value.
+_FORMAT_WS = "\u180e\u200b"
+_VALUE_BREAK = "".join(ch for ch in _WS_CHARS if ch not in _FORMAT_WS)
 _WS = f"[{_WS_CHARS}]"
-_NOT_WS = f"[^{_WS_CHARS}]"
 _FLAGS = re.IGNORECASE | re.ASCII
 _KEY = re.compile(
     r"^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|"
@@ -59,11 +61,11 @@ _AWS_SECRET = re.compile(
     _FLAGS,
 )
 _ASSIGNED_SECRET = re.compile(
-    rf"((?:password|api[_-]?key|access[_-]?token|secret){_WS}*[=:]{_WS}*)[^{_WS_CHARS}&,;]+",
+    rf"((?:password|api[_-]?key|access[_-]?token|secret){_WS}*[=:]{_WS}*)[^{_VALUE_BREAK}&,;]+",
     _FLAGS,
 )
 _QUERY_TOKEN = re.compile(
-    rf"((?:^|[{_WS_CHARS}?&#])(?:access_token|token)=)[^{_WS_CHARS}&#]+",
+    rf"((?:^|[{_WS_CHARS}?&#])(?:access_token|token)=)[^{_VALUE_BREAK}&#]+",
     _FLAGS,
 )
 _LOCAL = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-")
@@ -197,17 +199,14 @@ def _exact_layout(groups: tuple[int, ...]) -> bool:
     return groups in _CARD_LAYOUTS
 
 
-def _skip_card_run(value: str, start: int) -> int:
+def _next_card_group(value: str, start: int) -> int:
+    """Index of the next digit group after start, or the end of this group."""
     j = start
     length = len(value)
-    while j < length:
-        if _ascii_digit(value[j]):
-            j += 1
-            continue
-        if value[j] in " -" and j + 1 < length and _ascii_digit(value[j + 1]):
-            j += 1
-            continue
-        break
+    while j < length and _ascii_digit(value[j]):
+        j += 1
+    if j < length and value[j] in " -" and j + 1 < length and _ascii_digit(value[j + 1]):
+        return j + 1
     return j
 
 
@@ -234,9 +233,9 @@ def _redact_cards(value: str) -> str:
             i = j
             continue
         if not _layout_prefix((first,)):
-            end = _skip_card_run(value, start)
-            out.append(value[start:end])
-            i = end
+            nxt = _next_card_group(value, start)
+            out.append(value[start:nxt])
+            i = nxt
             continue
         groups = [first]
         total = first
@@ -265,9 +264,9 @@ def _redact_cards(value: str) -> str:
             out.append("[REDACTED]")
             i = j
             continue
-        end = _skip_card_run(value, start)
-        out.append(value[start:end])
-        i = end
+        nxt = _next_card_group(value, start)
+        out.append(value[start:nxt])
+        i = nxt
     return "".join(out)
 
 

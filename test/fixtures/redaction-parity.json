@@ -105,6 +105,22 @@
     {
       "input": "４２４２４２４２４２４２４２４２",
       "output": "４２４２４２４２４２４２４２４２"
+    },
+    {
+      "input": "12-4242-4242-4242-4242",
+      "output": "12-[REDACTED]"
+    },
+    {
+      "input": "12 4242 4242 4242 4242",
+      "output": "12 [REDACTED]"
+    },
+    {
+      "input": "password=sec​ret",
+      "output": "password=[REDACTED]"
+    },
+    {
+      "input": "token=sec᠎ret",
+      "output": "token=[REDACTED]"
     }
   ],
   "boundaries": [

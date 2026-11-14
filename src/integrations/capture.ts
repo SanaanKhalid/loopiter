@@ -34,7 +34,7 @@ export interface CaptureOptions {
   context(
     request: CaptureRequest,
   ): ExecutionContext | Promise<ExecutionContext>;
-  /** Bound stream buffering. Overflow fails capture and cancels consumption. */
+  /** Bound stream buffering. Without a capture policy, overflow fails capture and cancels consumption. With a capture policy, overflow truncates the stored record and consumption continues. */
   maximumOutputBytes?: number;
   /** Awaited after persistence, including the initial pending record. */
   onExecution?(execution: AiExecution): void | Promise<void>;
