@@ -5,8 +5,8 @@ import { docUrl, docsHref } from '../../lib/docs-links';
 import { pageMetadata } from '../../lib/site';
 
 export const metadata: Metadata = pageMetadata({
-  title: 'The Loopiter Manifesto — Give feedback. Let it improve.',
-  description: 'Your agent should turn useful feedback into tested prompt and knowledge improvements, then put passing changes to work automatically. Why we’re building Loopiter.',
+  title: 'Loopiter Manifesto: Agents Improve Themselves While in Use',
+  description: 'Self-improving AI agents, by default: tested prompt changes ship only when held-out evidence shows they beat the current version.',
   path: '/manifesto',
 });
 
@@ -17,55 +17,49 @@ export default function Manifesto() {
     <article id="manifesto" className="reading" aria-labelledby="manifesto-title">
         <header className="manifesto-heading">
           <p className="eyebrow">The Loopiter manifesto</p>
-          <h1 id="manifesto-title">Give feedback.<br />Let it improve.</h1>
-          <p className="manifesto-deck">Your agent should turn a useful correction into a tested improvement, without waiting for someone to rewrite its prompt.</p>
+          <h1 id="manifesto-title">It improves itself,<br />while it&apos;s in use.</h1>
+          <p className="manifesto-deck">Agents improve themselves automatically, while they&apos;re in use.</p>
         </header>
 
         <div className="manifesto-body">
-          <p>A support agent gives the wrong warranty period. You correct it. It apologizes. A week later, another customer gets the same wrong answer.</p>
-          <p>You already explained the mistake. Now someone has to find that conversation, figure out what to change, edit the prompt or knowledge, run the checks, and ship an update.</p>
-          <p>We think an agent should be able to carry that work through. You give the feedback. It works on making the next answer better.</p>
+          <p>A support agent tells a customer the warranty is one year. The order says two. The conversation ends, and the outcome is wrong.</p>
+          <p>The next time that question comes up, nobody has to find the transcript, edit the prompt, and ship a patch. The miss is already a signal. The agent proposes a change to its prompt, tests it on held-out cases, and ships it when the new version beats the one in use. The following customer gets two years.</p>
 
-          <section aria-labelledby="feedback-starts-work">
-            <h2 id="feedback-starts-work">Feedback should start the work.</h2>
-            <p>The person handling returns knows the exceptions. The engineer on call knows which warning matters. The customer can tell you exactly where an answer stopped being helpful.</p>
-            <p>That knowledge usually arrives as a correction, in the middle of someone’s day. It shouldn’t need a separate project before the application can use it.</p>
-            <p>Attach the feedback to the answer it’s about. Give the agent enough context to understand what went wrong. That should be enough to start an improvement attempt.</p>
+          <section aria-labelledby="default-is-improvement">
+            <h2 id="default-is-improvement">Improvement is the default.</h2>
+            <p>A self-improving agent gets better at its job while people are using it. That is the ordinary state, not a project someone starts later.</p>
+            <p>Outcomes, failures, evaluations, and human feedback when someone gives it, all feed the same loop. The agent does not wait for a developer to notice. It keeps working between conversations.</p>
           </section>
 
-          <section aria-labelledby="finish-the-job">
-            <h2 id="finish-the-job">Let the agent finish the job.</h2>
-            <p>It should examine the original answer and the feedback, work out whether a change is needed, and propose a small update to its prompt or knowledge. Then it should test that update against the correction and the things it already needs to get right.</p>
-            <p>When the checks pass and the change improves on the current version, it should go live automatically. Future answers should use the improved version. You should be able to see what happened without having to move every change through by hand.</p>
-            <p>This is the loop we’re building: feedback comes in, the agent does the improvement work, and passing changes become part of the application. Once you enable it, that work can continue between your visits.</p>
+          <section aria-labelledby="agent-does-the-work">
+            <h2 id="agent-does-the-work">The agent does the work.</h2>
+            <p>It looks at what happened, decides whether a change is worth trying, and proposes a small update to its prompt. Then it tests that update against the cases it must still get right.</p>
+            <p>When the evidence says the change is better, it ships. Later answers use the new version. What changed is on the record.</p>
           </section>
 
-          <section aria-labelledby="set-the-rules">
-            <h2 id="set-the-rules">You decide what good means.</h2>
-            <p>You set the instructions that must stay fixed, the examples that must keep working, and the budget for improvement. The agent works within those limits. It doesn’t get to rewrite its own checks to make a change pass.</p>
-            <p>A vague complaint may need more information. A correction may conflict with an earlier one. A promising change may fail a regression. In those cases, the current version stays in place and the reason is recorded.</p>
-            <p>Passing checks is evidence about the cases you tested. Keep improving those checks as you learn. Every released change should have a history you can inspect and a previous version you can restore.</p>
+          <section aria-labelledby="evidence-is-the-gate">
+            <h2 id="evidence-is-the-gate">Evidence is the gate.</h2>
+            <p>A change goes live only when held-out evidence shows it beats the current version. Otherwise the current version stays, and the reason is recorded.</p>
+            <p>A promising draft that loses the comparison is not an improvement. The gate is what makes automatic shipping something you can trust: the agent can move, and it cannot move a change that failed the test.</p>
           </section>
 
-          <section aria-labelledby="keep-application">
-            <h2 id="keep-application">You’ve already built an application.</h2>
-            <p>You chose its models, connected its tools, and worked out what it’s allowed to do. Adding a feedback loop should fit that work.</p>
-            <p>Loopiter automates improvement of the prompt and knowledge you put in the loop. Your application keeps its credentials, permissions, and execution logic. You choose the part that can improve on its own.</p>
-            <p>Setup should work the same way. Tell your coding agent what you want to connect. Let it work through the integration with you, in the project where the code lives.</p>
+          <section aria-labelledby="the-bar-stays-fixed">
+            <h2 id="the-bar-stays-fixed">The bar is set once.</h2>
+            <p>Humans set the fixed instructions, the examples that must keep passing, and the budget. The agent works inside that bar. It cannot rewrite its own checks to make a change pass.</p>
+            <p>Those limits are the safety of full autonomy. They are set so the loop can run, not so someone has to approve each edit.</p>
           </section>
 
-          <section aria-labelledby="why-loopiter">
-            <h2 id="why-loopiter">That’s why we’re building Loopiter.</h2>
-            <p>We want an agent to get better at its job while it’s being used. People supply the feedback and define what a good answer looks like. The agent takes on the work of turning that feedback into a change worth keeping.</p>
-            <p>A useful correction should leave the application better prepared for the next person, even when no developer is sitting there to make the edit.</p>
-            <p className="manifesto-signoff">Give the feedback. Let the agent do the follow-through.</p>
+          <section aria-labelledby="every-change-can-return">
+            <h2 id="every-change-can-return">Every change can be undone.</h2>
+            <p>Every released change has a history and a previous version that can be restored. Rollback is part of shipping on its own.</p>
+            <p className="manifesto-signoff">While it is in use, it gets better.</p>
           </section>
         </div>
 
         <div className="manifesto-next">
-          <Link className="text-link" href="/#how-it-works">How Loopiter works <span aria-hidden="true">↗</span></Link>
+          <Link className="text-link" href="/#how-it-works">How it works <span aria-hidden="true">↗</span></Link>
           <Link className="text-link" href="/blog/self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate">Why the loop has to be evaluable <span aria-hidden="true">↗</span></Link>
-          <Link className="text-link" href="/blog/graduated-autonomy-for-self-improving-ai-agents">Graduated autonomy for self-improving agents <span aria-hidden="true">↗</span></Link>
+          <Link className="text-link" href="/blog/graduated-autonomy-for-self-improving-ai-agents">Graduated autonomy <span aria-hidden="true">↗</span></Link>
           <a className="text-link" href={docUrl('autonomous')}>Autonomy modes in the documentation <span aria-hidden="true">↗</span></a>
           <a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a>
         </div>

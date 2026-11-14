@@ -41,7 +41,7 @@ export function SiteFooter() {
   return (
     <footer className="site-footer">
       <Link href="/" className="brand" aria-label="Loopiter home"><Mark /><span>Loopiter</span></Link>
-      <p>A lightweight control plane for measurable AI improvement.</p>
+      <p>Agents improve themselves automatically, while they&apos;re in use.</p>
       <div>
         <Link href="/blog">Blog</Link>
         <Link href="/manifesto">Manifesto</Link>
