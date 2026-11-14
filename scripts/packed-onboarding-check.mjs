@@ -66,10 +66,22 @@ const guide = await readAgentGuide();
 if (guide !== await readFile(join(root, "AGENT_GUIDE.md"), "utf8")) {
   throw new Error("setup module did not read the packed agent guide");
 }
-if (!guide.includes("docs/application-observation.md")) {
+const links = [];
+for (const target of guide.matchAll(/\\[[^\\]]*\\]\\(([^)\\s]+)\\)/g)) {
+  const raw = target[1];
+  if (raw.includes("://") || raw.startsWith("#")) continue;
+  const path = raw.split("#")[0].split("?")[0];
+  if (path) links.push(path);
+}
+if (!links.includes("docs/application-observation.md")) {
   throw new Error("agent guide does not link to the observation document");
 }
-await readFile(join(root, "docs/application-observation.md"), "utf8");
+for (const path of links) {
+  if (path.startsWith("/") || path.split("/").includes("..")) {
+    throw new Error("agent guide link is not inside the package: " + path);
+  }
+  await readFile(join(root, path), "utf8");
+}
 if (typeof createObserver !== "function" || typeof createLoopiterSpanExporter !== "function") {
   throw new Error("observation modules missing");
 }
@@ -80,11 +92,7 @@ console.log("packed node surface ok");
     ...process.env,
     PACKED_ROOT: installed,
   });
-  run(
-    process.execPath,
-    ["node_modules/loopiter/dist/src/cli.js", "init", "--directory", "setup"],
-    temporary,
-  );
+  run("npx", ["--no-install", "loopiter", "init", "--directory", "setup"], temporary);
   const copied = await readFile(join(temporary, "setup/AGENT_GUIDE.md"), "utf8");
   if (!copied.includes("self-hosted SDK/library")) {
     throw new Error("init did not copy the packed agent guide");
@@ -93,28 +101,36 @@ console.log("packed node surface ok");
     join(temporary, "worker.mjs"),
     `
 import { readFileSync } from "node:fs";
-import { FeedbackLoop, InMemoryStore } from "loopiter";
+import { FeedbackLoop, InMemoryStore, ImprovementController } from "loopiter";
 const policy = JSON.parse(readFileSync(new URL("./policy.json", import.meta.url), "utf8"));
 const never = async () => { throw new Error("no model calls"); };
+const workflow = {
+  id: "packed", version: "1", optimizerVersion: "1", evaluatorVersion: "1", policy,
+  artifact: async () => ({ artifactVersion: "baseline", configurationHash: "fixed" }),
+  dataset: async () => ({ version: "1", optimization: [], validation: [], audit: [] }),
+  propose: never, evaluate: never, observe: never,
+  deployment: { apply: never, inspect: never, rollback: never },
+};
+const probe = new ImprovementController(
+  new FeedbackLoop({ store: new InMemoryStore(), namespace: "packed/default" }),
+  { workflows: [workflow] },
+);
+if (probe.options.mode !== "autonomous" || probe.options.selfImproving !== true) {
+  throw new Error("installed controller default is not autonomous with self-improving on");
+}
 export async function createIntegration() {
   const loop = new FeedbackLoop({ store: new InMemoryStore(), namespace: "packed/node" });
   return {
     loop,
-    workflows: [{
-      id: "packed", version: "1", optimizerVersion: "1", evaluatorVersion: "1", policy,
-      artifact: async () => ({ artifactVersion: "baseline", configurationHash: "fixed" }),
-      dataset: async () => ({ version: "1", optimization: [], validation: [], audit: [] }),
-      propose: never, evaluate: never, observe: never,
-      deployment: { apply: never, inspect: never, rollback: never },
-    }],
+    workflows: [workflow],
     close: async () => { await loop.close(); },
   };
 }
 `,
   );
   const tick = spawnSync(
-    process.execPath,
-    ["node_modules/loopiter/dist/src/cli.js", "worker", "--module", "worker.mjs", "--once"],
+    "npx",
+    ["--no-install", "loopiter", "worker", "--module", "worker.mjs", "--once"],
     { cwd: temporary, encoding: "utf8" },
   );
   if (tick.status !== 0) throw new Error(tick.stderr || "node tick failed");

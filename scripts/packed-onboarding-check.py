@@ -98,7 +98,7 @@ print("packed python surface ok")
         capture_output=True,
         text=True,
     )
-    if surface.returncode != 0:
+    if "packed python surface ok" not in surface.stdout:
         raise RuntimeError(surface.stderr)
     help_text = subprocess.run(
         [str(python), "-I", "-m", "loopiter", "--help"],
@@ -111,14 +111,16 @@ print("packed python surface ok")
         raise RuntimeError("python -m loopiter --help did not offer init")
     setup = work / f"setup-{index}"
     run(python, "-I", "-m", "loopiter", "init", "--directory", str(setup), cwd=work)
-    if not (setup / "AGENT_GUIDE.md").is_file():
+    copied = setup / "AGENT_GUIDE.md"
+    if not copied.is_file() or "self-hosted SDK/library" not in copied.read_text(
+        encoding="utf-8"
+    ):
         raise RuntimeError("init did not copy the packed agent guide")
     module = work / f"worker-{index}.py"
     module.write_text(
-        "from loopiter import FeedbackLoop, InMemoryStore, ImprovementWorkflow\n"
+        "from loopiter import FeedbackLoop, InMemoryStore, ImprovementController, ImprovementWorkflow\n"
         f"POLICY = {policy!r}\n"
-        "async def create_integration(*, cancellation):\n"
-        "    loop = FeedbackLoop(store=InMemoryStore(), namespace='packed/python')\n"
+        "def _workflow():\n"
         "    async def never(*_args): raise AssertionError('no model calls')\n"
         "    async def artifact(_context):\n"
         "        return {'artifact_version': 'baseline', 'configuration_hash': 'fixed'}\n"
@@ -126,14 +128,22 @@ print("packed python surface ok")
         "        return {'version': '1', 'optimization': [], 'validation': [], 'audit': []}\n"
         "    class Registry:\n"
         "        apply = inspect = rollback = never\n"
-        "    async def close():\n"
-        "        await loop.close()\n"
-        "    workflow = ImprovementWorkflow(\n"
+        "    return ImprovementWorkflow(\n"
         "        id='packed', version='1', optimizer_version='1', evaluator_version='1',\n"
         "        policy=POLICY, artifact=artifact, dataset=dataset, propose=never,\n"
         "        evaluate=never, observe=never, deployment=Registry(),\n"
         "    )\n"
-        "    return {'loop': loop, 'workflows': [workflow], 'close': close}\n",
+        "probe = ImprovementController(\n"
+        "    FeedbackLoop(store=InMemoryStore(), namespace='packed/default'),\n"
+        "    workflows=[_workflow()],\n"
+        ")\n"
+        "if probe.mode != 'autonomous' or probe.self_improving is not True:\n"
+        "    raise SystemExit('installed controller default is not autonomous with self-improving on')\n"
+        "async def create_integration(*, cancellation):\n"
+        "    loop = FeedbackLoop(store=InMemoryStore(), namespace='packed/python')\n"
+        "    async def close():\n"
+        "        await loop.close()\n"
+        "    return {'loop': loop, 'workflows': [_workflow()], 'close': close}\n",
         encoding="utf-8",
     )
     tick = subprocess.run(
@@ -201,36 +211,48 @@ def main():
                     check=True,
                 )
             else:
-                # The sdist needs hatchling to build. Use the interpreter that
-                # already has it, and install the result into this venv. No index.
-                site = subprocess.run(
-                    [
-                        str(python),
-                        "-c",
-                        "import sysconfig; print(sysconfig.get_paths()['purelib'])",
-                    ],
-                    cwd=work,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                ).stdout.strip()
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "pip",
-                        "install",
-                        "--no-index",
-                        "--no-deps",
-                        "--no-build-isolation",
-                        "--disable-pip-version-check",
-                        "--target",
-                        site,
-                        str(artifact),
-                    ],
-                    cwd=work,
-                    check=True,
+                # The venv pip builds the sdist. Point it at the hatchling
+                # already installed for `python -m build`, without PYTHONPATH.
+                import hatchling
+
+                venv_site = Path(
+                    subprocess.run(
+                        [
+                            str(python),
+                            "-c",
+                            "import sysconfig; print(sysconfig.get_paths()['purelib'])",
+                        ],
+                        cwd=work,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    ).stdout.strip()
                 )
+                bridge = venv_site / "_loopiter_sdist_build.pth"
+                bridge.write_text(
+                    str(Path(hatchling.__file__).resolve().parents[1]) + "\n",
+                    encoding="utf-8",
+                )
+                clean = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+                try:
+                    subprocess.run(
+                        [
+                            str(python),
+                            "-m",
+                            "pip",
+                            "install",
+                            "--no-index",
+                            "--no-deps",
+                            "--no-build-isolation",
+                            "--disable-pip-version-check",
+                            str(artifact),
+                        ],
+                        cwd=work,
+                        check=True,
+                        env=clean,
+                    )
+                finally:
+                    bridge.unlink(missing_ok=True)
             reports.append(
                 {"kind": kind, "files": check_consumer(python, work, policy, index)}
             )
