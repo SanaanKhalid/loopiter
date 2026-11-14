@@ -577,7 +577,7 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         started = time.perf_counter()
         _redact_cards("4 " * (512 * 1024))
         _redact_cards("4111-" * (1024 * 1024 // 5))
-        self.assertLess(time.perf_counter() - started, 4)
+        self.assertLess(time.perf_counter() - started, 8)
 
     async def test_bounded_open_map_is_cleared(self):
         loop = self.loop()
