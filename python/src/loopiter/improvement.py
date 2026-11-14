@@ -1284,7 +1284,10 @@ class ImprovementController:
                 attempt = await self.loop.reconcile_deployment(d["attempt_id"], w.deployment)
             else:
                 if d["operation"] == "apply" and (
-                    not self.self_improving or self.mode != "autonomous" or paused
+                    not self.self_improving
+                    or self.mode != "autonomous"
+                    or paused
+                    or improvement_work_disabled()
                 ):
                     await self._save(rid, owner, {"reason": "self_improvement_disabled"}, True)
                     return
@@ -1500,7 +1503,12 @@ class ImprovementController:
                 if observed["improvement_lower_bound"] <= p["objective"]["minimum_improvement"]:
                     await self._save(rid, owner, {"reason": "canary_not_superior"}, True)
                     return
-                if paused or not self.self_improving or self.mode != "autonomous":
+                if (
+                    paused
+                    or not self.self_improving
+                    or self.mode != "autonomous"
+                    or improvement_work_disabled()
+                ):
                     await self._save(rid, owner, {"reason": "promotion_paused"}, True)
                     return
                 opid = rid + ":promote"

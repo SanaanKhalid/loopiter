@@ -1401,7 +1401,8 @@ export class ImprovementController {
             d.operation === "apply" &&
             (this.options.selfImproving !== true ||
               mode !== "autonomous" ||
-              lock.paused)
+              lock.paused ||
+              improvementWorkDisabled())
           )
             return {
               ...(await idle("self_improvement_disabled", "paused")),
@@ -1680,7 +1681,8 @@ export class ImprovementController {
               if (
                 lock.paused ||
                 this.options.selfImproving !== true ||
-                mode !== "autonomous"
+                mode !== "autonomous" ||
+                improvementWorkDisabled()
               )
                 return {
                   ...(await idle("promotion_paused", "paused")),

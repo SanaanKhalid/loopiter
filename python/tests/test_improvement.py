@@ -549,6 +549,72 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
                         (await self.controller().tick("classification"))["state"], "rolled_back"
                     )
 
+    async def test_disable_setting_on_apply_paths(self):
+        previous = os.environ.get("LOOPITER_DISABLE")
+        try:
+            self.setup_workflow(FIXTURES["scenarios"][0])
+            self.workflow.policy["rollout"]["mode"] = "canary"
+
+            class Rollout:
+                calls = 0
+
+                async def promote(inner, *_):
+                    inner.calls += 1
+
+                async def inspect(inner, *_):
+                    return "promoted"
+
+            rollout, observe = Rollout(), self.workflow.observe
+
+            async def canary(i, c, observe=observe):
+                return {
+                    **await observe(i, c),
+                    "control_version": i["baseline"]["artifact_version"],
+                    "assignment_hash": "stable-cohort-v1",
+                    "control_unit_ids": [f"control-{n}" for n in range(10)],
+                    "improvement_lower_bound": 0.5,
+                }
+
+            self.workflow = replace(self.workflow, rollout=rollout, observe=canary)
+            await self.advance_to_observation()
+            self.now += timedelta(hours=2)
+            os.environ["LOOPITER_DISABLE"] = "1"
+            held = await self.controller().tick("classification")
+            self.assertEqual(held["reason"], "promotion_paused")
+            self.assertEqual(rollout.calls, 0)
+
+            os.environ.pop("LOOPITER_DISABLE", None)
+            self.setup_workflow(FIXTURES["scenarios"][0])
+            ready = None
+            for _ in range(8):
+                ready = await self.controller().tick("classification")
+                if ready["reason"] == "audit_passed":
+                    break
+            self.assertEqual(ready["reason"], "audit_passed")
+            self.assertEqual(self.registry.calls, 0)
+            os.environ["LOOPITER_DISABLE"] = "1"
+            blocked = await self.controller().tick("classification")
+            self.assertEqual(blocked["reason"], "self_improvement_disabled")
+            self.assertEqual(self.registry.calls, 0)
+
+            os.environ.pop("LOOPITER_DISABLE", None)
+            regression = next(
+                scenario for scenario in FIXTURES["scenarios"] if scenario["name"] == "regression"
+            )
+            self.setup_workflow(regression)
+            await self.advance_to_observation()
+            self.now += timedelta(hours=2)
+            rolling = await self.controller().tick("classification")
+            self.assertEqual(rolling["state"], "rolling_back")
+            os.environ["LOOPITER_DISABLE"] = "1"
+            recovered = await self.controller().tick("classification")
+            self.assertEqual(recovered["state"], "rolled_back")
+        finally:
+            if previous is None:
+                os.environ.pop("LOOPITER_DISABLE", None)
+            else:
+                os.environ["LOOPITER_DISABLE"] = previous
+
     async def test_out_of_band_change_blocks_rollback(self):
         self.setup_workflow(FIXTURES["scenarios"][5])
         await self.advance_to_observation()

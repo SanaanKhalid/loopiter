@@ -607,6 +607,69 @@ for (const outcome of ["promoted", "not_applied", "unknown"] as const)
         "rolled_back",
       );
   });
+test("honor the disable setting in all apply paths", async () => {
+  const previous = process.env.LOOPITER_DISABLE;
+  try {
+    const x = setup();
+    x.workflow.policy.rollout.mode = "canary";
+    let promotions = 0;
+    x.workflow.rollout = {
+      promote: async () => {
+        promotions++;
+      },
+      inspect: async () => "promoted",
+    };
+    const observe = x.workflow.observe;
+    x.workflow.observe = async (input, context) => ({
+      ...(await observe(input, context)),
+      controlVersion: input.baseline.artifactVersion,
+      assignmentHash: "stable-cohort-v1",
+      controlUnitIds: Array.from({ length: 10 }, (_, n) => `control-${n}`),
+      improvementLowerBound: 0.5,
+    });
+    for (let i = 0; i < 4; i++) await x.controller().tick("classification");
+    x.advance();
+    process.env.LOOPITER_DISABLE = "1";
+    const held = await x.controller().tick("classification");
+    assert.equal(held.reason, "promotion_paused");
+    assert.equal(promotions, 0);
+
+    delete process.env.LOOPITER_DISABLE;
+    const applied = setup();
+    let ready = await applied.controller().tick("classification");
+    for (let i = 0; i < 8 && ready.reason !== "audit_passed"; i++)
+      ready = await applied.controller().tick("classification");
+    assert.equal(ready.reason, "audit_passed");
+    assert.equal(applied.registry.applications, 0);
+    process.env.LOOPITER_DISABLE = "1";
+    const blocked = await applied.controller().tick("classification");
+    assert.equal(blocked.reason, "self_improvement_disabled");
+    assert.equal(applied.registry.applications, 0);
+
+    delete process.env.LOOPITER_DISABLE;
+    const recovering = setup({
+      name: "regression",
+      scores: [1],
+      errors: 0,
+      productionErrors: 1,
+    });
+    for (let i = 0; i < 4; i++)
+      await recovering.controller().tick("classification");
+    recovering.advance();
+    assert.equal(
+      (await recovering.controller().tick("classification")).state,
+      "rolling_back",
+    );
+    process.env.LOOPITER_DISABLE = "1";
+    assert.equal(
+      (await recovering.controller().tick("classification")).state,
+      "rolled_back",
+    );
+  } finally {
+    if (previous === undefined) delete process.env.LOOPITER_DISABLE;
+    else process.env.LOOPITER_DISABLE = previous;
+  }
+});
 test("out-of-band changes are never blindly overwritten by rollback", async () => {
   const x = setup({
     name: "regression",

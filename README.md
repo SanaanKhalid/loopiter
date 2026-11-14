@@ -52,8 +52,9 @@ tests isolated simulated SDK mechanics. Your agent must still verify the real
 application. After both succeed, the emitted worker recipe omits `--mode`, so
 `plan.mode` controls that command, and the worker runs without `--enable`.
 These defaults are unreleased, on main. They are not in the published
-`loopiter@0.3.0-alpha.1` or `loopiter==0.3.0a1` packages. `--mode recommend` or
-`observe` stores proposals and does not apply. Omitting `--mode` follows
+`loopiter@0.3.0-alpha.1` or `loopiter==0.3.0a1` packages. `--mode recommend`
+stores proposals and does not apply. `--mode observe` inspects evidence and does
+not propose. Omitting `--mode` follows
 `plan.mode`, or autonomous when no plan is present. Constructing
 `ImprovementController` without a mode is autonomous with self-improving on.
 Existing schemaVersion 1 plans are left unchanged. Users who never set a mode
@@ -216,9 +217,10 @@ blindly. An adapter must implement idempotent apply, durable inspect, fenced
 `not_applied`, and real rollback. There is no universal exactly-once guarantee.
 
 On main, unreleased, constructing the controller without a mode is autonomous
-with self-improving on. Mode `recommend` or `observe` stores proposals and does
-not apply. `--disable`, or `LOOPITER_DISABLE` set to any non-empty value except `0`,
-`false`, `no`, or `off`, pauses before the application module is imported, in
+with self-improving on. Mode `recommend` stores proposals and does not apply.
+Mode `observe` inspects evidence and does not propose. `--disable`, or
+`LOOPITER_DISABLE` set to any non-empty value except `0`, `false`, `no`, or
+`off`, pauses before the application module is imported, in
 every mode, and stores no proposal. The published `0.3.0-alpha.1` and `0.3.0a1`
 packages still recommend
 when no mode is set and still spend only with `--enable`. Every policy gate
