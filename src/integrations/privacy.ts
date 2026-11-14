@@ -157,6 +157,8 @@ function luhnOk(even: number[], odd: number[], start: number, end: number): bool
 
 function pushCards(value: string, spans: Span[]): void {
   const length = value.length;
+  const even = new Array<number>(length + 1).fill(0);
+  const odd = new Array<number>(length + 1).fill(0);
   let i = 0;
   const digitAt = (index: number) => {
     const code = value.charCodeAt(index);
@@ -172,9 +174,6 @@ function pushCards(value: string, spans: Span[]): void {
     const seps: string[] = [];
     const glens: number[] = [];
     const gdigit = [0];
-    const room = length - i + 1;
-    const even = new Array<number>(room).fill(0);
-    const odd = new Array<number>(room).fill(0);
     let seen = 0;
     while (i < length && digitAt(i)) {
       starts.push(i);
@@ -296,26 +295,28 @@ function applySpans(text: string, spans: Span[]): string {
   if (spans.length === 0) return text;
   spans.sort((a, b) => a[0] - b[0] || b[1] - b[0] - (a[1] - a[0]));
   const kept: Span[] = [];
+  let cover = -1;
   for (const span of spans) {
-    if (span[0] >= span[1]) continue;
-    if (kept.some((prev) => prev[0] <= span[0] && span[1] <= prev[1])) continue;
+    if (span[0] >= span[1] || span[1] <= cover) continue;
+    cover = span[1];
     kept.push(span);
   }
   if (kept.length === 0) return text;
-  kept.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const clusters: Span[][] = [[kept[0]!]];
-  for (const span of kept.slice(1)) {
-    const cluster = clusters[clusters.length - 1]!;
-    if (span[0] <= cluster[cluster.length - 1]![1]) cluster.push(span);
-    else clusters.push([span]);
-  }
-  let out = "";
+  const parts: string[] = [];
   let cursor = 0;
-  for (const cluster of clusters) {
+  let index = 0;
+  while (index < kept.length) {
+    const cluster: Span[] = [kept[index]!];
+    let clusterEnd = kept[index]![1];
+    index += 1;
+    while (index < kept.length && kept[index]![0] <= clusterEnd) {
+      if (kept[index]![1] > clusterEnd) clusterEnd = kept[index]![1];
+      cluster.push(kept[index]!);
+      index += 1;
+    }
     const cstart = cluster[0]![0];
-    const cend = cluster.reduce((max, span) => Math.max(max, span[1]), 0);
-    if (cursor < cstart) out += text.slice(cursor, cstart);
-    if (cluster.length === 1) out += cluster[0]![2];
+    if (cursor < cstart) parts.push(text.slice(cursor, cstart));
+    if (cluster.length === 1) parts.push(cluster[0]![2]);
     else {
       const secret = cluster.map((span) => [span[3], span[1]] as [number, number]).sort((a, b) => a[0] - b[0]);
       const merged: Array<[number, number]> = [];
@@ -326,16 +327,16 @@ function applySpans(text: string, spans: Span[]): string {
       }
       let pos = cstart;
       for (const [start, end] of merged) {
-        if (pos < start) out += text.slice(pos, start);
-        out += MARKER;
+        if (pos < start) parts.push(text.slice(pos, start));
+        parts.push(MARKER);
         pos = end;
       }
-      if (pos < cend) out += text.slice(pos, cend);
+      if (pos < clusterEnd) parts.push(text.slice(pos, clusterEnd));
     }
-    cursor = cend;
+    cursor = clusterEnd;
   }
-  if (cursor < text.length) out += text.slice(cursor);
-  return out;
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return parts.join("");
 }
 
 function tokenStart(value: string, end: number): number {

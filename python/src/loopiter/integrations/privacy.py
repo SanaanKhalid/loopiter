@@ -182,6 +182,8 @@ def _luhn_ok(even: list[int], odd: list[int], start: int, end: int) -> bool:
 
 def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
     length = len(value)
+    even = [0] * (length + 1)
+    odd = [0] * (length + 1)
     i = 0
     while i < length:
         if not ("0" <= value[i] <= "9"):
@@ -192,9 +194,6 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
         seps: list[str] = []
         glens: list[int] = []
         gdigit = [0]
-        room = length - i + 1
-        even = [0] * room
-        odd = [0] * room
         seen = 0
         while i < length and "0" <= value[i] <= "9":
             starts.append(i)
@@ -312,36 +311,35 @@ def _apply_spans(text: str, spans: list[tuple[int, int, str, int]]) -> str:
         return text
     spans.sort(key=lambda span: (span[0], span[0] - span[1]))
     kept: list[tuple[int, int, str, int]] = []
+    cover = -1
     for span in spans:
         start, end = span[0], span[1]
-        if start >= end:
+        if start >= end or end <= cover:
             continue
-        if any(prev[0] <= start and end <= prev[1] for prev in kept):
-            continue
+        cover = end
         kept.append(span)
     if not kept:
         return text
-    kept.sort(key=lambda span: (span[0], span[1]))
-    clusters: list[list[tuple[int, int, str, int]]] = [[kept[0]]]
-    for span in kept[1:]:
-        if span[0] <= clusters[-1][-1][1]:
-            clusters[-1].append(span)
-        else:
-            clusters.append([span])
     parts: list[str] = []
     cursor = 0
-    for cluster in clusters:
+    index = 0
+    count = len(kept)
+    while index < count:
+        cluster = [kept[index]]
+        cluster_end = kept[index][1]
+        index += 1
+        while index < count and kept[index][0] <= cluster_end:
+            if kept[index][1] > cluster_end:
+                cluster_end = kept[index][1]
+            cluster.append(kept[index])
+            index += 1
         cstart = cluster[0][0]
-        cend = max(span[1] for span in cluster)
         if cursor < cstart:
             parts.append(text[cursor:cstart])
         if len(cluster) == 1:
             parts.append(cluster[0][2])
         else:
-            secret: list[tuple[int, int]] = []
-            for span in cluster:
-                secret.append((span[3], span[1]))
-            secret.sort()
+            secret = sorted((span[3], span[1]) for span in cluster)
             merged: list[tuple[int, int]] = []
             for start, end in secret:
                 if merged and start <= merged[-1][1]:
@@ -354,9 +352,9 @@ def _apply_spans(text: str, spans: list[tuple[int, int, str, int]]) -> str:
                     parts.append(text[pos:start])
                 parts.append(_MARKER)
                 pos = end
-            if pos < cend:
-                parts.append(text[pos:cend])
-        cursor = cend
+            if pos < cluster_end:
+                parts.append(text[pos:cluster_end])
+        cursor = cluster_end
     if cursor < len(text):
         parts.append(text[cursor:])
     return "".join(parts)

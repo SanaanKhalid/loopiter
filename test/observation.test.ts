@@ -208,6 +208,12 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
   scales("4111 ".repeat(13107));
   scales("4111-".repeat(13107));
   scales("4 ".repeat(32768));
+  scales("4111111111111111 ".repeat(3855));
+  scales("a@b.cd ".repeat(9362));
+  scales("Bearer 1 ".repeat(7282));
+  scales("sk-abcdefghijklmnop ".repeat(3276));
+  scales("eyJa.b.c ".repeat(7281));
+  scales("Basic 4111 ".repeat(5957));
 });
 
 test("observer retains lineage, defaults to no content, preserves return identity and never replays a durable ID", async () => {

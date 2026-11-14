@@ -6,7 +6,12 @@ import unittest
 from loopiter import FeedbackLoop, InMemoryStore, LoopiterError
 from loopiter.integrations.import_batch import import_batch
 from loopiter.integrations.observe import create_observer
-from loopiter.integrations.privacy import _redact_cards, capture_payload, redact_capture
+from loopiter.integrations.privacy import (
+    _redact_cards,
+    _redact_text,
+    capture_payload,
+    redact_capture,
+)
 
 WHEN = "2026-03-01T15:04:05.000Z"
 
@@ -616,6 +621,25 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         scales("4111 " * 13107)
         scales("4111-" * 13107)
         scales("4 " * 32768)
+
+        def elapsed_text(sample: str) -> float:
+            started_at = time.perf_counter()
+            _redact_text(sample)
+            return time.perf_counter() - started_at
+
+        def scales_text(sample: str) -> None:
+            small = elapsed_text(sample)
+            large = elapsed_text(sample * 4)
+            self.assertLess(large, max(small * 6, 0.05))
+            self.assertLess(large, 8)
+            self.assertLess(small, 0.05)
+
+        scales_text("4111111111111111 " * 3855)
+        scales_text("a@b.cd " * 9362)
+        scales_text("Bearer 1 " * 7282)
+        scales_text("sk-abcdefghijklmnop " * 3276)
+        scales_text("eyJa.b.c " * 7281)
+        scales_text("Basic 4111 " * 5957)
 
     async def test_bounded_open_map_is_cleared(self):
         loop = self.loop()
