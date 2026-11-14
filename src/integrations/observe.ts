@@ -151,8 +151,8 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
   const bounded = options.bounded!;
   if (options.failureMode === "closed")
     throw new TypeError("failureMode closed cannot be combined with bounded capture.");
-  if (!Number.isInteger(bounded.queueLimit) || bounded.queueLimit < 1)
-    throw new TypeError("queueLimit must be a positive integer.");
+  if (!Number.isInteger(bounded.queueLimit) || bounded.queueLimit < 2)
+    throw new TypeError("queueLimit must be an integer of at least 2.");
   if (!Number.isInteger(bounded.writeTimeoutMs) || bounded.writeTimeoutMs < 1)
     throw new TypeError("writeTimeoutMs must be a positive integer.");
   const shutdownTimeoutMs = bounded.shutdownTimeoutMs ?? bounded.writeTimeoutMs;
@@ -197,7 +197,6 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
     });
   }
   function enqueue(task: (timedOut: () => boolean) => Promise<void>) {
-    if (closed) return;
     queue.push(task);
     pump();
   }
@@ -218,7 +217,9 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
     const deadline = Date.now() + timeoutMs;
     while (occupancy() > 0 && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 5));
-    if (occupancy() > 0) abandon();
+    // An open flush must not drop a reservation or free an in-flight write.
+    // Shutdown sets closed first, then counts whatever is still unfinished.
+    if (closed && occupancy() > 0) abandon();
   }
   return {
     stats: () => ({ dropped, failed, backlog: occupancy() }),
@@ -236,8 +237,10 @@ function createBoundedObserver(options: ObserverOptions, policy: CapturePolicy):
       let row: AiExecution | undefined;
       let late = false;
       const ticket = generation;
-      const stale = () => closed || generation !== ticket;
-      const admitted = !stale() && occupancy() + 2 <= bounded.queueLimit;
+      // closed blocks new observations only. Admitted work keeps its generation
+      // until abandon, so shutdown can still drain it.
+      const stale = () => generation !== ticket;
+      const admitted = !closed && !stale() && occupancy() + 2 <= bounded.queueLimit;
       let held = admitted;
       if (!admitted) {
         dropped += 1;
