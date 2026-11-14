@@ -5,6 +5,78 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import ts from "typescript";
 const root = fileURLToPath(new URL("..", import.meta.url));
+
+async function sourceFiles(directory) {
+  const found = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (
+      entry.name === "node_modules" ||
+      entry.name === "dist" ||
+      entry.name === ".next"
+    )
+      continue;
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) found.push(...(await sourceFiles(path)));
+    else if (/\.(tsx|ts|md|mdx|txt)$/.test(entry.name)) found.push(path);
+  }
+  return found;
+}
+
+function controllerCalls(text) {
+  const calls = [];
+  const pattern = /ImprovementController\s*\(/g;
+  for (const match of text.matchAll(pattern)) {
+    let index = match.index + match[0].length;
+    let depth = 1;
+    while (index < text.length && depth > 0) {
+      if (text[index] === "(") depth += 1;
+      else if (text[index] === ")") depth -= 1;
+      index += 1;
+    }
+    calls.push({
+      at: match.index,
+      source: text.slice(match.index, index),
+    });
+  }
+  return calls;
+}
+
+async function rejectRecommendByOmission() {
+  const paths = [
+    ...(await sourceFiles(join(root, "website"))),
+    ...(await sourceFiles(join(root, "fern/pages"))),
+    ...(await sourceFiles(join(root, "docs"))),
+    join(root, "README.md"),
+    join(root, "python/README.md"),
+    join(root, "AGENT_GUIDE.md"),
+    join(root, "python/AGENT_GUIDE.md"),
+  ];
+  const omitMode = /omit mode[^\n]{0,180}recommend/i;
+  for (const path of paths) {
+    const text = await readFile(path, "utf8");
+    const relative = path.slice(root.length);
+    assert.doesNotMatch(
+      text,
+      omitMode,
+      `${relative} says omitting mode selects recommend`,
+    );
+    for (const call of controllerCalls(text)) {
+      if (/\bmode\s*[:=]/.test(call.source)) continue;
+      const nearby = text.slice(Math.max(0, call.at - 500), call.at + call.source.length);
+      const callsItRecommend =
+        /recommend/i.test(nearby) &&
+        /(stays off|self-improving stays off|\boff\b)/i.test(nearby);
+      assert.equal(
+        callsItRecommend,
+        false,
+        `${relative} shows a controller with no mode next to recommend/off`,
+      );
+    }
+  }
+}
+
+await rejectRecommendByOmission();
+
 const build = spawnSync("npm", ["run", "build"], {
   cwd: root,
   stdio: "inherit",

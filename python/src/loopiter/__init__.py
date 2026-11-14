@@ -3,7 +3,12 @@
 from ._validation import LoopiterError, fingerprint
 from .client import DeploymentAdapter, FeedbackLoop
 from .cohorts import assign_cohort
-from .improvement import CallbackContext, ImprovementController, ImprovementWorkflow
+from .improvement import (
+    CallbackContext,
+    ImprovementController,
+    ImprovementWorkflow,
+    warn_ambiguous_improvement_disable,
+)
 from .improvement_evidence import (
     compare,
     minimum_certifiable_audit_units,
@@ -31,4 +36,5 @@ __all__ = [
     "prepare_dataset",
     "validate_change",
     "validate_policy",
+    "warn_ambiguous_improvement_disable",
 ]

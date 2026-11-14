@@ -41,7 +41,7 @@ export function SiteFooter() {
   return (
     <footer className="site-footer">
       <Link href="/" className="brand" aria-label="Loopiter home"><Mark /><span>Loopiter</span></Link>
-      <p>Agents improve themselves automatically, while they&apos;re in use.</p>
+      <p>Agents improve themselves automatically, while they&apos;re in use. That default is on main and arrives in the next release. v0.3.0-alpha.1 still defaults to recommend.</p>
       <div>
         <Link href="/blog">Blog</Link>
         <Link href="/manifesto">Manifesto</Link>

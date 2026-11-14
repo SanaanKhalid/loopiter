@@ -12,7 +12,7 @@ Source code: https://github.com/SanaanKhalid/loopiter
 - [Manifesto](https://loopiter.co/manifesto): Agents improve themselves automatically, while they're in use. Production signals drive tested changes; a change ships only when held-out evidence shows it is better.
 - [Blog](https://loopiter.co/blog): Notes on evaluation and feedback loops.
 - [Self-improving AI agents need a feedback loop you can evaluate](https://loopiter.co/blog/self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate): What self-improving agents change, why an outside check matters, and which parts of that loop this SDK implements.
-- [Graduated autonomy for self-improving AI agents: observe, recommend, experiment, autonomous](https://loopiter.co/blog/graduated-autonomy-for-self-improving-ai-agents): The four controller modes, why a fresh init records autonomous mode, and how gating, activation, and rollback work in Node.js and Python.
+- [Graduated autonomy for self-improving AI agents: observe, recommend, experiment, autonomous](https://loopiter.co/blog/graduated-autonomy-for-self-improving-ai-agents): The four controller modes, why a fresh init records autonomous mode, and how gating and rollback work in Node.js and Python.
 
 ## Documentation
 
