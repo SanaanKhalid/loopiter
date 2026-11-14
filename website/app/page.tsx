@@ -181,8 +181,8 @@ export default function Home() {
 
         <section className="section reading" aria-labelledby="manifesto-invitation-title">
           <div className="section-label">[ WHY WE ARE BUILDING LOOPITER ]</div>
-          <h2 id="manifesto-invitation-title">Give feedback. Let it improve.</h2>
-          <p className="manifesto-deck">Your agent should do the work between a useful correction and a better next answer. Test the change. Put it to work when it passes. Keep going.</p>
+          <h2 id="manifesto-invitation-title">Agents improve themselves automatically, while they&apos;re in use.</h2>
+          <p className="manifesto-deck">A change ships only when held-out evidence shows it beats the current version. Otherwise the current version stays.</p>
           <div className="manifesto-next">
             <Link className="text-link" href="/manifesto">Read the manifesto <span aria-hidden="true">→</span></Link>
             <Link className="text-link" href="/blog/self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate">Why a feedback loop has to be evaluable <span aria-hidden="true">→</span></Link>
