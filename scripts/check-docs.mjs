@@ -23,16 +23,16 @@ async function sourceFiles(directory) {
 }
 
 const OMISSION =
-  /(?:omit(?:ting|s)?\s+(?:the\s+)?mode|mode\s+is\s+omitted|leave\s+mode\s+unset|without\s+a\s+mode|(?:^|[^a-z])no\s+mode|don'?t\s+pass\s+(?:a\s+)?mode|do\s+not\s+pass\s+(?:a\s+)?mode|default\s+controller\s+mode\s+is)/i;
+  /(?:omit(?:ting|s)?\s+(?:the\s+)?mode|leav(?:e|ing)\s+(?:the\s+)?`?mode`?\s+unset|mode`?\s+(?:is\s+)?(?:omitted|unset|not\s+set)|without\s+a\s+mode|(?:^|[^a-z])no\s+mode|don'?t\s+pass\s+(?:a\s+)?mode|do\s+not\s+pass\s+(?:a\s+)?mode|default\s+controller\s+mode\s+is)/i;
 const CLAIMS_RECOMMEND_OR_OFF = /recommend|stays\s+off/i;
-const VERSION = /\bv?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.]+|[a-z]+\d+)?\b/i;
+const PUBLISHED_RECOMMEND_DEFAULT = /\b(?:0\.3\.0-alpha\.1|0\.3\.0a1)\b/;
 
 export function sentencesOf(text) {
   const sentences = [];
   for (const paragraph of text.split(/\n\s*\n/)) {
     const flat = paragraph.replace(/\s+/g, " ").trim();
     if (!flat) continue;
-    for (const sentence of flat.split(/(?<=[.!?])\s+/)) {
+    for (const sentence of flat.split(/(?<=[.!?]["'`)]?,?)\s+/)) {
       const trimmed = sentence.trim();
       if (trimmed) sentences.push(trimmed);
     }
@@ -49,14 +49,20 @@ export function omittedModeClaimsRecommend(text) {
     const match = sentence.match(OMISSION);
     if (!match || match.index === undefined) continue;
     const after = sentence.slice(match.index + match[0].length);
+    const recommendAt = after.search(/recommend/i);
+    if (recommendAt !== -1 && /autonomous/i.test(after.slice(0, recommendAt))) continue;
     if (CLAIMS_RECOMMEND_OR_OFF.test(after)) {
-      if (VERSION.test(sentence)) continue;
+      if (PUBLISHED_RECOMMEND_DEFAULT.test(sentence)) continue;
       hits.push(sentence);
       continue;
     }
     if (/autonomous/i.test(after)) continue;
     const following = sentences[index + 1] ?? "";
-    if (CLAIMS_RECOMMEND_OR_OFF.test(following) && !VERSION.test(following)) hits.push(sentence);
+    if (
+      CLAIMS_RECOMMEND_OR_OFF.test(following) &&
+      !PUBLISHED_RECOMMEND_DEFAULT.test(following)
+    )
+      hits.push(sentence);
   }
   return hits;
 }

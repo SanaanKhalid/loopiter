@@ -22,8 +22,34 @@ test("other omission phrasings near recommend fail the checker", () => {
     "If mode is omitted, the controller recommends.",
     "Leave mode unset and the controller stays on recommend.",
     "The default controller mode is recommend.",
+    "Requires Node 22.1.0 or later; omitting mode selects recommend.",
+    "Leave the mode unset to get recommend.",
+    "Leave `mode` unset to get recommend.",
+    "Leaving mode unset selects recommend.",
+    "With mode omitted, the controller recommends.",
+    "When mode is not set, the controller recommends.",
   ])
     assert.ok(omittedModeClaimsRecommend(line).length > 0, line);
+});
+
+test("a later version in a JS string array does not exempt an earlier claim", () => {
+  const source = `
+    answer([
+      'With no integration plan, the worker uses autonomous.',
+      'Omitting mode selects recommend.',
+      'These defaults are unreleased, on main, and are not in the published 0.3.0-alpha.1 or 0.3.0a1 packages.',
+    ])
+  `;
+  assert.ok(omittedModeClaimsRecommend(source).length > 0);
+});
+
+test("autonomous before recommend is not a recommend-by-omission claim", () => {
+  assert.deepEqual(
+    omittedModeClaimsRecommend(
+      "Leave mode unset for autonomous; set it to recommend to opt out.",
+    ),
+    [],
+  );
 });
 
 test("a published sentence in another paragraph does not exempt a stale claim", () => {
