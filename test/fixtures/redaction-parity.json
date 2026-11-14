@@ -325,6 +325,34 @@
     {
       "input": "pay4111111111111111@example.test",
       "output": "[REDACTED]"
+    },
+    {
+      "input": "xoxb-123456789012-4111111111119-abcdefghijklmnopqrstuvwx",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "Bearer abc4111111111111111def",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic abc4111111111111111def==",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "sk-proj-abc4111111111111111xyz",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "ghp_abc4111111111111111xyz",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user4111111111111111@example.com",
+      "output": "[REDACTED]"
     }
   ],
   "boundaries": [

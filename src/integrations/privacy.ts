@@ -353,22 +353,60 @@ function collect(pattern: RegExp, value: string, spans: Span[], repl: (match: Re
   pattern.lastIndex = 0;
 }
 
+function apply(value: string, spans: Span[]): string {
+  return spans.length === 0 ? value : applySpans(value, spans);
+}
+
+function cardExtendsPast(value: string, start: number, end: number): boolean {
+  if (start >= end) return false;
+  for (let index = start; index < end; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 48 || code > 57) return false;
+  }
+  const found: Span[] = [];
+  pushCards(value, found);
+  return found.some((span) => span[0] === start && span[1] > end);
+}
+
+function schemeSub(pattern: RegExp, value: string, label: string): string {
+  pattern.lastIndex = 0;
+  const next = value.replace(pattern, (match, offset: number) => {
+    const end = offset + match.length;
+    if (cardExtendsPast(value, tokenStart(value, end), end)) return match;
+    return label;
+  });
+  pattern.lastIndex = 0;
+  return next;
+}
+
 function redactText(value: string): string {
-  const spans: Span[] = [];
+  let spans: Span[] = [];
   collect(privateKey, value, spans, () => MARKER, (match) => match.index ?? 0);
-  collect(bearer, value, spans, () => `Bearer ${MARKER}`, (match) => tokenStart(value, (match.index ?? 0) + match[0].length));
-  collect(basic, value, spans, () => `Basic ${MARKER}`, (match) => tokenStart(value, (match.index ?? 0) + match[0].length));
+  value = apply(value, spans);
+
+  spans = [];
   collect(tokens, value, spans, () => MARKER, (match) => match.index ?? 0);
   collect(jwt, value, spans, () => MARKER, (match) => match.index ?? 0);
   collect(awsSecret, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
+  value = apply(value, spans);
+  value = schemeSub(bearer, value, `Bearer ${MARKER}`);
+  value = schemeSub(basic, value, `Basic ${MARKER}`);
+
+  spans = [];
+  pushUrls(value, spans);
+  value = apply(value, spans);
+  spans = [];
+  pushEmails(value, spans, []);
+  value = apply(value, spans);
+
+  spans = [];
+  pushCards(value, spans);
+  value = apply(value, spans);
+
+  spans = [];
   collect(assigned, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
   collect(queryToken, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
-  const urls: Span[] = [];
-  pushUrls(value, urls);
-  spans.push(...urls);
-  pushEmails(value, spans, urls.map((span) => [span[0], span[1]]));
-  pushCards(value, spans);
-  return applySpans(value, spans);
+  return apply(value, spans);
 }
 
 function walk(value: JsonValue, patterns: boolean): JsonValue {
