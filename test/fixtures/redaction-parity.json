@@ -168,7 +168,7 @@
     },
     {
       "input": "0000 0000 0000 000000",
-      "output": "[REDACTED]"
+      "output": "0000 [REDACTED]"
     },
     {
       "input": "4111 1111 1111 1112 001",
@@ -220,7 +220,7 @@
     },
     {
       "input": "41 11 11 11 11 11 11 11",
-      "output": "[REDACTED]"
+      "output": "41 11 11 11 11 11 11 11"
     },
     {
       "input": "4000 0000 00006",
@@ -257,6 +257,74 @@
     {
       "input": "1234567890123456",
       "output": "1234567890123456"
+    },
+    {
+      "input": "9000000000001",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "9000000000000000001",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16",
+      "output": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16"
+    },
+    {
+      "input": "555 1234 5678 555 8765 4321",
+      "output": "555 1234 5678 555 8765 4321"
+    },
+    {
+      "input": "192 168 100 200 10 1",
+      "output": "192 168 100 200 10 1"
+    },
+    {
+      "input": "2026 11 15 04 12 33",
+      "output": "2026 11 15 04 12 33"
+    },
+    {
+      "input": "SKU-1234-5678-9012-3",
+      "output": "SKU-1234-5678-9012-3"
+    },
+    {
+      "input": "12345678-1234-1234",
+      "output": "12345678-1234-1234"
+    },
+    {
+      "input": "sk-4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "ghp_4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "AKIA4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "xoxb-4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "AIzaabcdefghijklmnopqrs4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.4111111111111111.c2lnbmF0dXJl",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "Bearer sk-4111111111111111",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic 4111111111111111",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "pay4111111111111111@example.test",
+      "output": "[REDACTED]"
     }
   ],
   "boundaries": [

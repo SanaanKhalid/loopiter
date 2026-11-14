@@ -64,15 +64,22 @@ test("redaction stays inside a generous time bound and still redacts a normal jw
 });
 
 test("seeded card fuzz does not undercount and long digit runs stay fast", () => {
+  const layouts = [[4, 4, 4, 4, 3], [4, 4, 4, 4], [4, 6, 5], [4, 6, 4], [4, 4, 5], [4, 4, 4, 3], [4, 4, 6], [8, 8], [4, 4, 8], [4, 12]];
+  const exact = new Set(layouts.map((layout) => layout.join(",")));
+  const prefixes = new Set(layouts.flatMap((layout) => layout.map((_, index) => layout.slice(0, index + 1).join(","))));
   const digit = (value: string, index: number) => {
     const code = value.charCodeAt(index);
     return code >= 48 && code <= 57;
   };
-  const luhnRange = (digits: number[], start: number, end: number) => {
+  const alnum = (value: string, index: number) => {
+    const code = value.charCodeAt(index);
+    return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+  };
+  const luhn = (digits: number[]) => {
     let sum = 0;
     let alt = false;
-    for (let index = end - 1; index >= start; index -= 1) {
-      let n = digits[index]!;
+    for (let i = digits.length - 1; i >= 0; i -= 1) {
+      let n = digits[i]!;
       if (alt) {
         n *= 2;
         if (n > 9) n -= 9;
@@ -90,15 +97,21 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
         i += 1;
         continue;
       }
-      const digits: number[] = [];
-      const prefix = [0];
+      const starts: number[] = [];
+      const ends: number[] = [];
       const seps: string[] = [];
+      const glens: number[] = [];
+      const digits: number[] = [];
       while (i < value.length && digit(value, i)) {
+        starts.push(i);
+        let glen = 0;
         while (i < value.length && digit(value, i)) {
           digits.push(value.charCodeAt(i) - 48);
+          glen += 1;
           i += 1;
         }
-        prefix.push(digits.length);
+        ends.push(i);
+        glens.push(glen);
         if (i + 1 < value.length && (value[i] === " " || value[i] === "-") && digit(value, i + 1)) {
           seps.push(value[i]!);
           i += 1;
@@ -107,27 +120,46 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
         seps.push("");
         break;
       }
+      const offset = [0];
+      for (const glen of glens) offset.push(offset[offset.length - 1]! + glen);
       let group = 0;
-      const groups = prefix.length - 1;
-      while (group < groups) {
-        const base = prefix[group]!;
-        if (prefix[group + 1]! - base > 19) {
+      while (group < glens.length) {
+        const startAt = starts[group]!;
+        if (startAt !== 0 && alnum(value, startAt - 1)) {
           group += 1;
           continue;
         }
-        let horizon = group + 1;
-        const sep = seps[group]!;
-        if (sep !== "" && prefix[horizon]! - base <= 19) {
-          while (horizon < groups && seps[horizon - 1] === sep && prefix[horizon + 1]! - base <= 19) horizon += 1;
-        }
-        let end = horizon;
-        let matched = 0;
-        while (end > group && prefix[end]! - base >= 13) {
-          if (luhnRange(digits, base, prefix[end]!)) {
-            matched = end;
-            break;
+        const glen = glens[group]!;
+        if (glen >= 13 && glen <= 19 && luhn(digits.slice(offset[group], offset[group + 1]))) {
+          const endAt = ends[group]!;
+          if (endAt === value.length || !alnum(value, endAt)) {
+            count += 1;
+            group += 1;
+            continue;
           }
-          end -= 1;
+        }
+        const sep = seps[group]!;
+        if (sep === "" || (glen !== 4 && glen !== 8)) {
+          group += 1;
+          continue;
+        }
+        const lengths = [glen];
+        let look = group + 1;
+        while (look < glens.length && seps[look - 1] === sep) {
+          const candidate = lengths.concat(glens[look]!).join(",");
+          if (!prefixes.has(candidate)) break;
+          lengths.push(glens[look]!);
+          look += 1;
+        }
+        let matched = 0;
+        for (let size = lengths.length; size > 0; size -= 1) {
+          if (!exact.has(lengths.slice(0, size).join(","))) continue;
+          const endGroup = group + size;
+          const endAt = ends[endGroup - 1]!;
+          if (!luhn(digits.slice(offset[group], offset[endGroup]))) continue;
+          if (endAt !== value.length && alnum(value, endAt)) continue;
+          matched = endGroup;
+          break;
         }
         if (matched === 0) {
           group += 1;
@@ -157,7 +189,7 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
   }
   assert.ok(redacted >= baseline);
   assert.equal(redacted, baseline);
-  assert.equal(redacted, 109);
+  assert.equal(redacted, 81);
   const elapsed = (sample: string) => {
     const started = performance.now();
     redactCapture(sample);
@@ -169,9 +201,12 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
     assert.ok(large < Math.max(small * 6, 50));
     assert.ok(large < 8000);
   };
-  scales("4 ".repeat(2048));
-  scales("4111-".repeat(1024));
-  scales("4111 ".repeat(1024));
+  scales("1 ".repeat(32768));
+  scales("7 ".repeat(32768));
+  scales("12 ".repeat(21845));
+  scales("4111 ".repeat(13107));
+  scales("4111-".repeat(13107));
+  scales("4 ".repeat(32768));
 });
 
 test("observer retains lineage, defaults to no content, preserves return identity and never replays a durable ID", async () => {

@@ -57,21 +57,43 @@ function isWs(char: string): boolean {
   return WS_SET.has(char);
 }
 
-function redactUrls(value: string): string {
-  let out = "";
+type Span = [number, number, string, number];
+const MARKER = "[REDACTED]";
+const CARD_LAYOUTS: readonly (readonly number[])[] = [
+  [4, 4, 4, 4, 3],
+  [4, 4, 4, 4],
+  [4, 6, 5],
+  [4, 6, 4],
+  [4, 4, 5],
+  [4, 4, 4, 3],
+  [4, 4, 6],
+  [8, 8],
+  [4, 4, 8],
+  [4, 12],
+];
+const EXACT_LAYOUTS = new Set(CARD_LAYOUTS.map((layout) => layout.join(",")));
+const LAYOUT_PREFIXES = new Set(
+  CARD_LAYOUTS.flatMap((layout) => layout.map((_, index) => layout.slice(0, index + 1).join(","))),
+);
+const TOKEN_CHARS = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/_.=~-");
+
+function isAlnum(ch: string): boolean {
+  const code = ch.charCodeAt(0);
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function pushUrls(value: string, spans: Span[]): void {
   let i = 0;
   while (i < value.length) {
     const at = value.indexOf("://", i);
-    if (at < 0) return out + value.slice(i);
+    if (at < 0) return;
     let s = at - 1;
     if (s < i || !/[A-Za-z]/.test(value[s]!)) {
-      out += value.slice(i, at + 3);
       i = at + 3;
       continue;
     }
     while (s > i && schemeChar.test(value[s - 1]!)) s -= 1;
     if (!/[A-Za-z]/.test(value[s]!)) {
-      out += value.slice(i, at + 3);
       i = at + 3;
       continue;
     }
@@ -79,7 +101,6 @@ function redactUrls(value: string): string {
     const userStart = j;
     while (j < value.length && !isWs(value[j]!) && value[j] !== "/" && value[j] !== "@" && value[j] !== ":") j += 1;
     if (j === userStart || value[j] !== ":") {
-      out += value.slice(i, at + 3);
       i = at + 3;
       continue;
     }
@@ -87,22 +108,19 @@ function redactUrls(value: string): string {
     const passStart = j;
     while (j < value.length && !isWs(value[j]!) && value[j] !== "/" && value[j] !== "@") j += 1;
     if (j === passStart || value[j] !== "@") {
-      out += value.slice(i, at + 3);
       i = at + 3;
       continue;
     }
-    out += value.slice(i, s) + value.slice(s, at) + "://[REDACTED]@";
+    spans.push([userStart, j, MARKER, userStart]);
     i = j + 1;
   }
-  return out;
 }
 
-function redactEmails(value: string): string {
-  let out = "";
+function pushEmails(value: string, spans: Span[], blocked: Array<[number, number]>): void {
   let i = 0;
   while (i < value.length) {
     const at = value.indexOf("@", i);
-    if (at < 0) return out + value.slice(i);
+    if (at < 0) return;
     let left = at;
     while (left > i && localChar.test(value[left - 1]!)) left -= 1;
     const prev = left > 0 ? value[left - 1]! : "";
@@ -120,37 +138,24 @@ function redactEmails(value: string): string {
       !/^[A-Za-z]{2,}$/.test(tld) ||
       (next !== "" && /[A-Za-z0-9]/.test(next))
     ) {
-      out += value.slice(i, at + 1);
       i = at + 1;
       continue;
     }
-    out += value.slice(i, left) + "[REDACTED]";
+    if (blocked.some(([start, stop]) => left < stop && start < j)) {
+      i = j;
+      continue;
+    }
+    spans.push([left, j, MARKER, left]);
     i = j;
   }
-  return out;
 }
 
-const MIN_CARD_DIGITS = 13;
-const MAX_CARD_DIGITS = 19;
-
-function luhnRange(digits: number[], start: number, end: number): boolean {
-  let sum = 0;
-  let alt = false;
-  for (let index = end - 1; index >= start; index -= 1) {
-    let n = digits[index]!;
-    if (alt) {
-      n *= 2;
-      if (n > 9) n -= 9;
-    }
-    sum += n;
-    alt = !alt;
-  }
-  return sum % 10 === 0;
+function luhnOk(even: number[], odd: number[], start: number, end: number): boolean {
+  const total = (end % 2 === 0 ? even[end]! - even[start]! : odd[end]! - odd[start]!) ;
+  return total % 10 === 0;
 }
 
-function redactCards(value: string): string {
-  const parts: string[] = [];
-  let copied = 0;
+function pushCards(value: string, spans: Span[]): void {
   const length = value.length;
   let i = 0;
   const digitAt = (index: number) => {
@@ -165,16 +170,34 @@ function redactCards(value: string): string {
     const starts: number[] = [];
     const ends: number[] = [];
     const seps: string[] = [];
-    const digits: number[] = [];
-    const prefix = [0];
+    const glens: number[] = [];
+    const gdigit = [0];
+    const room = length - i + 1;
+    const even = new Array<number>(room).fill(0);
+    const odd = new Array<number>(room).fill(0);
+    let seen = 0;
     while (i < length && digitAt(i)) {
       starts.push(i);
+      let glen = 0;
       while (i < length && digitAt(i)) {
-        digits.push(value.charCodeAt(i) - 48);
+        const n = value.charCodeAt(i) - 48;
+        let doubled = n * 2;
+        if (doubled > 9) doubled -= 9;
+        const prev = seen;
+        seen += 1;
+        if (prev % 2 === 0) {
+          even[seen] = even[prev]! + doubled;
+          odd[seen] = odd[prev]! + n;
+        } else {
+          even[seen] = even[prev]! + n;
+          odd[seen] = odd[prev]! + doubled;
+        }
+        glen += 1;
         i += 1;
       }
       ends.push(i);
-      prefix.push(digits.length);
+      glens.push(glen);
+      gdigit.push(seen);
       if (i + 1 < length && (value[i] === " " || value[i] === "-") && digitAt(i + 1)) {
         seps.push(value[i]!);
         i += 1;
@@ -184,57 +207,168 @@ function redactCards(value: string): string {
       break;
     }
     let group = 0;
-    const count = starts.length;
+    const count = glens.length;
     while (group < count) {
-      const base = prefix[group]!;
-      if (prefix[group + 1]! - base > MAX_CARD_DIGITS) {
+      const startAt = starts[group]!;
+      if (startAt !== 0 && isAlnum(value[startAt - 1]!)) {
         group += 1;
         continue;
       }
-      let horizon = group + 1;
-      const sep = seps[group]!;
-      if (sep !== "" && prefix[horizon]! - base <= MAX_CARD_DIGITS) {
-        while (
-          horizon < count &&
-          seps[horizon - 1] === sep &&
-          prefix[horizon + 1]! - base <= MAX_CARD_DIGITS
-        ) horizon += 1;
+      const glen = glens[group]!;
+      const groupEnd = ends[group]!;
+      if (
+        glen >= 13 &&
+        glen <= 19 &&
+        luhnOk(even, odd, gdigit[group]!, gdigit[group + 1]!) &&
+        (groupEnd === length || !isAlnum(value[groupEnd]!))
+      ) {
+        spans.push([startAt, groupEnd, MARKER, startAt]);
+        group += 1;
+        continue;
       }
-      let end = horizon;
+      const sep = seps[group]!;
+      if (sep === "" || (glen !== 4 && glen !== 8)) {
+        group += 1;
+        continue;
+      }
+      if (
+        glen === 4 &&
+        group + 3 < count &&
+        glens[group + 1] === 4 &&
+        glens[group + 2] === 4 &&
+        glens[group + 3] === 4 &&
+        seps[group + 1] === sep &&
+        seps[group + 2] === sep
+      ) {
+        let matched = 0;
+        const base = gdigit[group]!;
+        const fifth = group + 4;
+        if (
+          fifth < count &&
+          glens[fifth] === 3 &&
+          seps[group + 3] === sep &&
+          luhnOk(even, odd, base, gdigit[group + 5]!) &&
+          (ends[fifth] === length || !isAlnum(value[ends[fifth]!]!))
+        ) {
+          matched = 5;
+        } else if (
+          luhnOk(even, odd, base, gdigit[group + 4]!) &&
+          (ends[group + 3] === length || !isAlnum(value[ends[group + 3]!]!))
+        ) {
+          matched = 4;
+        }
+        if (matched) {
+          spans.push([startAt, ends[group + matched - 1]!, MARKER, startAt]);
+          group += matched;
+        } else group += 1;
+        continue;
+      }
+      const lengths = [glen];
+      let look = group + 1;
+      while (look < count && seps[look - 1] === sep) {
+        const candidate = lengths.concat(glens[look]!).join(",");
+        if (!LAYOUT_PREFIXES.has(candidate)) break;
+        lengths.push(glens[look]!);
+        look += 1;
+      }
       let matched = 0;
-      while (end > group && prefix[end]! - base >= MIN_CARD_DIGITS) {
-        if (luhnRange(digits, base, prefix[end]!)) {
-          matched = end;
+      const base = gdigit[group]!;
+      for (let size = lengths.length; size > 0; size -= 1) {
+        if (!EXACT_LAYOUTS.has(lengths.slice(0, size).join(","))) continue;
+        const endGroup = group + size;
+        const endAt = ends[endGroup - 1]!;
+        if (luhnOk(even, odd, base, gdigit[endGroup]!) && (endAt === length || !isAlnum(value[endAt]!))) {
+          matched = endGroup;
           break;
         }
-        end -= 1;
       }
       if (matched === 0) {
         group += 1;
         continue;
       }
-      if (copied < starts[group]!) parts.push(value.slice(copied, starts[group]));
-      parts.push("[REDACTED]");
-      copied = ends[matched - 1]!;
+      spans.push([startAt, ends[matched - 1]!, MARKER, startAt]);
       group = matched;
     }
   }
-  if (copied < length) parts.push(value.slice(copied));
-  return parts.length === 0 ? value : parts.join("");
+}
+
+function applySpans(text: string, spans: Span[]): string {
+  if (spans.length === 0) return text;
+  spans.sort((a, b) => a[0] - b[0] || b[1] - b[0] - (a[1] - a[0]));
+  const kept: Span[] = [];
+  for (const span of spans) {
+    if (span[0] >= span[1]) continue;
+    if (kept.some((prev) => prev[0] <= span[0] && span[1] <= prev[1])) continue;
+    kept.push(span);
+  }
+  if (kept.length === 0) return text;
+  kept.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const clusters: Span[][] = [[kept[0]!]];
+  for (const span of kept.slice(1)) {
+    const cluster = clusters[clusters.length - 1]!;
+    if (span[0] <= cluster[cluster.length - 1]![1]) cluster.push(span);
+    else clusters.push([span]);
+  }
+  let out = "";
+  let cursor = 0;
+  for (const cluster of clusters) {
+    const cstart = cluster[0]![0];
+    const cend = cluster.reduce((max, span) => Math.max(max, span[1]), 0);
+    if (cursor < cstart) out += text.slice(cursor, cstart);
+    if (cluster.length === 1) out += cluster[0]![2];
+    else {
+      const secret = cluster.map((span) => [span[3], span[1]] as [number, number]).sort((a, b) => a[0] - b[0]);
+      const merged: Array<[number, number]> = [];
+      for (const [start, end] of secret) {
+        const last = merged[merged.length - 1];
+        if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+        else merged.push([start, end]);
+      }
+      let pos = cstart;
+      for (const [start, end] of merged) {
+        if (pos < start) out += text.slice(pos, start);
+        out += MARKER;
+        pos = end;
+      }
+      if (pos < cend) out += text.slice(pos, cend);
+    }
+    cursor = cend;
+  }
+  if (cursor < text.length) out += text.slice(cursor);
+  return out;
+}
+
+function tokenStart(value: string, end: number): number {
+  let secret = end;
+  while (secret > 0 && TOKEN_CHARS.has(value[secret - 1]!)) secret -= 1;
+  return secret;
+}
+
+function collect(pattern: RegExp, value: string, spans: Span[], repl: (match: RegExpMatchArray) => string, secretAt: (match: RegExpMatchArray) => number): void {
+  pattern.lastIndex = 0;
+  for (const match of value.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    spans.push([start, start + match[0].length, repl(match), secretAt(match)]);
+  }
+  pattern.lastIndex = 0;
 }
 
 function redactText(value: string): string {
-  let text = value.replace(privateKey, "[REDACTED]");
-  text = redactCards(text);
-  text = text
-    .replace(bearer, "Bearer [REDACTED]")
-    .replace(basic, "Basic [REDACTED]")
-    .replace(tokens, "[REDACTED]")
-    .replace(jwt, "[REDACTED]")
-    .replace(awsSecret, "$1[REDACTED]")
-    .replace(assigned, "$1[REDACTED]")
-    .replace(queryToken, "$1[REDACTED]");
-  return redactEmails(redactUrls(text));
+  const spans: Span[] = [];
+  collect(privateKey, value, spans, () => MARKER, (match) => match.index ?? 0);
+  collect(bearer, value, spans, () => `Bearer ${MARKER}`, (match) => tokenStart(value, (match.index ?? 0) + match[0].length));
+  collect(basic, value, spans, () => `Basic ${MARKER}`, (match) => tokenStart(value, (match.index ?? 0) + match[0].length));
+  collect(tokens, value, spans, () => MARKER, (match) => match.index ?? 0);
+  collect(jwt, value, spans, () => MARKER, (match) => match.index ?? 0);
+  collect(awsSecret, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
+  collect(assigned, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
+  collect(queryToken, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
+  const urls: Span[] = [];
+  pushUrls(value, urls);
+  spans.push(...urls);
+  pushEmails(value, spans, urls.map((span) => [span[0], span[1]]));
+  pushCards(value, spans);
+  return applySpans(value, spans);
 }
 
 function walk(value: JsonValue, patterns: boolean): JsonValue {

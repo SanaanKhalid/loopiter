@@ -78,24 +78,20 @@ def json_size(value: Any) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
-def _redact_urls(value: str) -> str:
-    out: list[str] = []
+def _url_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
     i = 0
     length = len(value)
     while i < length:
         at = value.find("://", i)
         if at < 0:
-            out.append(value[i:])
-            break
+            return
         s = at - 1
         if s < i or value[s] not in _LETTERS:
-            out.append(value[i : at + 3])
             i = at + 3
             continue
         while s > i and value[s - 1] in _SCHEME:
             s -= 1
         if value[s] not in _LETTERS:
-            out.append(value[i : at + 3])
             i = at + 3
             continue
         j = at + 3
@@ -103,7 +99,6 @@ def _redact_urls(value: str) -> str:
         while j < length and value[j] not in _WS_SET and value[j] not in "/@:":
             j += 1
         if j == user_start or j >= length or value[j] != ":":
-            out.append(value[i : at + 3])
             i = at + 3
             continue
         j += 1
@@ -111,23 +106,21 @@ def _redact_urls(value: str) -> str:
         while j < length and value[j] not in _WS_SET and value[j] not in "/@":
             j += 1
         if j == pass_start or j >= length or value[j] != "@":
-            out.append(value[i : at + 3])
             i = at + 3
             continue
-        out.append(value[i:s] + value[s:at] + "://[REDACTED]@")
+        spans.append((user_start, j, "[REDACTED]", user_start))
         i = j + 1
-    return "".join(out)
 
 
-def _redact_emails(value: str) -> str:
-    out: list[str] = []
+def _email_spans(
+    value: str, spans: list[tuple[int, int, str, int]], blocked: list[tuple[int, int]]
+) -> None:
     i = 0
     length = len(value)
     while i < length:
         at = value.find("@", i)
         if at < 0:
-            out.append(value[i:])
-            break
+            return
         left = at
         while left > i and value[left - 1] in _LOCAL:
             left -= 1
@@ -148,117 +141,269 @@ def _redact_emails(value: str) -> str:
             or any(ch not in _LETTERS for ch in tld)
             or (nxt != "" and nxt.isalnum() and nxt.isascii())
         ):
-            out.append(value[i : at + 1])
             i = at + 1
             continue
-        out.append(value[i:left] + "[REDACTED]")
+        if any(left < stop and start < j for start, stop in blocked):
+            i = j
+            continue
+        spans.append((left, j, "[REDACTED]", left))
         i = j
-    return "".join(out)
 
 
-# A card is any whole-group prefix of 13 to 19 digits. Checked once, not per group.
-_MIN_CARD_DIGITS = 13
-_MAX_CARD_DIGITS = 19
+# Contiguous 13-19, or one separator and one of these group layouts.
+_CARD_LAYOUTS = (
+    (4, 4, 4, 4, 3),
+    (4, 4, 4, 4),
+    (4, 6, 5),
+    (4, 6, 4),
+    (4, 4, 5),
+    (4, 4, 4, 3),
+    (4, 4, 6),
+    (8, 8),
+    (4, 4, 8),
+    (4, 12),
+)
+_EXACT_LAYOUTS = frozenset(_CARD_LAYOUTS)
+_LAYOUT_PREFIXES = frozenset(
+    layout[:size] for layout in _CARD_LAYOUTS for size in range(1, len(layout) + 1)
+)
+_MARKER = "[REDACTED]"
 
 
-def _luhn_range(digits: list[int], start: int, end: int) -> bool:
-    total = 0
-    alt = False
-    index = end
-    while index > start:
-        index -= 1
-        n = digits[index]
-        if alt:
-            n *= 2
-            if n > 9:
-                n -= 9
-        total += n
-        alt = not alt
-    return total % 10 == 0
+def _alnum(ch: str) -> bool:
+    return ("A" <= ch <= "Z") or ("a" <= ch <= "z") or ("0" <= ch <= "9")
 
 
-def _redact_cards(value: str) -> str:
-    out: list[str] = []
-    copied = 0
+def _luhn_ok(even: list[int], odd: list[int], start: int, end: int) -> bool:
+    if end % 2 == 0:
+        return (even[end] - even[start]) % 10 == 0
+    return (odd[end] - odd[start]) % 10 == 0
+
+
+def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
     length = len(value)
     i = 0
-
-    def keep(end: int) -> None:
-        nonlocal copied
-        if copied < end:
-            out.append(value[copied:end])
-            copied = end
-
     while i < length:
         if not ("0" <= value[i] <= "9"):
             i += 1
             continue
-        # One pass over groups joined by a single space or dash. Each start then
-        # keeps only the groups that share its own separator.
         starts: list[int] = []
         ends: list[int] = []
         seps: list[str] = []
-        digits: list[int] = []
-        prefix = [0]
+        glens: list[int] = []
+        gdigit = [0]
+        room = length - i + 1
+        even = [0] * room
+        odd = [0] * room
+        seen = 0
         while i < length and "0" <= value[i] <= "9":
             starts.append(i)
+            glen = 0
             while i < length and "0" <= value[i] <= "9":
-                digits.append(ord(value[i]) - 48)
+                n = ord(value[i]) - 48
+                doubled = n * 2
+                if doubled > 9:
+                    doubled -= 9
+                prev = seen
+                seen += 1
+                if prev % 2 == 0:
+                    even[seen] = even[prev] + doubled
+                    odd[seen] = odd[prev] + n
+                else:
+                    even[seen] = even[prev] + n
+                    odd[seen] = odd[prev] + doubled
+                glen += 1
                 i += 1
             ends.append(i)
-            prefix.append(len(digits))
+            glens.append(glen)
+            gdigit.append(seen)
             if i + 1 < length and value[i] in " -" and "0" <= value[i + 1] <= "9":
                 seps.append(value[i])
                 i += 1
                 continue
             seps.append("")
             break
+
         group = 0
-        count = len(starts)
+        count = len(glens)
         while group < count:
-            base = prefix[group]
-            if prefix[group + 1] - base > _MAX_CARD_DIGITS:
+            start_at = starts[group]
+            if start_at != 0 and _alnum(value[start_at - 1]):
                 group += 1
                 continue
-            horizon = group + 1
+            glen = glens[group]
+            group_end = ends[group]
+            if (
+                13 <= glen <= 19
+                and _luhn_ok(even, odd, gdigit[group], gdigit[group + 1])
+                and (group_end == length or not _alnum(value[group_end]))
+            ):
+                spans.append((start_at, group_end, _MARKER, start_at))
+                group += 1
+                continue
             sep = seps[group]
-            if sep and prefix[horizon] - base <= _MAX_CARD_DIGITS:
-                while (
-                    horizon < count
-                    and seps[horizon - 1] == sep
-                    and prefix[horizon + 1] - base <= _MAX_CARD_DIGITS
+            if not sep or (glen != 4 and glen != 8):
+                group += 1
+                continue
+            if (
+                glen == 4
+                and group + 3 < count
+                and glens[group + 1] == 4
+                and glens[group + 2] == 4
+                and glens[group + 3] == 4
+                and seps[group + 1] == sep
+                and seps[group + 2] == sep
+            ):
+                matched = 0
+                base = gdigit[group]
+                if (
+                    group + 4 < count
+                    and glens[group + 4] == 3
+                    and seps[group + 3] == sep
+                    and _luhn_ok(even, odd, base, gdigit[group + 5])
+                    and (ends[group + 4] == length or not _alnum(value[ends[group + 4]]))
                 ):
-                    horizon += 1
-            end = horizon
-            matched = 0
-            while end > group and prefix[end] - base >= _MIN_CARD_DIGITS:
-                if _luhn_range(digits, base, prefix[end]):
-                    matched = end
+                    matched = 5
+                elif _luhn_ok(even, odd, base, gdigit[group + 4]) and (
+                    ends[group + 3] == length or not _alnum(value[ends[group + 3]])
+                ):
+                    matched = 4
+                if matched:
+                    spans.append((start_at, ends[group + matched - 1], _MARKER, start_at))
+                    group += matched
+                else:
+                    group += 1
+                continue
+            lengths = [glen]
+            look = group + 1
+            while look < count and seps[look - 1] == sep:
+                nxt = tuple(lengths + [glens[look]])
+                if nxt not in _LAYOUT_PREFIXES:
                     break
-                end -= 1
+                lengths.append(glens[look])
+                look += 1
+            matched = 0
+            base = gdigit[group]
+            for size in range(len(lengths), 0, -1):
+                if tuple(lengths[:size]) not in _EXACT_LAYOUTS:
+                    continue
+                end_group = group + size
+                end_at = ends[end_group - 1]
+                if _luhn_ok(even, odd, base, gdigit[end_group]) and (
+                    end_at == length or not _alnum(value[end_at])
+                ):
+                    matched = end_group
+                    break
             if matched == 0:
                 group += 1
                 continue
-            keep(starts[group])
-            out.append("[REDACTED]")
-            copied = ends[matched - 1]
+            spans.append((start_at, ends[matched - 1], _MARKER, start_at))
             group = matched
-    keep(length)
-    return "".join(out) if out else value
+
+
+def _redact_cards(value: str) -> str:
+    spans: list[tuple[int, int, str, int]] = []
+    _card_spans(value, spans)
+    return _apply_spans(value, spans)
+
+
+def _apply_spans(text: str, spans: list[tuple[int, int, str, int]]) -> str:
+    if not spans:
+        return text
+    spans.sort(key=lambda span: (span[0], span[0] - span[1]))
+    kept: list[tuple[int, int, str, int]] = []
+    for span in spans:
+        start, end = span[0], span[1]
+        if start >= end:
+            continue
+        if any(prev[0] <= start and end <= prev[1] for prev in kept):
+            continue
+        kept.append(span)
+    if not kept:
+        return text
+    kept.sort(key=lambda span: (span[0], span[1]))
+    clusters: list[list[tuple[int, int, str, int]]] = [[kept[0]]]
+    for span in kept[1:]:
+        if span[0] <= clusters[-1][-1][1]:
+            clusters[-1].append(span)
+        else:
+            clusters.append([span])
+    parts: list[str] = []
+    cursor = 0
+    for cluster in clusters:
+        cstart = cluster[0][0]
+        cend = max(span[1] for span in cluster)
+        if cursor < cstart:
+            parts.append(text[cursor:cstart])
+        if len(cluster) == 1:
+            parts.append(cluster[0][2])
+        else:
+            secret: list[tuple[int, int]] = []
+            for span in cluster:
+                secret.append((span[3], span[1]))
+            secret.sort()
+            merged: list[tuple[int, int]] = []
+            for start, end in secret:
+                if merged and start <= merged[-1][1]:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+                else:
+                    merged.append((start, end))
+            pos = cstart
+            for start, end in merged:
+                if pos < start:
+                    parts.append(text[pos:start])
+                parts.append(_MARKER)
+                pos = end
+            if pos < cend:
+                parts.append(text[pos:cend])
+        cursor = cend
+    if cursor < len(text):
+        parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def _token_start(value: str, end: int) -> int:
+    secret = end
+    while (
+        secret > 0
+        and value[secret - 1]
+        in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/_.=~-"
+    ):
+        secret -= 1
+    return secret
 
 
 def _redact_text(value: str) -> str:
-    value = _PRIVATE_KEY.sub("[REDACTED]", value)
-    value = _redact_cards(value)
-    value = _BEARER.sub("Bearer [REDACTED]", value)
-    value = _BASIC.sub("Basic [REDACTED]", value)
-    value = _TOKEN.sub("[REDACTED]", value)
-    value = _JWT.sub("[REDACTED]", value)
-    value = _AWS_SECRET.sub(r"\1[REDACTED]", value)
-    value = _ASSIGNED_SECRET.sub(r"\1[REDACTED]", value)
-    value = _QUERY_TOKEN.sub(r"\1[REDACTED]", value)
-    value = _redact_urls(value)
-    return _redact_emails(value)
+    spans: list[tuple[int, int, str, int]] = []
+    for match in _PRIVATE_KEY.finditer(value):
+        spans.append((match.start(), match.end(), _MARKER, match.start()))
+    for match in _BEARER.finditer(value):
+        spans.append(
+            (match.start(), match.end(), "Bearer " + _MARKER, _token_start(value, match.end()))
+        )
+    for match in _BASIC.finditer(value):
+        spans.append(
+            (match.start(), match.end(), "Basic " + _MARKER, _token_start(value, match.end()))
+        )
+    for match in _TOKEN.finditer(value):
+        spans.append((match.start(), match.end(), _MARKER, match.start()))
+    for match in _JWT.finditer(value):
+        spans.append((match.start(), match.end(), _MARKER, match.start()))
+    for match in _AWS_SECRET.finditer(value):
+        label = match.start() + len(match.group(1))
+        spans.append((match.start(), match.end(), match.group(1) + _MARKER, label))
+    for match in _ASSIGNED_SECRET.finditer(value):
+        label = match.start() + len(match.group(1))
+        spans.append((match.start(), match.end(), match.group(1) + _MARKER, label))
+    for match in _QUERY_TOKEN.finditer(value):
+        label = match.start() + len(match.group(1))
+        spans.append((match.start(), match.end(), match.group(1) + _MARKER, label))
+    urls: list[tuple[int, int, str, int]] = []
+    _url_spans(value, urls)
+    spans.extend(urls)
+    _email_spans(value, spans, [(span[0], span[1]) for span in urls])
+    _card_spans(value, spans)
+    return _apply_spans(value, spans)
 
 
 def redact_capture(value: Any, patterns: bool = True) -> Any:

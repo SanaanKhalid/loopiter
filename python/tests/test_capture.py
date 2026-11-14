@@ -458,16 +458,28 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(omitted["value"]["omitted"])
 
     def test_seeded_card_fuzz_does_not_undercount(self):
+        layouts = (
+            (4, 4, 4, 4, 3),
+            (4, 4, 4, 4),
+            (4, 6, 5),
+            (4, 6, 4),
+            (4, 4, 5),
+            (4, 4, 4, 3),
+            (4, 4, 6),
+            (8, 8),
+            (4, 4, 8),
+            (4, 12),
+        )
+        exact = set(layouts)
+        prefixes = {layout[:size] for layout in layouts for size in range(1, len(layout) + 1)}
+
         def digit(ch):
             return "0" <= ch <= "9"
 
-        def luhn_range(digits, start, end):
+        def luhn(digits):
             total = 0
             alt = False
-            index = end
-            while index > start:
-                index -= 1
-                n = digits[index]
+            for n in reversed(digits):
                 if alt:
                     n *= 2
                     if n > 9:
@@ -477,7 +489,7 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
             return total % 10 == 0
 
         def reference(value):
-            """Whole groups joined by one separator, longest 13-19 digit Luhn prefix."""
+            """Allowed card layouts only, longest Luhn match, then the next group."""
             i = 0
             count = 0
             n = len(value)
@@ -485,43 +497,79 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
                 if not digit(value[i]):
                     i += 1
                     continue
-                digits = []
-                prefix = [0]
+                starts = []
+                ends = []
                 seps = []
+                glens = []
+                digits = []
                 while i < n and digit(value[i]):
+                    starts.append(i)
+                    glen = 0
                     while i < n and digit(value[i]):
                         digits.append(ord(value[i]) - 48)
+                        glen += 1
                         i += 1
-                    prefix.append(len(digits))
+                    ends.append(i)
+                    glens.append(glen)
                     if i + 1 < n and value[i] in " -" and digit(value[i + 1]):
                         seps.append(value[i])
                         i += 1
                         continue
                     seps.append("")
                     break
+                offset = [0]
+                for glen in glens:
+                    offset.append(offset[-1] + glen)
                 group = 0
-                groups = len(prefix) - 1
+                groups = len(glens)
                 while group < groups:
-                    base = prefix[group]
-                    if prefix[group + 1] - base > 19:
+                    start_at = starts[group]
+                    if start_at and (
+                        "A" <= value[start_at - 1] <= "Z"
+                        or "a" <= value[start_at - 1] <= "z"
+                        or digit(value[start_at - 1])
+                    ):
                         group += 1
                         continue
-                    horizon = group + 1
-                    sep = seps[group]
-                    if sep and prefix[horizon] - base <= 19:
-                        while (
-                            horizon < groups
-                            and seps[horizon - 1] == sep
-                            and prefix[horizon + 1] - base <= 19
+                    glen = glens[group]
+                    if 13 <= glen <= 19 and luhn(digits[offset[group] : offset[group + 1]]):
+                        end_at = ends[group]
+                        if end_at == n or not (
+                            "A" <= value[end_at] <= "Z"
+                            or "a" <= value[end_at] <= "z"
+                            or digit(value[end_at])
                         ):
-                            horizon += 1
-                    end_group = horizon
-                    matched = 0
-                    while end_group > group and prefix[end_group] - base >= 13:
-                        if luhn_range(digits, base, prefix[end_group]):
-                            matched = end_group
+                            count += 1
+                            group += 1
+                            continue
+                    sep = seps[group]
+                    if not sep or glen not in (4, 8):
+                        group += 1
+                        continue
+                    lengths = [glen]
+                    look = group + 1
+                    while look < groups and seps[look - 1] == sep:
+                        nxt = tuple(lengths + [glens[look]])
+                        if nxt not in prefixes:
                             break
-                        end_group -= 1
+                        lengths.append(glens[look])
+                        look += 1
+                    matched = 0
+                    for size in range(len(lengths), 0, -1):
+                        if tuple(lengths[:size]) not in exact:
+                            continue
+                        end_group = group + size
+                        end_at = ends[end_group - 1]
+                        if not luhn(digits[offset[group] : offset[end_group]]):
+                            continue
+                        if end_at != n and (
+                            "A" <= value[end_at] <= "Z"
+                            or "a" <= value[end_at] <= "z"
+                            or digit(value[end_at])
+                        ):
+                            continue
+                        matched = end_group
+                        break
                     if matched == 0:
                         group += 1
                         continue
@@ -548,7 +596,7 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
             baseline += reference(sample)
         self.assertGreaterEqual(redacted, baseline)
         self.assertEqual(redacted, baseline)
-        self.assertEqual(redacted, 109)
+        self.assertEqual(redacted, 81)
 
         def elapsed(sample: str) -> float:
             started_at = time.perf_counter()
@@ -560,11 +608,14 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
             large = elapsed(sample * 4)
             self.assertLess(large, max(small * 6, 0.05))
             self.assertLess(large, 8)
+            self.assertLess(small, 0.05)
 
-        scales("4 " * 2048)
-        scales("4111-" * 1024)
-        scales("4111 " * 1024)
-        self.assertLess(elapsed("4111 " * 13107), 0.05)
+        scales("1 " * 32768)
+        scales("7 " * 32768)
+        scales("12 " * 21845)
+        scales("4111 " * 13107)
+        scales("4111-" * 13107)
+        scales("4 " * 32768)
 
     async def test_bounded_open_map_is_cleared(self):
         loop = self.loop()
