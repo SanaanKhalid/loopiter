@@ -55,7 +55,8 @@ test("self-hosted init never overwrites user files or follows an existing destin
     assert.equal(setup.mode, "autonomous");
     assert.equal(setup.selfImproving, true);
     const readme = await readFile(join(destination, "README.md"), "utf8");
-    assert.match(readme, /--disable --mode recommend --once/);
+    assert.match(readme, /--mode recommend --once/);
+    assert.doesNotMatch(readme, /--disable --mode/);
     const recipe = readme
       .split("\n")
       .map((line) => line.trim())
@@ -77,7 +78,7 @@ test("self-hosted init never overwrites user files or follows an existing destin
     assert.ok(readme.includes(migration));
     assert.ok((await readAgentGuide()).includes(migration));
     assert.ok(readme.indexOf(migration) < readme.indexOf(recipe!));
-    assert.ok(readme.indexOf(recipe!) < readme.indexOf("--disable --mode recommend --once"));
+    assert.ok(readme.indexOf(recipe!) < readme.indexOf("--mode recommend --once"));
     await writeFile(join(destination, "user-owned.txt"), "preserve me");
     await assert.rejects(initializeSelfHosted(destination), { code: "EEXIST" });
     assert.equal(

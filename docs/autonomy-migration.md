@@ -28,10 +28,13 @@ and do not automatically enable autonomy while upgrading storage or code.
    one SDK language per external target. Do not rewrite an existing schemaVersion 1
    onboarding plan. Fresh `init` plans (schemaVersion 2, preset `autonomous-default`)
    record autonomous mode separately. Constructing `ImprovementController` without a
-   mode is now autonomous with self-improving on. The worker runs unless `--disable`
-   or `LOOPITER_DISABLE=1` is set. Pass mode `recommend` or `observe` to keep the
-   previous non-applying behavior. `--enable`, `--confirm-activation`, and `--yes`
-   are ignored and log a deprecation warning. Audit, budgets, and rollback still apply.
+   mode is now autonomous with self-improving on. That default is unreleased, on
+   main, and is not in the published 0.3.0 alphas. Pass mode `recommend` or
+   `observe` to keep suggest-only behavior. `--disable` and `LOOPITER_DISABLE=1`
+   only pause the worker: the tick stops with `self_improvement_disabled` and
+   stores no proposal. They are not mode recommend. `--enable`,
+   `--confirm-activation`, and `--yes` are ignored and log a deprecation warning.
+   Audit, budgets, and rollback still apply.
 
 ## JSON development stores
 

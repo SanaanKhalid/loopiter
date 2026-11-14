@@ -49,7 +49,7 @@ python -m loopiter worker --module loopiter/application.py --once
 
 # Store proposals and do not apply them.
 npx --no-install loopiter worker --module ./loopiter/application.mjs --mode recommend --once
-python -m loopiter worker --module loopiter/application.py --disable --mode recommend --once`;
+python -m loopiter worker --module loopiter/application.py --mode recommend --once`;
 
 export function GraduatedAutonomyArticle({ post }: { post: Post }) {
   return (

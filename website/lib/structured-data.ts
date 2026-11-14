@@ -15,7 +15,7 @@ const softwareId = `${siteUrl}/#software`;
 const packageUrls = [npmPackageUrl, pypiPackageUrl];
 
 const softwareDescription =
-  'A lightweight, model-agnostic feedback loop for production AI systems. MIT-licensed TypeScript and Python libraries that capture executions and feedback, evaluate immutable candidates, and coordinate deployment or rollback through application-owned adapters. A fresh self-hosted init records autonomous mode and self-improving on. The worker runs unless --disable or LOOPITER_DISABLE=1 is set, and follows plan.mode unless --mode is set. Constructing ImprovementController without a mode is autonomous with self-improving on.';
+  'A lightweight, model-agnostic feedback loop for production AI systems. MIT-licensed TypeScript and Python libraries that capture executions and feedback, evaluate immutable candidates, and coordinate deployment or rollback through application-owned adapters. A fresh self-hosted init records autonomous mode and self-improving on. The worker runs unless --disable or LOOPITER_DISABLE=1 is set, and follows plan.mode unless --mode is set. On main, unreleased, constructing ImprovementController without a mode is autonomous with self-improving on. Mode recommend or observe keeps suggest-only behavior. --disable and LOOPITER_DISABLE=1 only pause and store no proposal. That default is not in the published 0.3.0 alphas.';
 
 export const siteGraph = {
   '@context': 'https://schema.org',

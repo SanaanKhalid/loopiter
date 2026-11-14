@@ -61,7 +61,8 @@ class OnboardingTests(unittest.TestCase):
                 },
             )
             readme = (destination / "README.md").read_text()
-            self.assertIn("--disable --mode recommend --once", readme)
+            self.assertIn("--mode recommend --once", readme)
+            self.assertNotIn("--disable --mode", readme)
             recipe = next(
                 line.strip()
                 for line in readme.splitlines()
@@ -83,7 +84,7 @@ class OnboardingTests(unittest.TestCase):
             self.assertIn("Namespace: app/shown", autonomous_activation_prompt("app/shown"))
             self.assertIn("Type activate to confirm:", autonomous_activation_prompt("app/shown"))
             self.assertLess(readme.index(migration), readme.index(recipe))
-            self.assertLess(readme.index(recipe), readme.index("--disable --mode recommend --once"))
+            self.assertLess(readme.index(recipe), readme.index("--mode recommend --once"))
             marker = destination / "user-owned.txt"
             marker.write_text("preserve me")
             with self.assertRaises(FileExistsError):

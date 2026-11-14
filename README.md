@@ -51,17 +51,20 @@ and it still starts incomplete. `doctor` checks declared configuration; `verify`
 tests isolated simulated SDK mechanics. Your agent must still verify the real
 application. After both succeed, the emitted worker recipe omits `--mode`, so
 `plan.mode` controls that command, and the worker runs without `--enable`.
-Pass `--disable` or set `LOOPITER_DISABLE=1` to pause improvement work. `--mode
-recommend` or `observe` stores proposals and does not apply. Omitting `--mode`
-follows `plan.mode`, or autonomous when no plan is present. Constructing
+These defaults are unreleased, on main. They are not in the published
+`loopiter@0.3.0-alpha.1` or `loopiter==0.3.0a1` packages. `--mode recommend` or
+`observe` stores proposals and does not apply. Omitting `--mode` follows
+`plan.mode`, or autonomous when no plan is present. Constructing
 `ImprovementController` without a mode is autonomous with self-improving on.
 Existing schemaVersion 1 plans are left unchanged. Users who never set a mode
 previously stayed on recommend: pass `mode: "recommend"` (Python `mode="recommend"`)
-or run the worker with `--disable` to keep that behavior. `--enable`,
-`--confirm-activation`, and `--yes` are ignored and log a deprecation warning.
-Validation, audit, budgets, and rollback are unchanged. No platform login or
-Loopiter project key is involved; you pay your own model/judge, database and
-hosting providers.
+or set `plan.mode` to `recommend` or `observe` to keep that behavior.
+`--disable` and `LOOPITER_DISABLE=1` (`true` and `yes` also count) only pause
+the worker. That pause stops with `self_improvement_disabled` and stores no
+proposal. It is not mode recommend. `--enable`, `--confirm-activation`, and
+`--yes` are ignored and log a deprecation warning. Validation, audit, budgets,
+and rollback are unchanged. No platform login or Loopiter project key is
+involved; you pay your own model/judge, database and hosting providers.
 
 Read the guide with `python -m loopiter guide` or `npx --no-install loopiter guide`.
 Use `reference` for packaged source. New commands require this onboarding build;
@@ -72,12 +75,13 @@ publishing a new npm/PyPI release is separate.
 Release versions: `loopiter@0.3.0-alpha.1` and Python `loopiter==0.3.0a1`.
 It adds policy-bounded `ImprovementController` APIs in both languages, durable
 experiments, single-winner selection, production observation and recovery.
-Constructing the controller without a mode is autonomous with self-improving on.
-A fresh self-hosted init records the same preset. The worker follows `plan.mode`
-unless `--mode` is set, runs unless `--disable` or `LOOPITER_DISABLE=1` is set,
-and every audit, budget, and rollback gate remains. Installation never starts a
-worker or spends by itself. Pass mode `recommend` or `observe` to keep the
-previous non-applying behavior.
+Constructing the controller without a mode still recommends and does not apply.
+A fresh self-hosted init in this repository records autonomous mode and
+self-improving on, but that init and worker postdate these published archives.
+The published worker follows `plan.mode` unless `--mode` is set, spends only
+with `--enable`, and every audit, budget, and rollback gate remains.
+Installation never starts a worker or spends by itself. The autonomous default
+and the removal of `--enable` are unreleased, on main.
 
 See [autonomy guide source](fern/pages/autonomous.mdx), [migration](docs/autonomy-migration.md),
 [simulation workflows](examples/autonomous/README.md), and the
@@ -205,10 +209,13 @@ An uncertain result remains pending until inspection resolves it. Do not retry a
 blindly. An adapter must implement idempotent apply, durable inspect, fenced
 `not_applied`, and real rollback. There is no universal exactly-once guarantee.
 
-Constructing the controller without a mode only recommends. A fresh self-hosted
-init records autonomous mode; spending still requires `--enable`, and every
-policy gate still applies. The removed experimental auto-apply path stays
-rejected. Callbacks run in your process; cancellation is cooperative, **not a sandbox**.
+On main, unreleased, constructing the controller without a mode is autonomous
+with self-improving on. Mode `recommend` or `observe` stores proposals and does
+not apply. `--disable` and `LOOPITER_DISABLE=1` only pause the worker and store
+no proposal. The published `0.3.0-alpha.1` and `0.3.0a1` packages still recommend
+when no mode is set and still spend only with `--enable`. Every policy gate
+still applies. The removed experimental auto-apply path stays rejected.
+Callbacks run in your process; cancellation is cooperative, **not a sandbox**.
 
 The complete PostgreSQL/OpenAI or Azure OpenAI starter includes real prompt selection, exact-match
 holdout evaluation, review, rollback and recovery. Live mode is opt-in, requires

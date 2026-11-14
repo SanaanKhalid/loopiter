@@ -4,9 +4,13 @@
 > `ImprovementController` with durable budgets, independent audits and observation/rollback.
 > Start with the [autonomous workflow guide](https://github.com/SanaanKhalid/loopiter/blob/main/fern/pages/autonomous.mdx)
 > and [explicit migration guide](https://github.com/SanaanKhalid/loopiter/blob/main/docs/autonomy-migration.md).
-> Constructing `ImprovementController` without a mode is autonomous with
-> `self_improving` on. A fresh self-hosted init records the same preset.
-> The worker runs unless `--disable` or `LOOPITER_DISABLE=1` is set. Storage upgrades stay
+> The published controller stays on recommend unless mode and `self_improving` are set.
+> A fresh self-hosted init in this repository records autonomous mode and self-improving on.
+> The published worker still requires `--enable` before spending. On main, unreleased,
+> constructing the controller without a mode is autonomous with self-improving on,
+> and the worker runs unless `--disable` or `LOOPITER_DISABLE=1` is set.
+> `--disable` only pauses and stores no proposal. Mode `recommend` or `observe`
+> keeps suggest-only behavior. Storage upgrades stay
 > an explicit migration, and schemaVersion 1 plans are not rewritten.
 
 Native, async Python SDK for **reviewed, evidence-driven AI improvements**.
@@ -47,8 +51,10 @@ missing integration decisions. A fresh plan is schemaVersion 2
 (`autonomous-default`): mode autonomous and self-improving on. Once the
 application-owned module is implemented and doctor and verify pass, run
 `python -m loopiter worker --module loopiter/application.py --once`.
-The worker runs without `--enable`. Pass `--disable` or set `LOOPITER_DISABLE=1`
-to pause improvement work. That does not bypass audit, budgets, or rollback.
+On main, unreleased, and not in `loopiter==0.3.0a1`, the worker runs without `--enable`.
+Pass `--disable` or set `LOOPITER_DISABLE=1` only to pause the worker. That pause
+stops with `self_improvement_disabled` and stores no proposal. It is not mode
+recommend. The pause does not bypass audit, budgets, or rollback.
 Omit `--once` for a supervised foreground worker. `--mode recommend` stores
 proposals and does not apply. Omitting `--mode` uses `plan.mode`; the flag
 overrides the plan. Constructing `ImprovementController` without a mode is
@@ -219,10 +225,12 @@ Candidate IDs are insert-idempotency keys, not automatic semantic deduplication.
 proposal deduplication choose a stable ID derived with `fingerprint({...})` from the
 target, proposed change, evidence fingerprint, evaluator version and dataset hash.
 Changed evidence/evaluator versions should produce a new ID. No callback runs
-automatically after feedback capture. In the 0.3 alpha, the native
+automatically after feedback capture. In the published 0.3.0a1 alpha, the native
 `ImprovementController` adds scheduled-by-your-application autonomous cycles.
-Omitting `mode` and `self_improving` is autonomous and can apply a passing candidate.
-A fresh init records the same preset; the worker runs unless `--disable` or `LOOPITER_DISABLE=1` is set.
+Omitting `mode` and `self_improving` still recommends and does not apply, and the
+worker spends only with `--enable`. On main, unreleased, omitting them is
+autonomous and can apply a passing candidate. `--mode recommend` stores proposals
+and does not apply. `--disable` and `LOOPITER_DISABLE=1` only pause and store no proposal.
 Reviewed calls above remain supported.
 
 ## Deployment and recovery contract

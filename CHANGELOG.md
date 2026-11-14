@@ -2,26 +2,29 @@
 
 ## Unreleased
 
+### Breaking
+
+- **Migration:** On main, unreleased, `ImprovementController` constructed without a mode is autonomous with self-improving on, in Node and Python, matching the `autonomous-default` init preset. A worker with no integration plan uses autonomous. The worker runs without `--enable`. Existing users who never set a mode previously stayed on recommend and did not apply. To keep that suggest-only behavior, pass mode `recommend` or `observe`, or set `plan.mode`. `--disable` and `LOOPITER_DISABLE=1` (`true` and `yes` also count) only pause the worker: the tick stops with `self_improvement_disabled` and stores no proposal. They are not mode recommend. `--enable`, `--confirm-activation`, and `--yes` are ignored and log a deprecation warning. Activation confirmation is no longer required, and the worker does not read or write `.state/activation.json`. Validation, held-out audit, budgets, fixed checks, must-pass examples, audit history, and rollback are unchanged. This is not in the published npm `0.3.0-alpha.1` or Python `0.3.0a1` packages, which still default the controller to recommend and still require `--enable`. No version bump and no release.
+
 ### Minor
 
-- **Migration:** `ImprovementController` constructed without a mode is now autonomous with self-improving on, in Node and Python, matching the `autonomous-default` init preset. Existing users who never set a mode previously stayed on recommend and did not apply. To keep that behavior, pass mode `recommend` or `observe`. The worker runs without `--enable`. Pass `--disable` or set `LOOPITER_DISABLE=1` (also `true` or `yes`) to pause improvement work. `--enable`, `--confirm-activation`, and `--yes` are ignored and log a deprecation warning. The one-time activation prompt is gone. Validation, held-out audit, budgets, fixed checks, must-pass examples, audit history, and rollback are unchanged. No published version bump.
 - The controller step timeout is configurable from the controller, `stepTimeoutMs` in the integration plan, and `--step-timeout-ms`. The default remains 120 seconds. Node and Python share a two-hour ceiling on the controller, the integration plan, and `--step-timeout-ms`, so the live KB-QA harness can cover its retries. A step that fails only by timeout is recorded as `timed_out`. Audit rows already sent to the model stay reserved, and the timeout does not increment the consecutive-failure stop. It is retried once; a second timeout ends that run. Repeated timeouts pause separately from real failures and still cannot deploy.
 - The live stall watchdog uses a monotonic clock. A host pause that jumps wall time ahead of that clock is logged and is not treated as a stall. Stopping a live run reports the candidate as cancelled. A callback failure keeps a redacted, truncated error instead of a generic failure code. Held-out scoring is skipped when a failed candidate is still serving the baseline.
-- The autonomous activation prompt names the effective namespace. A first tick that fails or returns `callback_failed` does not keep the confirmation stamp. A change to the application workflow budget (daily limits or the per-callback reservation) asks for confirmation again. A legacy activation stamp adopts the current budget once on upgrade, and later budget changes re-prompt. Callback failures store that same redacted, truncated text on the improvement run in both SDKs.
+- Callback failures store a redacted, truncated error on the improvement run in both SDKs. The worker no longer asks for an activation confirmation, and it does not read or rewrite `.state/activation.json`.
 - Strengthen error-text sanitizing for stored failure detail in both SDKs.
 - Tighten error-text sanitizing for stored failure detail in both SDKs.
 - Doctor and an autonomous worker refuse an audit size that cannot certify the configured gain at the configured confidence. The paired Hoeffding minimum is `minimumCertifiableAuditUnits` / `minimum_certifiable_audit_units`. Fresh plans record an audit size that can pass. Confidence thresholds are unchanged.
 - The worker uses `plan.mode` when `--mode` is omitted. The flag overrides the plan, and the effective mode and step timeout are logged with their source.
 - The starter Postgres registry can update a setup's configuration hash without replacing the artifact version.
 - Candidates left proposed by a timed-out or cancelled run are rejected when the run ends, and stale ones are rejected on startup.
-- The worker recipe omits `--mode` so `plan.mode` controls it. Activation confirmation is no longer required, and the worker does not read or write `.state/activation.json`.
+- The worker recipe omits `--mode` so `plan.mode` controls it.
 - Audit rows are reserved when they are sent to the model. A timed-out audit cannot be reused by a later run.
 - Doctor describes `minimumImprovement` as the certification floor. For the default objective, 7 units is the full-range floor; a gain of 0.05 cannot be certified, while gains of 0.10 and 0.20 need 2397 and 267 units.
 - Node `--step-timeout-ms` and `stepTimeoutMs` in the plan accept only decimal integers. Scientific notation, hex, and trailing `.0` are rejected, matching Python.
 - The live KB-QA harness retries only the listed transient socket failures, bounds each attempt with a deadline, and exits if the run goes quiet. The retry-wait cap is per call and does not include pace waits. A partial report keeps finished per-seed scores. Pacing still uses 90% of `LOOPITER_BENCH_MAX_TPM`.
 - The live KB-QA harness sets the controller step from the calls in one callback, the reserved attempts, and the retry sleep those calls can spend.
 - Fresh self-hosted `init` writes onboarding plan schemaVersion 2, preset `autonomous-default`, in Node and Python: `mode` autonomous and self-improving on. Doctor still accepts schemaVersion 1 plans and does not rewrite them.
-- Fresh setup recipes run the worker without `--enable`. `--mode recommend` or `--disable` keeps proposals from being applied. Omitting `--mode` follows `plan.mode`. With no plan, the worker uses autonomous.
+- Fresh setup recipes run the worker without `--enable`. `--mode recommend` stores proposals and does not apply. `--disable` pauses and stores no proposal. Omitting `--mode` follows `plan.mode`. With no plan, the worker uses autonomous.
 - Autonomous mode still fails closed without an audit partition or a budget. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks are unchanged. No storage migration.
 
 - Package a self-hosted agent guide and application-side references with both SDKs.

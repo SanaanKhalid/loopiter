@@ -433,13 +433,13 @@ Your agent creates application.py here, exporting async create_integration(*, ca
 
 This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.
 
-After doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 to pause improvement work. Set mode to recommend or observe to keep proposals from being applied. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
+After doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 only to pause the worker. That pause stops with self_improvement_disabled and stores no proposal. It is not mode recommend. Set mode to recommend or observe, or set plan.mode, to store proposals without applying them. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
 
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --once
 
 --mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:
 
-    python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --disable --mode recommend --once
+    python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --mode recommend --once
 
 The recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. With no integration plan, the worker uses autonomous. Existing schemaVersion 1 plans are left unchanged.
 
