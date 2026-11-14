@@ -13,6 +13,7 @@ from typing import Any
 from uuid import uuid4
 
 from .._validation import LoopiterError
+from .privacy import capture_payload
 
 
 def _json_clone(value: Any) -> Any:
@@ -26,13 +27,8 @@ def _json_clone(value: Any) -> Any:
 
 
 def _payload(value: Any, policy: dict[str, Any]) -> tuple[Any, bool]:
-    mode = policy.get("mode", "metadata-only")
-    if mode not in ("full", "redacted", "metadata-only"):
-        raise TypeError("Invalid capture mode.")
-    if mode == "metadata-only":
-        return {"omitted": True}, False
-    cloned = _json_clone(value)
-    return cloned, False
+    captured = capture_payload(value, policy)
+    return captured["value"], captured["truncated"]
 
 
 def _note(callback: Callable[[Any], None] | None, error: BaseException) -> None:
@@ -80,12 +76,13 @@ class CaptureClient:
 
     async def record_execution(self, **kwargs: Any) -> Any:
         if self._bounded is not None:
-            raise TypeError("Bounded capture does not await record_execution. Use observe().")
+            return self._bounded.open_record(kwargs)
         return await self._persist(lambda: self.loop.record_execution(**kwargs))
 
     async def complete_execution(self, key: str, *, expected_revision: int, **kwargs: Any) -> Any:
         if self._bounded is not None:
-            raise TypeError("Bounded capture does not await complete_execution. Use observe().")
+            self._bounded.finish_record(key, kwargs)
+            return None
         return await self._persist(
             lambda: self.loop.complete_execution(key, expected_revision=expected_revision, **kwargs)
         )
@@ -225,6 +222,7 @@ class _Bounded:
         self.closed = False
         self.generation = 0
         self.active_deadline = False
+        self._open: dict[str, dict[str, Any]] = {}
 
     def stats(self) -> dict[str, int]:
         return {
@@ -319,6 +317,107 @@ class _Bounded:
         await self.force_flush(timeout_ms)
         if self._occupancy() > 0:
             self.abandon()
+
+    def open_record(self, kwargs: dict[str, Any]) -> dict[str, Any] | None:
+        """Admit one provider record and its later completion. Does not await the store."""
+        fields = dict(kwargs)
+        if not fields.get("id"):
+            fields["id"] = f"execution_{uuid4()}"
+        ticket = self.generation
+        holder: dict[str, Any] = {
+            "ticket": ticket,
+            "held": False,
+            "row": None,
+            "late": False,
+            "id": fields["id"],
+        }
+        admitted = (
+            not self.closed
+            and self.generation == ticket
+            and self._occupancy() + 2 <= self.queue_limit
+        )
+        if not admitted:
+            self._drop()
+            return None
+        holder["held"] = True
+        self.reserved += 1
+        self._open[fields["id"]] = holder
+
+        async def record(timed_out: Callable[[], bool]) -> None:
+            try:
+                if self.generation != ticket:
+                    return
+                recorded = await self.owner.loop.record_execution(**fields)
+                if self.generation != ticket:
+                    return
+                sent = (fields.get("metadata") or {}).get("loopiter_capture")
+                if sent is not None and recorded["metadata"].get("loopiter_capture") != sent:
+                    raise LoopiterError(
+                        "capture_identity", "Sanitizer changed capture identity or status."
+                    )
+                if timed_out():
+                    await self._close_open_late(holder, recorded, ticket)
+                    return
+                if self.generation != ticket:
+                    return
+                holder["row"] = recorded
+            except Exception as error:
+                if not timed_out() and self.generation == ticket:
+                    self.failed += 1
+                    _note(self.owner.on_error, error)
+
+        self.enqueue(record)
+        return {
+            "id": fields["id"],
+            "revision": 1,
+            "metadata": deepcopy(fields.get("metadata") or {}),
+            "_bounded": True,
+        }
+
+    async def _close_open_late(
+        self, holder: dict[str, Any], recorded: dict[str, Any], ticket: int
+    ) -> None:
+        if self.generation != ticket:
+            return
+        holder["late"] = True
+        identity = {**recorded["metadata"].get("loopiter_capture", {}), "status": "failed"}
+        await self.owner.loop.complete_execution(
+            recorded["id"],
+            expected_revision=recorded["revision"],
+            output={"omitted": True},
+            metadata={"loopiter_capture": identity},
+        )
+
+    def finish_record(self, key: str, complete_kwargs: dict[str, Any]) -> None:
+        holder = self._open.get(key)
+        if holder is None or not holder["held"]:
+            return
+        if self.generation != holder["ticket"]:
+            holder["held"] = False
+            return
+        holder["held"] = False
+        if self.generation != holder["ticket"]:
+            return
+        self.reserved -= 1
+        if self.reserved < 0:
+            raise RuntimeError("Capture reservation went negative.")
+
+        async def complete(timed_out: Callable[[], bool]) -> None:
+            row = holder["row"]
+            if self.generation != holder["ticket"] or row is None or holder["late"]:
+                return
+            try:
+                await self.owner.loop.complete_execution(
+                    row["id"],
+                    expected_revision=row["revision"],
+                    **complete_kwargs,
+                )
+            except Exception as error:
+                if not timed_out() and self.generation == holder["ticket"]:
+                    self.failed += 1
+                    _note(self.owner.on_error, error)
+
+        self.enqueue(complete)
 
     async def observe(
         self,

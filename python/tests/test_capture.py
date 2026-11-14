@@ -1,9 +1,11 @@
 import asyncio
+import json
 import unittest
 
 from loopiter import FeedbackLoop, InMemoryStore
 from loopiter.integrations.import_batch import import_batch
 from loopiter.integrations.observe import create_observer
+from loopiter.integrations.privacy import capture_payload
 
 WHEN = "2026-03-01T15:04:05.000Z"
 
@@ -278,6 +280,36 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after["revision"], before["revision"])
         await observer.shutdown(20)
 
+    def test_redaction_matches_the_node_capture_fixture(self):
+        raw = {
+            "authorization": "Bearer top-secret",
+            "messages": [
+                {
+                    "content": "password=private https://alice:password@example.test sk-1234567890123456"
+                }
+            ],
+            "apiKey": "private",
+            "text": "safe",
+        }
+        redacted = capture_payload(raw, {"mode": "redacted"})
+        self.assertNotRegex(
+            json.dumps(redacted["value"]), "top-secret|private|alice|1234567890123456"
+        )
+        self.assertEqual(raw["apiKey"], "private")
+        self.assertFalse(redacted["complete"])
+        long = capture_payload(
+            {"apiKey": "secret" * 2000}, {"mode": "redacted", "maximumBytes": 128}
+        )
+        self.assertFalse(long["truncated"])
+        omitted = capture_payload({"text": "x" * 1000}, {"mode": "redacted", "maximumBytes": 128})
+        self.assertEqual(omitted["value"], {"omitted": True, "truncated": True, "bytes": 1011})
+        self.assertEqual(
+            capture_payload(raw, {"mode": "metadata-only"})["value"], {"omitted": True}
+        )
+        self.assertTrue(capture_payload(raw, {"mode": "full"})["complete"])
+        with self.assertRaises(TypeError):
+            capture_payload(raw, {"mode": "redacted", "maximumBytes": True})
+
     async def test_import_dedupes_and_keeps_unknown_usage_off_the_release(self):
         loop = self.loop()
         ticket = _record("ticket-100", "classify", "support-ticket-v1")
@@ -330,6 +362,18 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(known["accepted"], 1)
+        shared = _record(
+            "ticket-ms", "classify", "support-ticket-v1", occurredAt="2026-03-01T15:04:05.123Z"
+        )
+        self.assertEqual((await import_batch(loop, [shared]))["accepted"], 1)
+        micros = _record(
+            "ticket-us", "classify", "support-ticket-v1", occurredAt="2026-03-01T15:04:05.123456Z"
+        )
+        self.assertEqual((await import_batch(loop, [micros]))["rejected"], 1)
+        calendar = _record(
+            "ticket-day", "classify", "support-ticket-v1", occurredAt="2026-02-31T00:00:00Z"
+        )
+        self.assertEqual((await import_batch(loop, [calendar]))["rejected"], 1)
 
 
 async def _wait(event):

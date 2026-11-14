@@ -11,7 +11,9 @@ and do not automatically enable autonomy while upgrading storage or code.
 3. Review and explicitly execute SQL migration `002-autonomy.sql` for the appropriate SDK.
    Node migrations live in `migrations/`; Python SQL is packaged under
    `loopiter/migrations/`. `migratePostgres(pool)` and Python `migration_sql()` include
-   both numbered migrations when explicitly invoked. Constructors never run DDL.
+   the numbered migrations when explicitly invoked. Constructors never run DDL.
+   Python `003-historical.sql` only widens that collection check so `historical` is
+   allowed. It does not rewrite rows, and it is not applied on upgrade by itself.
 4. Upgrade adapters: Node contract version **3**, Python version **2**. New collections are
    runs, operations, budgets, observations and coordination. Observations are insert-only;
    mutable control records use revisions and namespace-serializable short transactions.

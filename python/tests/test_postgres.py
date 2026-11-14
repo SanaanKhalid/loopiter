@@ -9,6 +9,7 @@ from uuid import uuid4
 from test_core import Registry, approved
 
 from loopiter import FeedbackLoop, LoopiterError
+from loopiter.integrations.import_batch import import_batch
 from loopiter.postgres import PostgresStore, migration_sql
 from loopiter.testing import run_store_conformance
 
@@ -56,6 +57,23 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_conformance(self):
         await run_store_conformance(self.store)
+
+    async def test_historical_import(self):
+        body = {
+            "idempotencyKey": "ticket-pg",
+            "occurredAt": "2026-03-01T15:04:05.123Z",
+            "status": "success",
+            "stageId": "classify",
+            "versions": {"prompt": "support-ticket-v1", "model": "fixture"},
+            "usage": {"state": "unknown"},
+        }
+        self.assertEqual(
+            await import_batch(self.loop, [body]),
+            {"accepted": 1, "conflicts": 0, "rejected": 0},
+        )
+        stored = (await self.loop.list("historical"))["items"]
+        self.assertEqual(stored[0]["original"]["occurredAt"], body["occurredAt"])
+        self.assertEqual((await self.loop.list("executions"))["items"], [])
 
     async def test_independent_clients_revision_race(self):
         await self.loop.record_execution(id="e", kind="prediction")

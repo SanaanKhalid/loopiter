@@ -16,7 +16,7 @@ def migration_sql() -> str:
     """Return versioned SQL for the application's migration process; execute explicitly."""
     return "\n".join(
         files("loopiter").joinpath("migrations/" + name).read_text(encoding="utf-8")
-        for name in ("001-python-store.sql", "002-autonomy.sql")
+        for name in ("001-python-store.sql", "002-autonomy.sql", "003-historical.sql")
     )
 
 
@@ -161,10 +161,11 @@ class PostgresStore:
                     schema = await tx._query(
                         "SELECT max(version) FROM loopiter_python_schema_migrations", ()
                     )
-                    if not schema or schema[0][0] != 2:
+                    if not schema or schema[0][0] != 3:
                         v.fail(
                             "migration_required",
-                            "Store v2 requires explicit SQL migration 002-autonomy.sql. Stop old writers and back up first.",
+                            "Store schema v3 requires explicit SQL migration 003-historical.sql. "
+                            "Stop old writers and back up first. Construction never runs it.",
                         )
                     yield tx
                 finally:

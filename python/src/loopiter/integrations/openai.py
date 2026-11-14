@@ -79,6 +79,9 @@ class _Capture:
                 output=value,
                 metadata={"loopiter_capture": {**identity, "status": status}},
             )
+            if self.execution.get("_bounded"):
+                self.finished = True
+                return
             if saved["metadata"].get("loopiter_capture") != {**identity, "status": status}:
                 raise LoopiterError(
                     "capture_identity", "Sanitizer changed capture identity or status."
@@ -236,6 +239,8 @@ class _Client(_Facade):
                 artifacts={**context["artifacts"], "model": request["model"]},
                 metadata={**context.get("metadata", {}), "loopiter_capture": identity},
             )
+            if execution is None:
+                return await create(**params)
             if execution["metadata"].get("loopiter_capture") != identity:
                 raise LoopiterError(
                     "capture_identity", "Sanitizer changed capture identity or status."

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 from loopiter import FeedbackLoop, InMemoryStore, LoopiterError
 from loopiter.integrations.context import replace_guidance, strip_guidance
+from loopiter.integrations.observe import create_observer
 from loopiter.integrations.openai import with_loopiter
 
 RESULT = {
@@ -47,6 +48,44 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def rows(self, loop):
         return (await loop.list("executions"))["items"]
+
+    async def test_bounded_client_does_not_block_the_provider(self):
+        loop = FeedbackLoop(store=InMemoryStore(), namespace="bounded-openai")
+        gate = asyncio.Event()
+        original = loop.record_execution
+
+        async def slow(**kwargs):
+            await gate.wait()
+            return await original(**kwargs)
+
+        loop.record_execution = slow
+        client = create_observer(loop, bounded={"queue_limit": 4, "write_timeout_ms": 1_000})
+        called = asyncio.Event()
+
+        async def generate(**_params):
+            called.set()
+            return RESULT
+
+        loop_client, create, _base, _wrapped = self.setup_capture()
+        del loop_client
+        create.side_effect = generate
+        wrapped = with_loopiter(
+            _base,
+            loop=loop,
+            context=lambda _request: {"artifacts": {"prompt": "v1"}},
+            capture=client,
+        )
+        running = asyncio.create_task(wrapped.chat.completions.create(**PARAMS))
+        await asyncio.wait_for(called.wait(), 1)
+        self.assertFalse(gate.is_set())
+        gate.set()
+        self.assertIs(await running, RESULT)
+        await client.shutdown(1_000)
+        rows = (await loop.list("executions"))["items"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["metadata"]["loopiter_capture"]["status"], "completed")
+        self.assertEqual(client.stats()["dropped"], 0)
+        self.assertEqual(client.stats()["failed"], 0)
 
     async def test_pending_precedes_provider_and_feedback_is_explicit(self):
         loop, create, _base, wrapped = self.setup_capture()

@@ -76,6 +76,18 @@ test("historical import keeps source time, dedupes, and does not attach a releas
     record("invoice-known", "billing", "invoice-v1", { usage: { state: "known", tokens: 4 } }),
   ]);
   assert.equal(known.accepted, 1);
+  const shared = await importBatch(loop, [
+    record("ticket-ms", "classify", "support-ticket-v1", { occurredAt: "2026-03-01T15:04:05.123Z" }),
+  ]);
+  assert.equal(shared.accepted, 1);
+  const micros = await importBatch(loop, [
+    record("ticket-us", "classify", "support-ticket-v1", { occurredAt: "2026-03-01T15:04:05.123456Z" }),
+  ]);
+  assert.equal(micros.rejected, 1);
+  const calendar = await importBatch(loop, [
+    record("ticket-day", "classify", "support-ticket-v1", { occurredAt: "2026-02-31T00:00:00Z" }),
+  ]);
+  assert.equal(calendar.rejected, 1);
   const billed = (await loop.list("historical")).items.find((row) => row.id === "invoice-known")!;
   assert.equal((billed.original as { usage: { tokens: number } }).usage.tokens, 4);
 });

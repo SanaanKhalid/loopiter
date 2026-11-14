@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import UTC, datetime
 from typing import Any
 
-from .._validation import LoopiterError, nonempty, obj, timestamp
+from .._validation import LoopiterError, nonempty, obj
+
+_OCCURRED_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$")
 
 _STATUSES = ("success", "partial", "error", "abstained", "dropped")
 _USAGE = ("known", "estimated", "unknown")
@@ -62,12 +66,25 @@ async def import_batch(loop: Any, records: list[Any]) -> dict[str, int]:
     return result
 
 
+def _occurred_at(value: Any) -> None:
+    """Same UTC width as the Node importer: optional 1–3 fractional digits, ending in Z."""
+    if type(value) is not str or _OCCURRED_AT.fullmatch(value) is None:
+        raise LoopiterError("invalid_input", "occurredAt must be an ISO UTC timestamp ending in Z.")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise LoopiterError("invalid_input", "Invalid calendar date in occurredAt.") from None
+    rendered = parsed.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    if rendered[:19] != value[:19]:
+        raise LoopiterError("invalid_input", "Invalid calendar date in occurredAt.")
+
+
 def _normalize(record: Any) -> dict[str, Any]:
     obj(record, "import record")
     if set(record) - set(_RECORD_FIELDS):
         raise LoopiterError("invalid_input", "Unknown import field.")
     nonempty(record.get("idempotencyKey"), "idempotencyKey")
-    timestamp(record.get("occurredAt"), "occurredAt")
+    _occurred_at(record.get("occurredAt"))
     if record.get("status") not in _STATUSES:
         raise LoopiterError("invalid_input", "Invalid import status.")
     body: dict[str, Any] = {
