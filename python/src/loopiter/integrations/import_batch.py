@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 from .._validation import LoopiterError, nonempty, obj
 
+DEFAULT_MAX_RECORDS = 1000
+DEFAULT_MAX_STRING_LENGTH = 4096
+
 _OCCURRED_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$")
 
 _STATUSES = ("success", "partial", "error", "abstained", "dropped")
 _USAGE = ("known", "estimated", "unknown")
-_REPLAY_REASON = "imported-for-regression"
 _RECORD_FIELDS = (
     "idempotencyKey",
     "occurredAt",
@@ -30,13 +33,28 @@ def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-async def import_batch(loop: Any, records: list[Any]) -> dict[str, int]:
+async def import_batch(
+    loop: Any,
+    records: list[Any],
+    *,
+    max_records: int = DEFAULT_MAX_RECORDS,
+    max_string_length: int = DEFAULT_MAX_STRING_LENGTH,
+) -> dict[str, int]:
     """Accept the record schema from the integration design. Same key and body is a no-op."""
     if type(records) is not list:
         raise TypeError("import_batch requires a list of records.")
+    if type(max_records) is not int or max_records < 1:
+        raise TypeError("max_records must be a positive integer.")
+    if type(max_string_length) is not int or max_string_length < 1:
+        raise TypeError("max_string_length must be a positive integer.")
+    if len(records) > max_records:
+        raise LoopiterError(
+            "invalid_input", f"import batch exceeds the maximum of {max_records} records."
+        )
     result = {"accepted": 0, "conflicts": 0, "rejected": 0}
     for record in records:
         try:
+            _assert_string_cap(record, max_string_length)
             body = _normalize(record)
         except (LoopiterError, TypeError):
             result["rejected"] += 1
@@ -134,22 +152,33 @@ def _usage(value: Any) -> dict[str, Any]:
     return body
 
 
+def _assert_string_cap(value: Any, max_length: int, path: str = "record") -> None:
+    if isinstance(value, str):
+        if len(value) > max_length:
+            raise LoopiterError(
+                "invalid_input", f"Import string exceeds the maximum length of {max_length}."
+            )
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _assert_string_cap(key, max_length, path)
+            _assert_string_cap(item, max_length, path)
+        return
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        for item in value:
+            _assert_string_cap(item, max_length, path)
+
+
 def _replay(value: Any) -> dict[str, Any]:
     if value is None:
         return {"eligible": False}
     obj(value, "replay")
     if set(value) - {"eligible", "reason"}:
         raise LoopiterError("invalid_input", "Unknown replay field.")
-    eligible = False if "eligible" not in value else value["eligible"]
-    if type(eligible) is not bool:
+    if "eligible" in value and type(value["eligible"]) is not bool:
         raise LoopiterError("invalid_input", "replay.eligible must be boolean.")
-    if not eligible:
-        body: dict[str, Any] = {"eligible": False}
-        if "reason" in value:
-            nonempty(value["reason"], "replay.reason")
-            body["reason"] = value["reason"]
-        return body
-    nonempty(value.get("reason"), "replay.reason")
-    if value["reason"] != _REPLAY_REASON:
-        raise LoopiterError("invalid_input", "Replay reason is not allowed for an imported row.")
-    return {"eligible": True, "reason": _REPLAY_REASON}
+    if value.get("eligible") is True or "reason" in value:
+        raise LoopiterError(
+            "invalid_input", "Import replay eligibility is assigned by the importer."
+        )
+    return {"eligible": False}

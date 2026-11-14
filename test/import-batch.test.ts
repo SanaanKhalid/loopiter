@@ -88,6 +88,27 @@ test("historical import keeps source time, dedupes, and does not attach a releas
     record("ticket-day", "classify", "support-ticket-v1", { occurredAt: "2026-02-31T00:00:00Z" }),
   ]);
   assert.equal(calendar.rejected, 1);
+  const claimed = await importBatch(loop, [
+    record("ticket-replay", "classify", "support-ticket-v1", {
+      replay: { eligible: true, reason: "imported-for-regression" },
+    }),
+  ]);
+  assert.equal(claimed.rejected, 1);
+  const plain = await importBatch(loop, [record("ticket-plain", "classify", "support-ticket-v1")]);
+  assert.equal(plain.accepted, 1);
+  const stored = (await loop.list("historical")).items.find((row) => row.id === "ticket-plain")!;
+  assert.deepEqual((stored.original as { replay: { eligible: boolean } }).replay, { eligible: false });
+  await assert.rejects(
+    () => importBatch(loop, [record("a", "classify", "v"), record("b", "classify", "v")], { maxRecords: 1 }),
+    (error: unknown) => error instanceof RangeError,
+  );
+  const lengthy = await importBatch(
+    loop,
+    [record("ticket-long", "classify", "x".repeat(5000))],
+    { maxStringLength: 64 },
+  );
+  assert.equal(lengthy.rejected, 1);
+  assert.equal((await loop.list("historical")).items.some((row) => row.id === "ticket-long"), false);
   const billed = (await loop.list("historical")).items.find((row) => row.id === "invoice-known")!;
   assert.equal((billed.original as { usage: { tokens: number } }).usage.tokens, 4);
 });

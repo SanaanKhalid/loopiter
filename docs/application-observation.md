@@ -62,6 +62,8 @@ const options = {
 - `redacted` removes common structured credential fields, authorization headers, private keys, known token patterns, URL passwords and labeled secrets before size limits. Add a domain-specific `redact` callback for customer-specific PII. Pattern redaction is not a guarantee of anonymization.
 - `full` explicitly retains payloads within the configured bounds. Optional custom redaction still applies.
 
+Python `with_loopiter` applies the capture client's policy to provider input, output, streamed chunks, and caller metadata. Its default remains full capture.
+
 Oversized payloads are omitted with `truncated: true`; partial strings are not silently treated as complete answers. Application values are not mutated. `loopiterCapture` includes capture mode and an explicit `replayEligible: false` for these observational paths. A full provider trace still does not prove that tool effects, retrieval state, application code and generation settings can be replayed faithfully. Use the native application integration and approved frozen inputs for autonomous releases.
 
 Retention is controlled by the configured store and application. This API does not add an automatic deletion scheduler, encrypt arbitrary stores, or forward metadata-only telemetry into training.

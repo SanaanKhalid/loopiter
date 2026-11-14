@@ -23,7 +23,8 @@ class HistoricalMigrationSqlTests(unittest.TestCase):
         self.assertIn("ADD CONSTRAINT loopiter_python_records_collection_check", applied)
         self.assertIn("NOT VALID", applied)
         self.assertIn("VALIDATE CONSTRAINT loopiter_python_records_collection_check", applied)
-        self.assertIn("ON CONFLICT DO NOTHING", applied)
+        self.assertIn("SET LOCAL lock_timeout", applied)
+        self.assertNotIn("VALUES (3)", applied)
         self.assertNotIn("refuses to remove them", applied)
         self.assertIn("NOT VALID", down)
         self.assertIn("VALIDATE CONSTRAINT", down)
@@ -100,11 +101,9 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
                         ("loopiter_python_records_collection_check",),
                     )
                     definition, validated = await cur.fetchone()
-                    await cur.execute(
-                        "SELECT count(*) FROM loopiter_python_schema_migrations WHERE version = 3"
-                    )
-                    (count,) = await cur.fetchone()
-            return definition, validated, count
+                    await cur.execute("SELECT max(version) FROM loopiter_python_schema_migrations")
+                    (version,) = await cur.fetchone()
+            return definition, validated, version
 
         async with await AsyncConnection.connect(URL, autocommit=True) as conn:
             await conn.execute(historical_down_sql())
@@ -125,16 +124,16 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
             before = await constraint()
             self.assertIn("historical", before[0])
             self.assertTrue(before[1])
-            self.assertEqual(before[2], 1)
+            self.assertEqual(before[2], 2)
             async with await AsyncConnection.connect(URL, autocommit=True) as conn:
                 await conn.execute(upgrade)
             self.assertEqual(await constraint(), before)
             await self.store.delete_namespace(self.namespace)
             async with await AsyncConnection.connect(URL, autocommit=True) as conn:
                 await conn.execute(historical_down_sql())
-            restored, _validated, count = await constraint()
+            restored, _validated, version = await constraint()
             self.assertNotIn("historical", restored)
-            self.assertEqual(count, 0)
+            self.assertEqual(version, 2)
             with self.assertRaises(LoopiterError) as again:
                 await import_batch(self.loop, [body])
             self.assertEqual(again.exception.code, "migration_required")

@@ -2,10 +2,10 @@ import asyncio
 import json
 import unittest
 
-from loopiter import FeedbackLoop, InMemoryStore
+from loopiter import FeedbackLoop, InMemoryStore, LoopiterError
 from loopiter.integrations.import_batch import import_batch
 from loopiter.integrations.observe import create_observer
-from loopiter.integrations.privacy import capture_payload
+from loopiter.integrations.privacy import capture_payload, redact_capture
 
 WHEN = "2026-03-01T15:04:05.000Z"
 
@@ -280,29 +280,58 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after["revision"], before["revision"])
         await observer.shutdown(20)
 
-    def test_redaction_matches_the_node_capture_fixture(self):
-        raw = {
-            "authorization": "Bearer top-secret",
-            "messages": [
-                {
-                    "content": "password=private https://alice:password@example.test sk-1234567890123456"
-                }
-            ],
-            "apiKey": "private",
-            "text": "safe",
-        }
-        redacted = capture_payload(raw, {"mode": "redacted"})
-        self.assertNotRegex(
-            json.dumps(redacted["value"]), "top-secret|private|alice|1234567890123456"
+    def test_redaction_matches_the_shared_fixture(self):
+        from collections import OrderedDict, defaultdict
+        from pathlib import Path
+
+        parity = json.loads(
+            (Path(__file__).resolve().parents[2] / "test/fixtures/redaction-parity.json").read_text(
+                encoding="utf-8"
+            )
         )
-        self.assertEqual(raw["apiKey"], "private")
+        raw = json.loads(json.dumps(parity["sensitive"]["input"]))
+        redacted = capture_payload(raw, {"mode": "redacted"})
+        encoded = json.dumps(redacted["value"])
+        for marker in parity["sensitive"]["absent"]:
+            self.assertNotIn(marker, encoded)
+        for marker in parity["sensitive"]["present"]:
+            self.assertIn(marker, encoded)
+        self.assertEqual(raw["apiKey"], parity["sensitive"]["input"]["apiKey"])
         self.assertFalse(redacted["complete"])
+        repeat = parity["credentialRepeat"]
         long = capture_payload(
-            {"apiKey": "secret" * 2000}, {"mode": "redacted", "maximumBytes": 128}
+            {repeat["key"]: repeat["unit"] * repeat["count"]},
+            {"mode": "redacted", "maximumBytes": repeat["maximumBytes"]},
         )
         self.assertFalse(long["truncated"])
-        omitted = capture_payload({"text": "x" * 1000}, {"mode": "redacted", "maximumBytes": 128})
-        self.assertEqual(omitted["value"], {"omitted": True, "truncated": True, "bytes": 1011})
+        oversized = parity["oversized"]
+        omitted = capture_payload(
+            {oversized["key"]: oversized["unit"] * oversized["count"]},
+            {"mode": "redacted", "maximumBytes": oversized["maximumBytes"]},
+        )
+        self.assertEqual(
+            omitted["value"], {"omitted": True, "truncated": True, "bytes": oversized["bytes"]}
+        )
+        for sample in parity["boundaries"]:
+            text = json.dumps(capture_payload(sample, {"mode": "redacted"})["value"])
+            self.assertNotIn("fixture-marker-alpha", text)
+            self.assertNotIn("fixturekey123456", text)
+
+        class Marker(str):
+            pass
+
+        self.assertNotIn(
+            "fixture-marker-alpha", str(redact_capture(Marker("Bearer fixture-marker-alpha")))
+        )
+        self.assertNotIn(
+            "fixture-marker-alpha", redact_capture(("Bearer fixture-marker-alpha",))[0]
+        )
+        ordered = OrderedDict([("token", "fixture-marker-kappa"), ("text", "kept-label")])
+        walked = redact_capture(ordered)
+        self.assertIsInstance(walked, OrderedDict)
+        self.assertEqual(walked["token"], "[REDACTED]")
+        grouped = defaultdict(str, {"apiKey": "fixture-marker-delta"})
+        self.assertEqual(redact_capture(grouped)["apiKey"], "[REDACTED]")
         self.assertEqual(
             capture_payload(raw, {"mode": "metadata-only"})["value"], {"omitted": True}
         )
@@ -374,6 +403,23 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
             "ticket-day", "classify", "support-ticket-v1", occurredAt="2026-02-31T00:00:00Z"
         )
         self.assertEqual((await import_batch(loop, [calendar]))["rejected"], 1)
+        claimed = _record(
+            "ticket-replay",
+            "classify",
+            "support-ticket-v1",
+            replay={"eligible": True, "reason": "imported-for-regression"},
+        )
+        self.assertEqual((await import_batch(loop, [claimed]))["rejected"], 1)
+        plain = _record("ticket-plain", "classify", "support-ticket-v1")
+        self.assertEqual((await import_batch(loop, [plain]))["accepted"], 1)
+        stored = next(
+            row for row in (await loop.list("historical"))["items"] if row["id"] == "ticket-plain"
+        )
+        self.assertEqual(stored["original"]["replay"], {"eligible": False})
+        with self.assertRaises(LoopiterError):
+            await import_batch(loop, [plain, plain], max_records=1)
+        lengthy = _record("ticket-long", "classify", "x" * 5000)
+        self.assertEqual((await import_batch(loop, [lengthy], max_string_length=64))["rejected"], 1)
 
 
 async def _wait(event):

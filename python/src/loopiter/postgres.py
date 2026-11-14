@@ -37,7 +37,7 @@ class PostgresTransaction:
     def __init__(self, namespace, connection):
         self.namespace, self.connection, self.active = namespace, connection, True
         self.owner = asyncio.current_task()
-        self.schema_version = 0
+        self._historical_ready = None
 
     def _check(self, kind):
         if not self.active or asyncio.current_task() is not self.owner:
@@ -87,6 +87,17 @@ class PostgresTransaction:
             result["next_cursor"] = result["items"][-1]["id"]
         return result
 
+    async def _allows_historical(self) -> bool:
+        if self._historical_ready is not None:
+            return self._historical_ready
+        rows = await self._query(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = %s",
+            ("loopiter_python_records_collection_check",),
+        )
+        definition = rows[0][0] if rows else ""
+        self._historical_ready = "historical" in (definition or "")
+        return self._historical_ready
+
     async def insert(self, collection, record):
         from psycopg.types.json import Jsonb
 
@@ -94,7 +105,7 @@ class PostgresTransaction:
         v.stored(collection, record, self.namespace)
         if record["revision"] != 1:
             v.fail("conflict", "Insert requires revision 1.")
-        if collection == "historical" and self.schema_version < 3:
+        if collection == "historical" and not await self._allows_historical():
             v.fail(
                 "migration_required",
                 "The historical collection requires explicit SQL migration 003-historical.sql. "
@@ -182,13 +193,12 @@ class PostgresStore:
                         "SELECT max(version) FROM loopiter_python_schema_migrations", ()
                     )
                     schema_version = int(schema[0][0]) if schema and schema[0][0] is not None else 0
-                    # Schema 2 and 3 both serve normal traffic. Only historical writes need 3.
+                    # Version 2 remains valid. Historical writes check the collection constraint.
                     if schema_version < 2:
                         v.fail(
                             "migration_required",
                             "Store v2 requires explicit SQL migration 002-autonomy.sql. Stop old writers and back up first.",
                         )
-                    tx.schema_version = schema_version
                     yield tx
                 finally:
                     tx.active = False

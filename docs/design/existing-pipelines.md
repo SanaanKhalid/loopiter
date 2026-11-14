@@ -70,7 +70,8 @@ Importer, both SDKs, using the record schema in this document (the platform inge
 - Usage is `known`, `estimated`, or `unknown`. Unknown is never stored as zero.
 - An idempotency key. The same key and same body is a no-op. The same key and a different body is a visible conflict.
 - Out-of-order and multi-batch delivery are normal. The row is complete when its status is terminal, not when the batch happens to arrive.
-- `replayEligible` plus a reason. Default is not eligible. Historical and imported rows never attach to the release that is serving now.
+- `replayEligible` is decided by the importer. Caller-supplied eligibility or a reason is rejected. The stored value is not eligible. Historical and imported rows never attach to the release that is serving now.
+- A batch is at most 1000 records, and each string field is at most 4096 characters. Both limits are configurable and use the same defaults in Node and Python. Over either cap, the call or the record is rejected.
 
 **API sketch.**
 

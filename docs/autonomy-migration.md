@@ -18,14 +18,17 @@ and do not automatically enable autonomy while upgrading storage or code.
    That file takes the schema advisory lock, drops the old collection check under a
    brief `ACCESS EXCLUSIVE` lock, adds the wider check with `NOT VALID` (no scan,
    `SHARE UPDATE EXCLUSIVE`), then `VALIDATE CONSTRAINT` under `SHARE UPDATE EXCLUSIVE`
-   so the scan does not hold `ACCESS EXCLUSIVE`. It does not rewrite rows. Running that
-   file twice skips the `ALTER` statements when the check already allows `historical`,
-   and the version insert uses `ON CONFLICT DO NOTHING`. `historical_down_sql()` reads
+   so the scan does not hold `ACCESS EXCLUSIVE`. `SET LOCAL lock_timeout = '5s'`
+   makes a blocked lock fail instead of waiting. The script does not rewrite rows
+   and does not insert a schema version, so older SDKs still see `max(version) = 2`.
+   The adapter allows `historical` only when that check already names it. Running the
+   file twice skips the `ALTER` statements in that case. `historical_down_sql()` reads
    `003-historical-down.sql`, which is not part of `migration_sql()`. The down script
    restores the version-2 check when no `historical` row exists, and rolls back
    without deleting rows when one does.
 4. Upgrade adapters: Node contract version **3**, Python adapter contract version **2**.
-   Python SQL schema 2 and 3 both satisfy that adapter. New collections are
+   Python SQL schema version 2 still satisfies that adapter after `003-historical.sql`.
+   New collections are
    runs, operations, budgets, observations and coordination. Observations are insert-only;
    mutable control records use revisions and namespace-serializable short transactions.
    Run the exported conformance suite against a disposable namespace.

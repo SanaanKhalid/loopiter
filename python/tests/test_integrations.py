@@ -1,5 +1,7 @@
 import asyncio
+import json
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,6 +16,11 @@ RESULT = {
     "usage": {"total_tokens": 3},
 }
 PARAMS = {"model": "fixture", "messages": [{"role": "user", "content": "hello"}]}
+PARITY = json.loads(
+    (Path(__file__).resolve().parents[2] / "test/fixtures/redaction-parity.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 
 class Stream:
@@ -86,6 +93,56 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]["metadata"]["loopiter_capture"]["status"], "completed")
         self.assertEqual(client.stats()["dropped"], 0)
         self.assertEqual(client.stats()["failed"], 0)
+
+    async def test_capture_policy_is_applied_to_provider_rows(self):
+        content = PARITY["sensitive"]["input"]["messages"][0]["content"]
+        secret_params = {
+            "model": "fixture",
+            "messages": [{"role": "user", "content": content}],
+        }
+        for mode in ("redacted", "metadata-only"):
+            loop = FeedbackLoop(store=InMemoryStore(), namespace=f"policy-{mode}")
+            client = create_observer(loop, failure_mode="closed", capture={"mode": mode})
+            create = AsyncMock(return_value=RESULT)
+            base = SimpleNamespace(
+                chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+                responses=SimpleNamespace(create=AsyncMock(return_value={"status": "incomplete"})),
+            )
+            wrapped = with_loopiter(
+                base,
+                loop=loop,
+                context=lambda _request: {
+                    "artifacts": {"prompt": "v1"},
+                    "metadata": {"note": PARITY["sensitive"]["input"]["authorization"]},
+                },
+                capture=client,
+            )
+            await wrapped.chat.completions.create(**secret_params)
+            row = (await loop.list("executions"))["items"][0]
+            encoded = json.dumps(row)
+            for marker in PARITY["sensitive"]["absent"]:
+                self.assertNotIn(marker, encoded)
+            source = Stream(
+                [
+                    {
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": content},
+                                "finish_reason": "stop",
+                            }
+                        ]
+                    }
+                ]
+            )
+            create.return_value = source
+            stream = await wrapped.chat.completions.create(**secret_params, stream=True)
+            async for _event in stream:
+                pass
+            streamed = (await loop.list("executions"))["items"][-1]
+            encoded = json.dumps(streamed)
+            for marker in PARITY["sensitive"]["absent"]:
+                self.assertNotIn(marker, encoded)
 
     async def test_pending_precedes_provider_and_feedback_is_explicit(self):
         loop, create, _base, wrapped = self.setup_capture()

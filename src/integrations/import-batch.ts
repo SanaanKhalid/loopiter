@@ -11,7 +11,8 @@ import {
 
 const statuses = ["success", "partial", "error", "abstained", "dropped"] as const;
 const usageStates = ["known", "estimated", "unknown"] as const;
-const replayReason = "imported-for-regression";
+export const defaultMaxImportRecords = 1000;
+export const defaultMaxImportStringLength = 4096;
 
 export interface ImportRecord {
   idempotencyKey: string;
@@ -34,13 +35,23 @@ export interface ImportResult {
 export async function importBatch(
   loop: FeedbackLoop,
   records: readonly unknown[],
+  options: { maxRecords?: number; maxStringLength?: number } = {},
 ): Promise<ImportResult> {
   if (!Array.isArray(records))
     throw new TypeError("importBatch requires an array of records.");
+  const maxRecords = options.maxRecords ?? defaultMaxImportRecords;
+  const maxStringLength = options.maxStringLength ?? defaultMaxImportStringLength;
+  if (!Number.isInteger(maxRecords) || maxRecords < 1)
+    throw new TypeError("maxRecords must be a positive integer.");
+  if (!Number.isInteger(maxStringLength) || maxStringLength < 1)
+    throw new TypeError("maxStringLength must be a positive integer.");
+  if (records.length > maxRecords)
+    throw new RangeError(`import batch exceeds the maximum of ${maxRecords} records.`);
   const result: ImportResult = { accepted: 0, conflicts: 0, rejected: 0 };
   for (const record of records) {
     let body: JsonObject;
     try {
+      assertStringCap(record, maxStringLength);
       body = normalize(record);
     } catch {
       result.rejected += 1;
@@ -139,24 +150,33 @@ function usage(value: unknown): JsonObject {
   return body;
 }
 
+function assertStringCap(value: unknown, maxLength: number): void {
+  if (typeof value === "string") {
+    if (value.length > maxLength)
+      fail("invalid_input", `Import string exceeds the maximum length of ${maxLength}.`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) assertStringCap(item, maxLength);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, item] of Object.entries(value)) {
+      assertStringCap(key, maxLength);
+      assertStringCap(item, maxLength);
+    }
+  }
+}
+
 function replay(value: unknown): JsonObject {
   if (value === undefined) return { eligible: false };
   object(value, "replay");
   for (const key of Object.keys(value)) {
     if (key !== "eligible" && key !== "reason") fail("invalid_input", "Unknown replay field.");
   }
-  const eligible = value.eligible === undefined ? false : value.eligible;
-  if (typeof eligible !== "boolean") fail("invalid_input", "replay.eligible must be boolean.");
-  if (!eligible) {
-    const body: JsonObject = { eligible: false };
-    if (value.reason !== undefined) {
-      nonempty(value.reason, "replay.reason");
-      body.reason = value.reason;
-    }
-    return body;
-  }
-  nonempty(value.reason, "replay.reason");
-  if (value.reason !== replayReason)
-    fail("invalid_input", "Replay reason is not allowed for an imported row.");
-  return { eligible: true, reason: replayReason };
+  if (value.eligible !== undefined && typeof value.eligible !== "boolean")
+    fail("invalid_input", "replay.eligible must be boolean.");
+  if (value.eligible === true || value.reason !== undefined)
+    fail("invalid_input", "Import replay eligibility is assigned by the importer.");
+  return { eligible: false };
 }

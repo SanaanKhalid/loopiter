@@ -28,6 +28,7 @@ from .improvement_evidence import (
     validate_change,
     validate_policy,
 )
+from .integrations.privacy import _redact_text
 
 TERMINAL = {"completed", "no_improvement", "failed", "timed_out", "rolled_back"}
 _DISABLE_OFF = {"0", "false", "no", "off"}
@@ -93,40 +94,12 @@ _FAILURE_SPACE = re.compile("[\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205
 
 
 _DETAIL_UNAVAILABLE = "[detail unavailable]"
-_CAPTURE_PRIVATE_KEY = re.compile(
-    r"-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----",
-    re.ASCII,
-)
-_CAPTURE_BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9+/_.=~-]+", re.IGNORECASE | re.ASCII)
-_CAPTURE_BASIC = re.compile(
-    r"\b[Bb][Aa][Ss][Ii][Cc]\s+(?![a-z]+\b)[A-Za-z0-9+/_.=~-]+",
-    re.ASCII,
-)
-_CAPTURE_TOKEN = re.compile(
-    r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b",
-    re.ASCII,
-)
-_CAPTURE_USERINFO = re.compile(r"(https?://)[^\s/@:]+:[^\s/@]+@", re.IGNORECASE | re.ASCII)
-_CAPTURE_LABELED = re.compile(
-    r"((?:password|api[_-]?key|access[_-]?token|secret)\s*[=:]\s*)[^\s&,;]+",
-    re.IGNORECASE | re.ASCII,
-)
-
-
-def _capture_redact_text(value):
-    """Apply capture redaction before the error-text rules."""
-    value = _CAPTURE_PRIVATE_KEY.sub("[REDACTED]", value)
-    value = _CAPTURE_BEARER.sub("Bearer [REDACTED]", value)
-    value = _CAPTURE_BASIC.sub("Basic [REDACTED]", value)
-    value = _CAPTURE_TOKEN.sub("[REDACTED]", value)
-    value = _CAPTURE_USERINFO.sub(r"\1[REDACTED]@", value)
-    return _CAPTURE_LABELED.sub(r"\1[REDACTED]", value)
 
 
 def failure_detail_text(text):
     """Sanitize error text, then truncate."""
     bounded = _FAILURE_SPACE.sub(" ", text[:_FAILURE_INPUT_MAX])
-    redacted = _capture_redact_text(bounded)
+    redacted = _redact_text(bounded)
     for pattern, replacement in _FAILURE_RULES:
         redacted = pattern.sub(replacement, redacted)
     redacted = redacted.strip()

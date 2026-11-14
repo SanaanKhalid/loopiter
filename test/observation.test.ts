@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { FeedbackLoop, InMemoryStore, type JsonObject } from "../src/index.js";
 import { createObserver, capturePayload } from "../src/integrations/observe.js";
 import { createLoopiterSpanExporter, spanExecutionId, type ReadableSpan } from "../src/integrations/otel.js";
@@ -7,19 +10,36 @@ import { CaptureSession } from "../src/integrations/capture.js";
 
 const setup = () => new FeedbackLoop({ store: new InMemoryStore(), namespace: "observe-tests" });
 const state = (r: {metadata:JsonObject}) => r.metadata.loopiterCapture as JsonObject;
+const parity = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../test/fixtures/redaction-parity.json"), "utf8"));
 
 test("capture redacts before bounding, preserves application values, and explicitly marks incomplete data", () => {
-  const raw = { authorization:"Bearer top-secret", messages:[{content:"password=private https://alice:password@example.test sk-1234567890123456"}], apiKey:"private", text:"safe" };
-  const redacted = capturePayload(raw,{mode:"redacted"});
-  assert.doesNotMatch(JSON.stringify(redacted.value), /top-secret|private|alice|1234567890123456/);
-  assert.equal(raw.apiKey,"private");
-  assert.equal(redacted.complete,false);
-  const long = capturePayload({apiKey:"secret".repeat(2000)},{mode:"redacted",maximumBytes:128});
-  assert.equal(long.truncated,false,"Redaction precedes bounding");
-  assert.deepEqual(capturePayload({text:"x".repeat(1000)},{mode:"redacted",maximumBytes:128}).value,{omitted:true,truncated:true,bytes:1011});
-  assert.deepEqual(capturePayload(raw,{mode:"metadata-only"}).value,{omitted:true});
-  assert.equal(capturePayload(raw,{mode:"full"}).complete,true);
-  assert.throws(()=>capturePayload(raw,{mode:"redacted",maximumBytes:NaN}));
+  const raw = structuredClone(parity.sensitive.input);
+  const redacted = capturePayload(raw, { mode: "redacted" });
+  const encoded = JSON.stringify(redacted.value);
+  for (const marker of parity.sensitive.absent) assert.equal(encoded.includes(marker), false, marker);
+  for (const marker of parity.sensitive.present) assert.equal(encoded.includes(marker), true, marker);
+  assert.equal(raw.apiKey, parity.sensitive.input.apiKey);
+  assert.equal(redacted.complete, false);
+  const repeat = parity.credentialRepeat;
+  const long = capturePayload(
+    { [repeat.key]: repeat.unit.repeat(repeat.count) },
+    { mode: "redacted", maximumBytes: repeat.maximumBytes },
+  );
+  assert.equal(long.truncated, false, "Redaction precedes bounding");
+  const oversized = parity.oversized;
+  assert.deepEqual(
+    capturePayload(
+      { [oversized.key]: oversized.unit.repeat(oversized.count) },
+      { mode: "redacted", maximumBytes: oversized.maximumBytes },
+    ).value,
+    { omitted: true, truncated: true, bytes: oversized.bytes },
+  );
+  for (const sample of parity.boundaries) {
+    assert.equal(JSON.stringify(capturePayload(sample, { mode: "redacted" }).value).includes("fixture-marker-alpha") || JSON.stringify(capturePayload(sample, { mode: "redacted" }).value).includes("fixturekey123456"), false, sample);
+  }
+  assert.deepEqual(capturePayload(raw, { mode: "metadata-only" }).value, { omitted: true });
+  assert.equal(capturePayload(raw, { mode: "full" }).complete, true);
+  assert.throws(() => capturePayload(raw, { mode: "redacted", maximumBytes: Number.NaN }));
 });
 
 test("observer retains lineage, defaults to no content, preserves return identity and never replays a durable ID", async () => {

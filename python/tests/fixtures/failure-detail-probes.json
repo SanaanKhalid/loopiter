@@ -66,7 +66,7 @@
     },
     {
       "input": "ASIAABCDEFGHIJKLMNOP",
-      "output": "[redacted]"
+      "output": "[REDACTED]"
     },
     {
       "input": "status code: 429",
@@ -190,7 +190,7 @@
     },
     {
       "input": "xoxb-123456789012-abcdefghijklmnop",
-      "output": "[redacted]"
+      "output": "[REDACTED]"
     },
     {
       "input": "api_key =nbsp-api-secret",

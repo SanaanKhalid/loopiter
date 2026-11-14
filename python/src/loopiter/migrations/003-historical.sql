@@ -1,23 +1,20 @@
--- Optional Python schema v3. Constructors never run this file.
--- A store at schema version 2 keeps serving every collection except historical.
--- This file only widens loopiter_python_records_collection_check so historical is allowed.
--- It does not rewrite rows. Apply it explicitly; migration_sql() includes this text
--- only when the application executes that function.
+-- Optional. Constructors never run this file. It does not insert a schema version.
+-- Older Python SDKs still require max(version) = 2, and this script leaves that row in place.
+-- It only widens loopiter_python_records_collection_check so historical is allowed.
+-- No rows are rewritten. migration_sql() includes this text only when executed.
 --
 -- Locking, inside one transaction:
+--   SET LOCAL lock_timeout = '5s' makes a blocked lock fail instead of waiting.
 --   pg_advisory_xact_lock(hashtextextended('loopiter/python/schema/v1', 0)) is held
 --   until commit, so two migration sessions serialize.
 --   DROP CONSTRAINT takes a brief ACCESS EXCLUSIVE lock and does not scan rows.
 --   ADD CONSTRAINT ... NOT VALID takes SHARE UPDATE EXCLUSIVE and does not scan rows.
---   VALIDATE CONSTRAINT then scans under SHARE UPDATE EXCLUSIVE, not ACCESS EXCLUSIVE,
---   so SELECT, INSERT, UPDATE, and DELETE can proceed during the scan. The scan does
---   not rewrite rows. Every collection the previous check allowed is still allowed.
--- Running this file twice is a no-op: when the check already allows historical, the
--- ALTER statements are skipped. The version insert uses ON CONFLICT DO NOTHING.
--- migration_sql() runs 002 before this file, and 002 installs the narrower check, so
--- this file widens it again even if version 3 was already recorded.
+--   VALIDATE CONSTRAINT scans under SHARE UPDATE EXCLUSIVE, not ACCESS EXCLUSIVE,
+--   so SELECT, INSERT, UPDATE, and DELETE can proceed during the scan.
+-- Running this file twice is a no-op when the check already allows historical.
 -- The reverse script is 003-historical-down.sql and is not part of migration_sql().
 BEGIN;
+SET LOCAL lock_timeout = '5s';
 SELECT pg_advisory_xact_lock(hashtextextended('loopiter/python/schema/v1', 0));
 DO $migration$
 DECLARE
@@ -38,5 +35,5 @@ BEGIN
   EXECUTE 'ALTER TABLE loopiter_python_records VALIDATE CONSTRAINT loopiter_python_records_collection_check';
 END
 $migration$;
-INSERT INTO loopiter_python_schema_migrations(version) VALUES (3) ON CONFLICT DO NOTHING;
+DELETE FROM loopiter_python_schema_migrations WHERE version = 3;
 COMMIT;

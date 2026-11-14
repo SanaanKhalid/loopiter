@@ -1,0 +1,55 @@
+{
+  "sensitive": {
+    "input": {
+      "authorization": "Bearer fixture-marker-alpha",
+      "messages": [
+        {
+          "content": "password=fixture-marker-beta https://fixture-user:fixture-marker-gamma@example.test sk-fixturekey123456 eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl AKIAFIXTUREEXAMPLE12 sk_live_fixturetoken xoxb-fixture-token AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA token=fixture-marker-zeta access_token=fixture-marker-eta fixture-marker-epsilon@example.test -----BEGIN FIXTURE PRIVATE KEY-----\nabc"
+        }
+      ],
+      "apiKey": "fixture-marker-delta",
+      "x-api-key": "fixture-marker-theta",
+      "private_key": "fixture-marker-iota",
+      "token": "fixture-marker-kappa",
+      "text": "kept-label"
+    },
+    "absent": [
+      "fixture-marker-alpha",
+      "fixture-marker-beta",
+      "fixture-marker-gamma",
+      "fixture-marker-delta",
+      "fixture-marker-epsilon",
+      "fixture-marker-zeta",
+      "fixture-marker-eta",
+      "fixture-marker-theta",
+      "fixture-marker-iota",
+      "fixture-marker-kappa",
+      "eyJzdWIiOiJmaXh0dXJlIn0",
+      "AKIAFIXTUREEXAMPLE12",
+      "sk_live_fixturetoken",
+      "xoxb-fixture-token",
+      "AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "sk-fixturekey123456",
+      "BEGIN FIXTURE PRIVATE KEY"
+    ],
+    "present": ["kept-label"]
+  },
+  "boundaries": [
+    "éBearer fixture-marker-alpha",
+    "日本sk-fixturekey123456",
+    "ﬁsk-fixturekey123456"
+  ],
+  "credentialRepeat": {
+    "key": "apiKey",
+    "unit": "x",
+    "count": 2000,
+    "maximumBytes": 128
+  },
+  "oversized": {
+    "key": "text",
+    "unit": "x",
+    "count": 1000,
+    "maximumBytes": 128,
+    "bytes": 1011
+  }
+}
