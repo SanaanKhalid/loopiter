@@ -1193,56 +1193,92 @@ export class LiveSession {
   ): Promise<Generation> {
     if (this.stopSignal) signal = AbortSignal.any([signal, this.stopSignal]);
     if (signal.aborted) throw abortReason(signal);
-    let otherRetries = 0;
-    let rateRetries = 0;
-    let retryWaited = 0;
-    for (;;) {
-      try {
-        const value = await this.withDeadline(signal, (deadline) =>
-          this.once(input, body, maxOutput, meter, AbortSignal.any([signal, deadline])),
-        );
-        this.touch();
-        return value;
-      } catch (error) {
-        if (isAttemptDeadline(error)) throw error;
-        if (signal.aborted && !isTimeoutError(signal.reason)) throw error;
-        if (error instanceof LoopiterError && error.code === "spend_cap") throw error;
-        if (error instanceof ProviderRequestError && error.status === 429) {
-          this.rateLimitResponses += 1;
-          const budget = Math.min(
-            this.maxTotalWaitMs,
-            rateLimitBudgetMs(inputTokenCeiling(body) + maxOutput),
+    // One controller reservation covers the successful call. Rejected attempts
+    // retry inside it, so a 429 storm does not exhaust the callback ceiling.
+    return meter(reservedModelTokens(body, maxOutput), async () => {
+      let otherRetries = 0;
+      let rateRetries = 0;
+      let retryWaited = 0;
+      for (;;) {
+        try {
+          const value = await this.withDeadline(signal, (deadline) =>
+            this.once(input, body, maxOutput, AbortSignal.any([signal, deadline])),
           );
-          const wait =
-            error.retryAfterMs === null
-              ? rateLimitDelayMs({
-                  headers: new Headers(),
-                  retryIndex: rateRetries + 1,
-                  maxWaitMs: this.maxRetryWaitMs,
-                  random: this.random,
-                  now: this.now(),
-                })
-              : Math.min(this.maxRetryWaitMs, Math.max(0, Math.round(error.retryAfterMs)));
-          if (rateRetries >= this.max429Retries) {
-            this.rateLimitExhausted = true;
-            this.touch();
-            const message = redactSecrets(
-              `Rate limit persisted after ${this.max429Retries} retries (HTTP 429).`,
-              this.secrets,
+          this.touch();
+          const tokens =
+            value.inputTokens === null || value.outputTokens === null
+              ? null
+              : value.inputTokens + value.outputTokens;
+          return { value, tokens };
+        } catch (error) {
+          if (isAttemptDeadline(error)) throw error;
+          if (signal.aborted && !isTimeoutError(signal.reason)) throw error;
+          if (error instanceof LoopiterError) throw error;
+          if (error instanceof ProviderRequestError && error.status === 429) {
+            this.rateLimitResponses += 1;
+            const budget = Math.min(
+              this.maxTotalWaitMs,
+              rateLimitBudgetMs(inputTokenCeiling(body) + maxOutput),
             );
-            this.lastError = message;
-            throw new RateLimitStop(message);
+            const wait =
+              error.retryAfterMs === null
+                ? rateLimitDelayMs({
+                    headers: new Headers(),
+                    retryIndex: rateRetries + 1,
+                    maxWaitMs: this.maxRetryWaitMs,
+                    random: this.random,
+                    now: this.now(),
+                  })
+                : Math.min(this.maxRetryWaitMs, Math.max(0, Math.round(error.retryAfterMs)));
+            if (rateRetries >= this.max429Retries) {
+              this.rateLimitExhausted = true;
+              this.touch();
+              const message = redactSecrets(
+                `Rate limit persisted after ${this.max429Retries} retries (HTTP 429).`,
+                this.secrets,
+              );
+              this.lastError = message;
+              throw new RateLimitStop(message);
+            }
+            if (retryWaited + wait > budget && budget < this.maxTotalWaitMs) {
+              this.rateLimitExhausted = true;
+              this.touch();
+              const minutes = Math.round((budget / 60_000) * 10) / 10;
+              const message = redactSecrets(
+                `Rate limit wait for this request reached ${minutes} minutes (HTTP 429).`,
+                this.secrets,
+              );
+              this.lastError = message;
+              throw new RateLimitStop(message);
+            }
+            const worst: TokenUse = {
+              input: inputTokenCeiling(body),
+              output: maxOutput,
+              cached: 0,
+            };
+            if (!this.ledger.allow(worst, this.stopAtWarn))
+              throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
+            rateRetries += 1;
+            console.error("retrying HTTP 429");
+            await this.waitToRetry(signal, retryWaited, wait);
+            retryWaited += wait;
+            continue;
           }
-          if (retryWaited + wait > budget && budget < this.maxTotalWaitMs) {
-            this.rateLimitExhausted = true;
-            this.touch();
-            const minutes = Math.round((budget / 60_000) * 10) / 10;
-            const message = redactSecrets(
-              `Rate limit wait for this request reached ${minutes} minutes (HTTP 429).`,
-              this.secrets,
-            );
+          const networkClass = transientErrorClass(error);
+          const httpStatus =
+            error instanceof ProviderRequestError && RETRY_STATUSES.has(error.status)
+              ? error.status
+              : null;
+          if ((!networkClass && httpStatus === null) || otherRetries >= MAX_ATTEMPTS - 1) {
+            const message = providerFailureMessage(error, this.secrets);
             this.lastError = message;
-            throw new RateLimitStop(message);
+            this.touch();
+            if (shouldLogProviderFailure(error)) console.error(message);
+            if (error instanceof ProviderRequestError || error instanceof IncompleteOutputError) {
+              error.message = message;
+              throw error;
+            }
+            throw new Error(message);
           }
           const worst: TokenUse = {
             input: inputTokenCeiling(body),
@@ -1251,42 +1287,14 @@ export class LiveSession {
           };
           if (!this.ledger.allow(worst, this.stopAtWarn))
             throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
-          rateRetries += 1;
-          console.error("retrying HTTP 429");
+          otherRetries += 1;
+          const wait = retryWaitMs(otherRetries, null, this.maxRetryWaitMs, this.random);
+          console.error(`retrying ${networkClass ?? `HTTP ${httpStatus}`}`);
           await this.waitToRetry(signal, retryWaited, wait);
           retryWaited += wait;
-          continue;
         }
-        const networkClass = transientErrorClass(error);
-        const httpStatus =
-          error instanceof ProviderRequestError && RETRY_STATUSES.has(error.status)
-            ? error.status
-            : null;
-        if ((!networkClass && httpStatus === null) || otherRetries >= MAX_ATTEMPTS - 1) {
-          const message = providerFailureMessage(error, this.secrets);
-          this.lastError = message;
-          this.touch();
-          if (shouldLogProviderFailure(error)) console.error(message);
-          if (error instanceof ProviderRequestError || error instanceof IncompleteOutputError) {
-            error.message = message;
-            throw error;
-          }
-          throw new Error(message);
-        }
-        const worst: TokenUse = {
-          input: inputTokenCeiling(body),
-          output: maxOutput,
-          cached: 0,
-        };
-        if (!this.ledger.allow(worst, this.stopAtWarn))
-          throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
-        otherRetries += 1;
-        const wait = retryWaitMs(otherRetries, null, this.maxRetryWaitMs, this.random);
-        console.error(`retrying ${networkClass ?? `HTTP ${httpStatus}`}`);
-        await this.waitToRetry(signal, retryWaited, wait);
-        retryWaited += wait;
       }
-    }
+    });
   }
 
   private async waitToRetry(signal: AbortSignal, already: number, wait: number): Promise<void> {
@@ -1345,7 +1353,6 @@ export class LiveSession {
     input: Omit<GenerateInput, "signal" | "maximumOutputTokens">,
     body: string,
     maxOutput: number,
-    meter: Meter,
     signal: AbortSignal,
   ): Promise<Generation> {
     signal.throwIfAborted();
@@ -1378,29 +1385,23 @@ export class LiveSession {
     try {
       signal.throwIfAborted();
       sent = true;
-      const generated = await meter(reservedModelTokens(body, maxOutput), async () => {
-        requestSignal.throwIfAborted();
-        const result = await this.provider.generate({
-          ...input,
-          ...(this.limits.reasoningEffort
-            ? { reasoningEffort: this.limits.reasoningEffort }
-            : {}),
-          maximumOutputTokens: maxOutput,
-          signal: requestSignal,
-        });
-        requestSignal.throwIfAborted();
-        const usage = billedUsage(result);
-        return {
-          value: { result, usage },
-          tokens: usage.input + usage.output,
-        };
+      requestSignal.throwIfAborted();
+      const result = await this.provider.generate({
+        ...input,
+        ...(this.limits.reasoningEffort
+          ? { reasoningEffort: this.limits.reasoningEffort }
+          : {}),
+        maximumOutputTokens: maxOutput,
+        signal: requestSignal,
       });
+      requestSignal.throwIfAborted();
+      const usage = billedUsage(result);
       signal.throwIfAborted();
-      this.pacer.settle(paced.id, generated.usage.input + generated.usage.output);
-      await this.ledger.finishAttempt(held, generated.usage, true, signal);
+      this.pacer.settle(paced.id, usage.input + usage.output);
+      await this.ledger.finishAttempt(held, usage, true, signal);
       this.maybeWarn();
       this.noteProgress();
-      return generated.result;
+      return result;
     } catch (error) {
       if (!sent) {
         await this.ledger.releaseAttempt(held);

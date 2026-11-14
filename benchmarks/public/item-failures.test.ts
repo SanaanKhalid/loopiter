@@ -130,6 +130,10 @@ test("content filter and incomplete predictions score 0 and the run continues", 
   });
   assert.equal(seen.report.stopped, null);
   assert.equal(seen.report.perSeed.length, 1);
+  assert.equal(typeof seen.report.perSeed[0]?.controllerState, "string");
+  assert.equal(typeof seen.report.perSeed[0]?.controllerReason, "string");
+  assert.ok(seen.report.perSeed[0]?.controllerReason);
+  assert.ok("controllerDetail" in (seen.report.perSeed[0] ?? {}));
   assert.equal(seen.report.perSeed[0]?.baseline.trials, 10);
   assert.equal(seen.report.perSeed[0]?.baseline.successes, 8);
   assert.equal(seen.report.itemFailures.length, 2);

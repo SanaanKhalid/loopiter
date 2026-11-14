@@ -100,6 +100,8 @@ export interface PublicLiveReport {
     controllerServed: RateDraft;
     controllerUngated: RateDraft | null;
     controllerState: string;
+    controllerReason: string;
+    controllerDetail: string | null;
   }[];
   stopped: { reason: string; message: string } | null;
   itemFailures: ItemFailure[];
@@ -281,6 +283,8 @@ export async function runLiveTask<T extends PublicExample>(
         controllerServed: controller.heldOut,
         controllerUngated: controller.ungated,
         controllerState: controller.state,
+        controllerReason: controller.reason,
+        controllerDetail: controller.detail,
       });
       if (ledger.stopReason) {
         failure = { reason: ledger.stopReason, message: "Spend cap reached." };
