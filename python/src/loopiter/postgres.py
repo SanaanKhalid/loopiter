@@ -12,18 +12,32 @@ if TYPE_CHECKING:
     from psycopg_pool import AsyncConnectionPool
 
 
-def migration_sql() -> str:
-    """Return versioned SQL for the application's migration process; execute explicitly."""
+def _migration_text(*names: str) -> str:
     return "\n".join(
         files("loopiter").joinpath("migrations/" + name).read_text(encoding="utf-8")
-        for name in ("001-python-store.sql", "002-autonomy.sql", "003-historical.sql")
+        for name in names
     )
+
+
+def migration_sql() -> str:
+    """Return versioned SQL for the application's migration process; execute explicitly.
+
+    Includes 003-historical.sql. Constructors never execute this text. A database that
+    has only applied 001 and 002 remains usable for every collection except historical.
+    """
+    return _migration_text("001-python-store.sql", "002-autonomy.sql", "003-historical.sql")
+
+
+def historical_down_sql() -> str:
+    """Return 003-historical-down.sql. Not part of migration_sql(); never run on construction."""
+    return _migration_text("003-historical-down.sql")
 
 
 class PostgresTransaction:
     def __init__(self, namespace, connection):
         self.namespace, self.connection, self.active = namespace, connection, True
         self.owner = asyncio.current_task()
+        self.schema_version = 0
 
     def _check(self, kind):
         if not self.active or asyncio.current_task() is not self.owner:
@@ -80,6 +94,12 @@ class PostgresTransaction:
         v.stored(collection, record, self.namespace)
         if record["revision"] != 1:
             v.fail("conflict", "Insert requires revision 1.")
+        if collection == "historical" and self.schema_version < 3:
+            v.fail(
+                "migration_required",
+                "The historical collection requires explicit SQL migration 003-historical.sql. "
+                "Construction never runs it.",
+            )
         rows = await self._query(
             "INSERT INTO loopiter_python_records(namespace,collection,id,revision,event_time,body) "
             "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id",
@@ -161,12 +181,14 @@ class PostgresStore:
                     schema = await tx._query(
                         "SELECT max(version) FROM loopiter_python_schema_migrations", ()
                     )
-                    if not schema or schema[0][0] != 3:
+                    schema_version = int(schema[0][0]) if schema and schema[0][0] is not None else 0
+                    # Schema 2 and 3 both serve normal traffic. Only historical writes need 3.
+                    if schema_version < 2:
                         v.fail(
                             "migration_required",
-                            "Store schema v3 requires explicit SQL migration 003-historical.sql. "
-                            "Stop old writers and back up first. Construction never runs it.",
+                            "Store v2 requires explicit SQL migration 002-autonomy.sql. Stop old writers and back up first.",
                         )
+                    tx.schema_version = schema_version
                     yield tx
                 finally:
                     tx.active = False

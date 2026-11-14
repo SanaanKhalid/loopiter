@@ -12,9 +12,20 @@ and do not automatically enable autonomy while upgrading storage or code.
    Node migrations live in `migrations/`; Python SQL is packaged under
    `loopiter/migrations/`. `migratePostgres(pool)` and Python `migration_sql()` include
    the numbered migrations when explicitly invoked. Constructors never run DDL.
-   Python `003-historical.sql` only widens that collection check so `historical` is
-   allowed. It does not rewrite rows, and it is not applied on upgrade by itself.
-4. Upgrade adapters: Node contract version **3**, Python version **2**. New collections are
+   Python schema version 2 still serves every collection except `historical`. A schema
+   below 2 still fails closed and names `002-autonomy.sql`. Writing `historical` on a
+   version-2 store fails with `migration_required` and names `003-historical.sql`.
+   That file takes the schema advisory lock, drops the old collection check under a
+   brief `ACCESS EXCLUSIVE` lock, adds the wider check with `NOT VALID` (no scan,
+   `SHARE UPDATE EXCLUSIVE`), then `VALIDATE CONSTRAINT` under `SHARE UPDATE EXCLUSIVE`
+   so the scan does not hold `ACCESS EXCLUSIVE`. It does not rewrite rows. Running that
+   file twice skips the `ALTER` statements when the check already allows `historical`,
+   and the version insert uses `ON CONFLICT DO NOTHING`. `historical_down_sql()` reads
+   `003-historical-down.sql`, which is not part of `migration_sql()`. The down script
+   restores the version-2 check when no `historical` row exists, and rolls back
+   without deleting rows when one does.
+4. Upgrade adapters: Node contract version **3**, Python adapter contract version **2**.
+   Python SQL schema 2 and 3 both satisfy that adapter. New collections are
    runs, operations, budgets, observations and coordination. Observations are insert-only;
    mutable control records use revisions and namespace-serializable short transactions.
    Run the exported conformance suite against a disposable namespace.
