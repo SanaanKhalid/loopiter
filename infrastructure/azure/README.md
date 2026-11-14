@@ -49,7 +49,7 @@ also refuses a tag that already exists. Do not reuse a tag for different code.
 ```sh
 # Build once from the sibling loopiter-platform checkout (or set
 # LOOPITER_PLATFORM_DIR). The checkout must be clean. deploy.sh reads that
-# checkout's `git rev-parse HEAD` and `date -u +%Y-%m-%dT%H:%M:%SZ`, archives
+# checkout's `git rev-parse HEAD` and a UTC timestamp from Python, archives
 # HEAD, and refuses an existing tag. The commit must match ^[0-9a-f]{40}$ and
 # the timestamp must be YYYY-MM-DDTHH:MM:SSZ. The environment must be dev, prod,
 # development, or production. Anything else aborts before `az acr build`.

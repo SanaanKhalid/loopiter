@@ -44,7 +44,7 @@ import {
   pacedTokenLimit,
   planLiveRun,
   projectedWallMs,
-  readProcessStartTicks,
+  processIsRunning,
   redactSecrets,
   renderEstimate,
   shouldForceKill,
@@ -1597,24 +1597,18 @@ test("a fifo temp report cannot keep the process alive", async () => {
 });
 
 test("sigkill helper skips a normal exit and a mismatched ppid", async () => {
+  assert.equal(processIsRunning(process.pid), true);
+  assert.equal(processIsRunning(-1), false);
   assert.equal(
-    shouldForceKill({ ppid: 10, parentPid: 10, expectedStart: "5", currentStart: "5" }),
+    shouldForceKill({ ppid: 10, parentPid: 10, parentAlive: true }),
     true,
   );
   assert.equal(
-    shouldForceKill({ ppid: 1, parentPid: 10, expectedStart: "5", currentStart: "5" }),
+    shouldForceKill({ ppid: 1, parentPid: 10, parentAlive: true }),
     false,
   );
   assert.equal(
-    shouldForceKill({ ppid: 10, parentPid: 10, expectedStart: "5", currentStart: "9" }),
-    false,
-  );
-  assert.equal(
-    shouldForceKill({ ppid: 10, parentPid: 10, expectedStart: null, currentStart: null }),
-    false,
-  );
-  assert.equal(
-    shouldForceKill({ ppid: 10, parentPid: 10, expectedStart: "5", currentStart: null }),
+    shouldForceKill({ ppid: 10, parentPid: 10, parentAlive: false }),
     false,
   );
 
@@ -1628,8 +1622,8 @@ test("sigkill helper skips a normal exit and a mismatched ppid", async () => {
       "-e",
       `
         import { spawn } from "node:child_process";
-        import { forceKillScript, readProcessStartTicks } from ${JSON.stringify(liveUrl)};
-        const script = forceKillScript(process.pid, 120, readProcessStartTicks(process.pid), ${JSON.stringify(normalDecision)});
+        import { forceKillScript } from ${JSON.stringify(liveUrl)};
+        const script = forceKillScript(process.pid, 120, ${JSON.stringify(normalDecision)});
         spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore", windowsHide: true }).unref();
         setTimeout(() => process.exit(0), 30);
       `,
@@ -1647,7 +1641,7 @@ test("sigkill helper skips a normal exit and a mismatched ppid", async () => {
   const sleeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 2000)"], {
     stdio: "ignore",
   });
-  const script = forceKillScript(sleeper.pid ?? -1, 80, "1", mismatchDecision);
+  const script = forceKillScript(sleeper.pid ?? -1, 80, mismatchDecision);
   const helper = spawn(process.execPath, ["-e", script], {
     stdio: "ignore",
     windowsHide: true,
@@ -1658,26 +1652,19 @@ test("sigkill helper skips a normal exit and a mismatched ppid", async () => {
   sleeper.kill();
   helper.kill();
 
-  const missingDecision = join(directory, "missing-start.txt");
-  const held = spawn(
+  const dead = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+  const deadPid = dead.pid ?? -1;
+  await new Promise<void>((resolve) => dead.once("exit", () => resolve()));
+  const deadDecision = join(directory, "dead.txt");
+  const deadHelper = spawn(
     process.execPath,
-    [
-      "--input-type=module",
-      "-e",
-      `
-        import { spawn } from "node:child_process";
-        import { forceKillScript } from ${JSON.stringify(liveUrl)};
-        const script = forceKillScript(process.pid, 80, null, ${JSON.stringify(missingDecision)});
-        spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore", windowsHide: true }).unref();
-        setTimeout(() => process.exit(0), 400);
-      `,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    ["-e", forceKillScript(deadPid, 40, deadDecision)],
+    { stdio: "ignore", windowsHide: true },
   );
   await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal(held.exitCode, null);
-  assert.equal(readFileSync(missingDecision, "utf8"), "skip");
-  held.kill();
+  assert.equal(readFileSync(deadDecision, "utf8"), "skip");
+  assert.equal(processIsRunning(deadPid), false);
+  deadHelper.kill();
 });
 
 test("user abort, unauthorized, server, and lookup errors stay bounded", async () => {

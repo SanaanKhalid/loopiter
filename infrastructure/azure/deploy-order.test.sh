@@ -147,7 +147,7 @@ refuse "wrong registry" \
   LOOPITER_DEPLOY_DRY_RUN=1 LOOPITER_PLATFORM_DIR="$platform" \
   "$ROOT/deploy.sh" dev example.azurecr.io/loopiter:tag build
 
-mkdir -p "$work/gitbin" "$work/datebin"
+mkdir -p "$work/gitbin"
 cat > "$work/gitbin/git" <<'EOF'
 #!/bin/sh
 if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
@@ -156,12 +156,7 @@ if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "HEAD" ]; then
 fi
 exec /usr/bin/git "$@"
 EOF
-cat > "$work/datebin/date" <<'EOF'
-#!/bin/sh
-printf '%s\n' '2026-13-05T10:00:00Z'
-exit 0
-EOF
-chmod 755 "$work/gitbin/git" "$work/datebin/date"
+chmod 755 "$work/gitbin/git"
 
 refuse "short commit" \
   PATH="$work/gitbin:$PATH" STUB_SHA=abcdefg \
@@ -172,7 +167,7 @@ refuse "uppercase commit" \
   LOOPITER_DEPLOY_DRY_RUN=1 LOOPITER_PLATFORM_DIR="$platform" \
   "$ROOT/deploy.sh" dev loopiterregistry7536.azurecr.io/loopiter:release build
 refuse "invalid timestamp" \
-  PATH="$work/datebin:$PATH" \
+  LOOPITER_BUILT_AT_STUB=2026-13-05T10:00:00Z \
   LOOPITER_DEPLOY_DRY_RUN=1 LOOPITER_PLATFORM_DIR="$platform" \
   "$ROOT/deploy.sh" dev loopiterregistry7536.azurecr.io/loopiter:release build
 
