@@ -213,10 +213,13 @@ export class CaptureSession {
       this.truncated ||= captured.truncated;
       value = this.truncated ? { omitted: true, truncated: true } : captured.value;
     }
-    if (Buffer.byteLength(JSON.stringify(value), "utf8") > this.maximum) {
-      if (status === "completed" || status === "incomplete")
+    if (value !== null && Buffer.byteLength(JSON.stringify(value), "utf8") > this.maximum) {
+      if (this.options.capture) {
+        this.truncated = true;
+        value = { omitted: true, truncated: true };
+      } else if (status === "completed" || status === "incomplete") {
         throw new RangeError("Captured response exceeded maximumOutputBytes.");
-      value = null;
+      } else value = null;
     }
     this.finalization = this.finalize(status, value);
     return this.finalization;

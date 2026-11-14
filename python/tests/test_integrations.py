@@ -289,17 +289,18 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
                             }
                         ]
                     )
-                    async for _event in await wrapped.chat.completions.create(
-                        **PARAMS, stream=True
-                    ):
-                        pass
+                    seen = []
+                    async for event in await wrapped.chat.completions.create(**PARAMS, stream=True):
+                        seen.append(event)
+                    self.assertIn(payload, json.dumps(seen))
                 else:
                     create.return_value = {
                         "choices": [
                             {"index": 0, "message": {"content": payload}, "finish_reason": "stop"}
                         ]
                     }
-                    await wrapped.chat.completions.create(**PARAMS)
+                    response = await wrapped.chat.completions.create(**PARAMS)
+                    self.assertIn(payload, json.dumps(response))
                 await client.force_flush(1000)
                 row = (await loop.list("executions"))["items"][0]
                 self.assertTrue(row["metadata"]["loopiter_capture"]["truncated"])
