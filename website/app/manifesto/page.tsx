@@ -28,7 +28,7 @@ export default function Manifesto() {
           <section aria-labelledby="default-is-improvement">
             <h2 id="default-is-improvement">Improvement is the default.</h2>
             <p>A self-improving agent gets better at its job while people are using it. That is the ordinary state, not a project someone starts later. That automatic default is on main and arrives in the next release. The published v0.3.0-alpha.1 still defaults to recommend.</p>
-            <p>Outcomes, failures, evaluations, and human feedback when someone gives it, all feed the same loop. The agent does not wait for a developer to notice. It keeps working between conversations when a worker is running and the deployment adapter supports rollback.</p>
+            <p>Outcomes, failures, evaluations, and human feedback when someone gives it, all feed the same loop. The agent does not wait for a developer to notice. It keeps working between conversations when a worker is running.</p>
           </section>
 
           <section aria-labelledby="agent-does-the-work">
@@ -51,7 +51,7 @@ export default function Manifesto() {
 
           <section aria-labelledby="every-change-can-return">
             <h2 id="every-change-can-return">Every change can be undone.</h2>
-            <p>Every released change has a history and a previous version that can be restored through a deployment adapter that supports rollback. A running worker rolls back automatically.</p>
+            <p>Every released change has a history and a previous version that can be restored through a deployment adapter that supports rollback. Automatic rollback happens only when a regression is observed and the worker is not disabled.</p>
             <p className="manifesto-signoff">While it is in use, it gets better.</p>
           </section>
         </div>

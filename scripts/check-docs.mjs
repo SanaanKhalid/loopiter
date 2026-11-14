@@ -23,9 +23,9 @@ async function sourceFiles(directory) {
 }
 
 const OMISSION =
-  /(?:omit(?:ting|s)?\s+(?:the\s+)?mode|without\s+a\s+mode|(?:^|[^a-z])no\s+mode|don'?t\s+pass\s+(?:a\s+)?mode|do\s+not\s+pass\s+(?:a\s+)?mode)/i;
+  /(?:omit(?:ting|s)?\s+(?:the\s+)?mode|mode\s+is\s+omitted|leave\s+mode\s+unset|without\s+a\s+mode|(?:^|[^a-z])no\s+mode|don'?t\s+pass\s+(?:a\s+)?mode|do\s+not\s+pass\s+(?:a\s+)?mode|default\s+controller\s+mode\s+is)/i;
 const CLAIMS_RECOMMEND_OR_OFF = /recommend|stays\s+off/i;
-const PUBLISHED_ALPHA = /published|0\.3\.0-alpha\.1|0\.3\.0a1/i;
+const VERSION = /\bv?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.]+|[a-z]+\d+)?\b/i;
 
 export function sentencesOf(text) {
   const sentences = [];
@@ -48,17 +48,15 @@ export function omittedModeClaimsRecommend(text) {
     const sentence = sentences[index];
     const match = sentence.match(OMISSION);
     if (!match || match.index === undefined) continue;
-    const earlier = `${sentences[index - 2] ?? ""} ${sentences[index - 1] ?? ""} ${sentence}`;
-    if (PUBLISHED_ALPHA.test(earlier)) continue;
     const after = sentence.slice(match.index + match[0].length);
     if (CLAIMS_RECOMMEND_OR_OFF.test(after)) {
+      if (VERSION.test(sentence)) continue;
       hits.push(sentence);
       continue;
     }
     if (/autonomous/i.test(after)) continue;
     const following = sentences[index + 1] ?? "";
-    if (PUBLISHED_ALPHA.test(following)) continue;
-    if (CLAIMS_RECOMMEND_OR_OFF.test(following)) hits.push(sentence);
+    if (CLAIMS_RECOMMEND_OR_OFF.test(following) && !VERSION.test(following)) hits.push(sentence);
   }
   return hits;
 }

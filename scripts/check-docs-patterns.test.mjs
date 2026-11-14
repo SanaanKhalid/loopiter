@@ -19,8 +19,20 @@ test("other omission phrasings near recommend fail the checker", () => {
     "With no mode the controller defaults to recommend.",
     "If you don't pass mode, you stay on recommend.",
     "Do not pass mode if you want recommend.",
+    "If mode is omitted, the controller recommends.",
+    "Leave mode unset and the controller stays on recommend.",
+    "The default controller mode is recommend.",
   ])
     assert.ok(omittedModeClaimsRecommend(line).length > 0, line);
+});
+
+test("a published sentence in another paragraph does not exempt a stale claim", () => {
+  const text = [
+    "The published notes describe an older archive.",
+    "",
+    "If mode is omitted, the controller recommends.",
+  ].join("\n");
+  assert.ok(omittedModeClaimsRecommend(text).length > 0);
 });
 
 test("published alpha notes that mention recommend still pass", () => {
