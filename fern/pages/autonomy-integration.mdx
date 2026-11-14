@@ -96,7 +96,7 @@ correction with an ordinary application ID; it must not depend on a fixture nami
 ## 8. Enable bounded autonomy in an isolated environment
 
 A fresh plan already records both autonomous mode and self-improving on. The worker
-still spends only with `--enable`, and autonomous mode fails closed without an audit
+runs unless `--disable` or `LOOPITER_DISABLE=1` is set, and autonomous mode fails closed without an audit
 partition or a budget. The application—not
 the SDK—calls `tick`. Use conservative provider quotas and exact target permissions.
 Do not expose real users merely because an offline sample passed.

@@ -66,30 +66,30 @@ store. Use `reference` to inspect packaged examples; no repository clone is need
 <Tab title="Python">
 
 ```sh
-python -m loopiter worker --module loopiter/application.py --enable --mode autonomous --once
+python -m loopiter worker --module loopiter/application.py --once
 ```
 
 </Tab>
 <Tab title="Node.js">
 
 ```sh
-npx --no-install loopiter worker --module loopiter/application.mjs --enable --mode autonomous --once
+npx --no-install loopiter worker --module loopiter/application.mjs --once
 ```
 
 </Tab>
 </Tabs>
 
-`--enable` authorizes improvement work and provider spending in that process:
-proposal, replay and judge calls, and, in autonomous mode, a deployment that has
-passed validation and audit. It does not bypass validation, audit, minimum
+The worker runs without `--enable`. Pass `--disable` or set `LOOPITER_DISABLE=1`
+to pause improvement work. That does not bypass validation, audit, minimum
 improvement, guardrails, trusted sources, budgets, cooldown, the
 consecutive-failure stop, canary promotion, observation rollback, pause, or
-lease checks. Autonomous mode fails closed without an audit partition, a budget,
-or `--enable`. Omit `--enable` and the worker refuses to start.
+lease checks. Autonomous mode fails closed without an audit partition or a
+budget. `--enable`, `--confirm-activation`, and `--yes` are ignored and log a
+deprecation warning.
 
 `--mode recommend` stores proposals and does not apply a candidate. Omitting
 `--mode` uses `plan.mode`; the flag overrides the plan. Constructing the
-controller without a mode still recommends and does not apply. One tick advances
+controller without a mode is autonomous with self-improving on. One tick advances
 one durable phase. Omit `--once` for a foreground worker
 ticking every 30 seconds, and supervise it with your deployment's process
 manager. SDK budgets, leases, independent audit, observation and rollback gates

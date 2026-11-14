@@ -45,19 +45,23 @@ Give your coding agent this prompt:
 > integration, and explain how to run, pause and roll it back.
 
 The guide covers existing and new applications, verified feedback, optional Jev
-judging, durable storage, real serving attribution, deliberate autonomous activation
-and recovery. A fresh plan is schemaVersion 2 (`autonomous-default`): mode
-`autonomous` and self-improving on, and it still starts incomplete. `doctor`
-checks declared configuration; `verify` tests isolated simulated SDK mechanics.
-Your agent must still verify the real application. After both succeed, the
-emitted worker recipe is `--enable` without `--mode`, so `plan.mode` controls
-that command. `--enable` authorizes improvement work and provider spending
-inside the existing gates; it does not bypass audit, budgets, or rollback.
-`--mode recommend` stores proposals and does not apply. Omitting `--mode`
-follows `plan.mode`. Constructing `ImprovementController` without a mode still
-selects recommend. Existing
-schemaVersion 1 plans are left unchanged. No platform login or Loopiter project
-key is involved; you pay your own model/judge, database and hosting providers.
+judging, durable storage, real serving attribution, and recovery. A fresh plan is
+schemaVersion 2 (`autonomous-default`): mode `autonomous` and self-improving on,
+and it still starts incomplete. `doctor` checks declared configuration; `verify`
+tests isolated simulated SDK mechanics. Your agent must still verify the real
+application. After both succeed, the emitted worker recipe omits `--mode`, so
+`plan.mode` controls that command, and the worker runs without `--enable`.
+Pass `--disable` or set `LOOPITER_DISABLE=1` to pause improvement work. `--mode
+recommend` or `observe` stores proposals and does not apply. Omitting `--mode`
+follows `plan.mode`, or autonomous when no plan is present. Constructing
+`ImprovementController` without a mode is autonomous with self-improving on.
+Existing schemaVersion 1 plans are left unchanged. Users who never set a mode
+previously stayed on recommend: pass `mode: "recommend"` (Python `mode="recommend"`)
+or run the worker with `--disable` to keep that behavior. `--enable`,
+`--confirm-activation`, and `--yes` are ignored and log a deprecation warning.
+Validation, audit, budgets, and rollback are unchanged. No platform login or
+Loopiter project key is involved; you pay your own model/judge, database and
+hosting providers.
 
 Read the guide with `python -m loopiter guide` or `npx --no-install loopiter guide`.
 Use `reference` for packaged source. New commands require this onboarding build;
@@ -68,10 +72,12 @@ publishing a new npm/PyPI release is separate.
 Release versions: `loopiter@0.3.0-alpha.1` and Python `loopiter==0.3.0a1`.
 It adds policy-bounded `ImprovementController` APIs in both languages, durable
 experiments, single-winner selection, production observation and recovery.
-Constructing the controller without a mode still recommends and does not apply.
-A fresh self-hosted init records autonomous mode and self-improving on. The
-worker follows `plan.mode` unless `--mode` is set, spends only with `--enable`,
-and every audit, budget, and rollback gate remains. Installation never starts a worker or spends by itself.
+Constructing the controller without a mode is autonomous with self-improving on.
+A fresh self-hosted init records the same preset. The worker follows `plan.mode`
+unless `--mode` is set, runs unless `--disable` or `LOOPITER_DISABLE=1` is set,
+and every audit, budget, and rollback gate remains. Installation never starts a
+worker or spends by itself. Pass mode `recommend` or `observe` to keep the
+previous non-applying behavior.
 
 See [autonomy guide source](fern/pages/autonomous.mdx), [migration](docs/autonomy-migration.md),
 [simulation workflows](examples/autonomous/README.md), and the

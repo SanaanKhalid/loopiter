@@ -145,13 +145,13 @@ export default function Home() {
           <div className="section-heading compact">
             <div className="section-label">[ AUTONOMY, GRADUATED ]</div>
             <h2>Choose how far the loop can go.</h2>
-            <p>A fresh self-hosted plan records autonomous mode, with self-improving on. Your application calls each tick. The worker spends only when you pass --enable. Omit the mode on the controller and that object stays on recommend. Omit --mode on the worker and the run follows the plan.</p>
+            <p>A fresh self-hosted plan records autonomous mode, with self-improving on. Your application calls each tick. The worker runs unless you pass --disable or set LOOPITER_DISABLE=1. Omit the mode on the controller and that object is autonomous. Omit --mode on the worker and the run follows the plan.</p>
           </div>
           <div className="mode-list">
             <div className="mode-row"><span>01</span><strong>OBSERVE</strong><p>Inspect eligible evidence without proposing a change.</p><b>NO MUTATION</b></div>
-            <div className="mode-row"><span>02</span><strong>RECOMMEND</strong><p>Store bounded proposals. Nothing is approved or deployed.</p><b>CONTROLLER DEFAULT</b></div>
+            <div className="mode-row"><span>02</span><strong>RECOMMEND</strong><p>Store bounded proposals. Nothing is approved or deployed.</p><b>OPT OUT</b></div>
             <div className="mode-row"><span>03</span><strong>EXPERIMENT</strong><p>Compare candidates and audit them. Callbacks run in your process.</p><b>AUDIT ONLY</b></div>
-            <div className="mode-row selected"><span>04</span><strong>AUTONOMOUS</strong><p>Fresh init records this mode. Approve, apply, observe, retain, or roll back inside the policy.</p><b>FRESH INIT</b></div>
+            <div className="mode-row selected"><span>04</span><strong>AUTONOMOUS</strong><p>Fresh init records this mode. Approve, apply, observe, retain, or roll back inside the policy.</p><b>CONTROLLER DEFAULT</b></div>
           </div>
           <div className="manifesto-next">
             <Link className="text-link" href="/blog/graduated-autonomy-for-self-improving-ai-agents">How graduated autonomy works <span aria-hidden="true">→</span></Link>
@@ -172,7 +172,7 @@ export default function Home() {
             <h2>Your evidence. Your policies. Your decision to deploy.</h2>
           </div>
           <div className="safety-grid">
-            <article><span>01</span><h3>Explicit change boundaries</h3><p>A fresh plan records autonomous mode and self-improving on. The policy names an exact prompt or routing target, bounded fields, and daily budgets. Node may also name agent_release. The worker spends only with --enable.</p></article>
+            <article><span>01</span><h3>Explicit change boundaries</h3><p>A fresh plan records autonomous mode and self-improving on. The policy names an exact prompt or routing target, bounded fields, and daily budgets. Node may also name agent_release. The worker runs unless --disable or LOOPITER_DISABLE=1 is set.</p></article>
             <article><span>02</span><h3>Versioned evaluation</h3><p>Approval references the exact candidate, evidence, evaluator version, and passing evaluation.</p></article>
             <article><span>03</span><h3>Application-owned boundaries</h3><p>Keep authentication, authorization, tool allowlists, and evaluator code outside generated artifacts.</p></article>
             <article><span>04</span><h3>Recoverable deployment</h3><p>The SDK records the attempt, the receipt, and the predecessor so you can inspect and roll back.</p></article>

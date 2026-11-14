@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { createInterface } from "node:readline/promises";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,9 +12,6 @@ import {
   inspectSelfHostedSetup,
   readAgentGuide,
   readReference,
-  autonomousActivationCurrent,
-  autonomousActivationPrompt,
-  moduleActivationNamespace,
   parseStepTimeout,
   readWorkerSettings,
   referenceFiles,
@@ -46,7 +42,7 @@ function validateOptions(values: string[], switches: string[] = []) {
 async function main() {
   if (!command || command === "--help" || args.includes("--help")) {
     console.log(
-      "Loopiter alpha — self-hosted SDK tools\n guide — print the installed agent setup guide\n init --directory ./loopiter — create a self-hosted setup (never overwrites)\n doctor --directory ./loopiter — check configuration without calling models\n verify — run isolated offline controller/rollback checks\n reference [--name workflows|registry|registrySql|providers|classification|classificationReadme]\n starter demo [--reject|--interrupt] — packaged classification example\n worker --module ./loopiter/application.mjs --enable [--mode observe|recommend|experiment|autonomous] [--step-timeout-ms 120000] [--once] [--interval-ms 30000] [--confirm-activation|--yes]\n Fresh init writes schemaVersion 2 (autonomous-default): mode autonomous and selfImproving true. Omitting --mode uses plan.mode; --mode overrides it. The worker refuses to start without --enable. The first non-interactive autonomous run for a namespace and plan passes --confirm-activation or --yes. Later runs reuse the stored confirmation until mode, namespace, audit sizing, policy, plan budget, or the application workflow budget changes. The stamp is a consent record, not a signed or machine-bound check. --enable authorizes improvement work and provider spending inside the existing policy gates; it does not bypass audit, budgets, or rollback.\n analyze --file STATE --namespace NAME --dimensions metadata.task\n candidates|events --file STATE --namespace NAME\n export --file STATE --namespace NAME (writes JSON to stdout)\n import-v1 --input OLD --file NEW --namespace NAME",
+      "Loopiter alpha — self-hosted SDK tools\n guide — print the installed agent setup guide\n init --directory ./loopiter — create a self-hosted setup (never overwrites)\n doctor --directory ./loopiter — check configuration without calling models\n verify — run isolated offline controller/rollback checks\n reference [--name workflows|registry|registrySql|providers|classification|classificationReadme]\n starter demo [--reject|--interrupt] — packaged classification example\n worker --module ./loopiter/application.mjs [--mode observe|recommend|experiment|autonomous] [--disable] [--step-timeout-ms 120000] [--once] [--interval-ms 30000]\n Fresh init writes schemaVersion 2 (autonomous-default): mode autonomous and selfImproving true. An ImprovementController created with no mode uses that same default. Omitting --mode uses plan.mode, or autonomous when no plan is present; --mode overrides it. The worker runs unless --disable or LOOPITER_DISABLE=1 is set. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, budgets, and rollback still apply.\n analyze --file STATE --namespace NAME --dimensions metadata.task\n candidates|events --file STATE --namespace NAME\n export --file STATE --namespace NAME (writes JSON to stdout)\n import-v1 --input OLD --file NEW --namespace NAME",
     );
     return;
   }
@@ -62,7 +58,7 @@ async function main() {
     validateOptions(
       selfHostedOptions[command]!,
       command === "worker"
-        ? ["--enable", "--once", "--yes", "--confirm-activation"]
+        ? ["--enable", "--disable", "--once", "--yes", "--confirm-activation"]
         : [],
     );
   if (command === "guide") {
@@ -137,36 +133,23 @@ async function main() {
           }
         : {}),
     });
-    let granted =
-      args.includes("--yes") || args.includes("--confirm-activation");
-    const alreadyConfirmed =
-      settings.mode === "autonomous" &&
-      autonomousActivationCurrent(module, settings.mode);
-    const ask = async () => {
-      const prompts = createInterface({
-        input: process.stdin,
-        output: process.stderr,
-      });
-      try {
-        const answer = await prompts.question(
-          autonomousActivationPrompt(moduleActivationNamespace(module)),
-        );
-        if (answer.trim() !== "activate")
-          throw Error("Autonomous activation was not confirmed.");
-      } finally {
-        prompts.close();
-      }
-    };
-    if (args.includes("--enable") && settings.mode === "autonomous" && !alreadyConfirmed) {
-      if (!granted) {
-        if (!process.stdin.isTTY)
-          throw Error(
-            "Autonomous activation needs a one-time confirmation for this namespace and plan. Pass --confirm-activation or --yes when stdin is not a terminal.",
-          );
-        await ask();
-        granted = true;
-      }
-    }
+    if (args.includes("--enable"))
+      console.error(
+        "warning: --enable is deprecated and ignored. Improvement work runs unless --disable or LOOPITER_DISABLE=1 is set.",
+      );
+    if (args.includes("--confirm-activation"))
+      console.error(
+        "warning: --confirm-activation is deprecated and ignored. Activation confirmation is no longer required.",
+      );
+    if (args.includes("--yes"))
+      console.error(
+        "warning: --yes is deprecated and ignored. Activation confirmation is no longer required.",
+      );
+    const disabled =
+      args.includes("--disable") ||
+      ["1", "true", "yes"].includes(
+        (process.env.LOOPITER_DISABLE ?? "").trim().toLowerCase(),
+      );
     const shutdown = new AbortController();
     const stop = () => shutdown.abort();
     process.once("SIGINT", stop);
@@ -178,20 +161,9 @@ async function main() {
         modeSource: settings.modeSource,
         stepTimeoutMs: settings.stepTimeoutMs,
         stepTimeoutSource: settings.stepTimeoutSource,
-        selfImproving: args.includes("--enable"),
+        selfImproving: !disabled,
         once: args.includes("--once"),
         intervalMs: Number(flag("interval-ms") ?? 30000),
-        recordActivation:
-          args.includes("--enable") &&
-          settings.mode === "autonomous" &&
-          (granted || !alreadyConfirmed),
-        confirmBudget: async () => {
-          if (granted) return true;
-          if (!process.stdin.isTTY) return false;
-          await ask();
-          granted = true;
-          return true;
-        },
         signal: shutdown.signal,
         onTick: (result) => console.log(JSON.stringify(result)),
       });

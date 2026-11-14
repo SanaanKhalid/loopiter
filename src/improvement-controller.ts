@@ -165,12 +165,14 @@ export class ImprovementController {
       typeof options.selfImproving !== "boolean"
     )
       fail("invalid_input", "selfImproving must be boolean.");
+    const mode = options.mode ?? "autonomous";
+    const selfImproving = options.selfImproving ?? true;
     enumeration(
-      options.mode ?? "recommend",
+      mode,
       ["observe", "recommend", "experiment", "autonomous"],
       "mode",
     );
-    this.options = { ...options };
+    this.options = { ...options, mode, selfImproving };
     this.callbackMs =
       options.stepTimeoutMs ?? options.callbackTimeoutMs ?? DEFAULT_STEP_MS;
     this.tickMs =
@@ -491,8 +493,8 @@ export class ImprovementController {
         ?.data;
       if (
         config?.definitionHash !== this.definitions.get(w.id) ||
-        config?.mode !== (this.options.mode ?? "recommend") ||
-        config?.selfImproving !== (this.options.selfImproving ?? false)
+        config?.mode !== this.options.mode ||
+        config?.selfImproving !== this.options.selfImproving
       )
         fail(
           "policy_changed",
@@ -845,7 +847,7 @@ export class ImprovementController {
       this.retiredStale = true;
     }
     const w = this.workflow(workflowId),
-      mode = this.options.mode ?? "recommend";
+      mode = this.options.mode!;
     const signal2 = AbortSignal.any([
       ...(signal ? [signal] : []),
       AbortSignal.timeout(this.tickMs),
@@ -870,7 +872,7 @@ export class ImprovementController {
         ...old?.data,
         definitionHash: this.definitions.get(w.id)!,
         mode,
-        selfImproving: this.options.selfImproving ?? false,
+        selfImproving: this.options.selfImproving === true,
       });
     });
     const lock = await this.loop.store.transaction(

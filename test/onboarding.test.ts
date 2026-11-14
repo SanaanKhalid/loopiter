@@ -55,31 +55,29 @@ test("self-hosted init never overwrites user files or follows an existing destin
     assert.equal(setup.mode, "autonomous");
     assert.equal(setup.selfImproving, true);
     const readme = await readFile(join(destination, "README.md"), "utf8");
-    assert.match(readme, /--enable --once/);
-    assert.match(readme, /--enable --mode recommend --once/);
+    assert.match(readme, /--disable --mode recommend --once/);
     const recipe = readme
       .split("\n")
       .map((line) => line.trim())
       .find((line) => line.includes("loopiter worker") && !line.includes("--mode"));
     assert.ok(recipe);
-    assert.match(recipe, /--enable --once/);
+    assert.match(recipe, /--once/);
+    assert.doesNotMatch(recipe, /--enable/);
     assert.doesNotMatch(recipe, /--mode/);
+    assert.match(readme, /The worker runs without --enable/);
+    assert.match(readme, /LOOPITER_DISABLE=1/);
     assert.match(
       readme,
-      /--enable authorizes improvement work and provider spending/,
-    );
-    assert.match(
-      readme,
-      /fails closed without an audit partition, a budget, or --enable/,
+      /fails closed without an audit partition or a budget/,
     );
     assert.match(readme, /The recipe above omits --mode, so plan.mode controls it/);
     assert.match(readme, /The --mode flag still overrides the plan/);
-    const confirmation =
-      "Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.";
-    assert.ok(readme.includes(confirmation));
-    assert.ok((await readAgentGuide()).includes(confirmation));
-    assert.ok(readme.indexOf(confirmation) < readme.indexOf(recipe!));
-    assert.ok(readme.indexOf(recipe!) < readme.indexOf("--enable --mode recommend --once"));
+    const migration =
+      "An ImprovementController created with no mode is autonomous with self-improving on.";
+    assert.ok(readme.includes(migration));
+    assert.ok((await readAgentGuide()).includes(migration));
+    assert.ok(readme.indexOf(migration) < readme.indexOf(recipe!));
+    assert.ok(readme.indexOf(recipe!) < readme.indexOf("--disable --mode recommend --once"));
     await writeFile(join(destination, "user-owned.txt"), "preserve me");
     await assert.rejects(initializeSelfHosted(destination), { code: "EEXIST" });
     assert.equal(
@@ -193,14 +191,15 @@ test("offline verification exercises measured acceptance, rejection, recovery an
   await assert.rejects(readReference("../../.env"), /Unknown reference/);
 });
 
-test("worker requires opt-in before importing local application code", async () => {
+test("worker validates settings before importing local application code", async () => {
   await assert.rejects(
     runSelfHostedWorker({
       module: "/does-not-exist.mjs",
       mode: "autonomous",
+      selfImproving: false,
       once: true,
     }),
-    /disabled/,
+    /does-not-exist/,
   );
   await assert.rejects(
     runSelfHostedWorker({
@@ -260,6 +259,7 @@ export async function createIntegration() {
     );
     const results = await runSelfHostedWorker({
       module,
+      mode: "recommend",
       selfImproving: true,
       once: true,
     });
@@ -413,7 +413,11 @@ test("doctor refuses an audit that cannot certify and plan.mode is honored", asy
     assert.match(guide, /A gain of 0\.10 needs 2397 units/);
     assert.match(guide, /a gain of 0\.20 needs 267 units/);
     assert.match(guide, /cannot exceed two hours/);
-    assert.match(guide, /effective budget on the application workflows/);
+    assert.match(guide, /LOOPITER_DISABLE=1/);
+    assert.match(
+      guide,
+      /An ImprovementController created with no mode is autonomous with self-improving on/,
+    );
     assert.match(autonomousActivationPrompt("app/shown"), /Namespace: app\/shown/);
     assert.match(autonomousActivationPrompt("app/shown"), /Type activate to confirm/);
     const cli = new URL("../src/cli.js", import.meta.url);
@@ -450,94 +454,69 @@ export async function createIntegration() {
         input: "",
         env: { ...process.env, ...env },
       });
-    const denied = run([
+    const plain = run([
       "worker",
       "--module",
       module,
-      "--enable",
-      "--mode",
-      "autonomous",
       "--once",
+      "--step-timeout-ms",
+      "180000",
     ]);
-    assert.equal(denied.status, 1);
-    assert.match(denied.stderr, /--confirm-activation or --yes/);
-    const allowed = run([
+    assert.equal(plain.status, 0, plain.stderr);
+    assert.match(plain.stderr, /effective mode autonomous \(source: plan\)/);
+    assert.match(plain.stderr, /effective step timeout 180000ms \(source: flag\)/);
+    assert.doesNotMatch(plain.stderr, /deprecated/);
+    assert.match(plain.stdout, /"state":"evaluating"/);
+    await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
+    const legacyFlags = run([
       "worker",
       "--module",
       module,
       "--enable",
       "--confirm-activation",
+      "--yes",
       "--once",
-      "--step-timeout-ms",
-      "180000",
     ]);
-    assert.equal(allowed.status, 0, allowed.stderr);
-    assert.match(allowed.stderr, /effective mode autonomous \(source: plan\)/);
-    assert.match(allowed.stderr, /effective step timeout 180000ms \(source: flag\)/);
-    assert.match(allowed.stdout, /"state":"evaluating"/);
-    const again = run(["worker", "--module", module, "--enable", "--once"]);
-    assert.equal(again.status, 0, again.stderr);
-    assert.doesNotMatch(again.stderr, /one-time confirmation/);
+    assert.equal(legacyFlags.status, 0, legacyFlags.stderr);
+    assert.match(legacyFlags.stderr, /--enable is deprecated and ignored/);
+    assert.match(legacyFlags.stderr, /--confirm-activation is deprecated and ignored/);
+    assert.match(legacyFlags.stderr, /--yes is deprecated and ignored/);
+    const disabled = run(["worker", "--module", module, "--disable", "--once"]);
+    assert.equal(disabled.status, 0, disabled.stderr);
+    assert.match(disabled.stdout, /"reason":"self_improvement_disabled"/);
+    for (const value of ["1", "true", "yes"]) {
+      const envDisabled = run(["worker", "--module", module, "--once"], {
+        LOOPITER_DISABLE: value,
+      });
+      assert.equal(envDisabled.status, 0, envDisabled.stderr);
+      assert.match(envDisabled.stdout, /"reason":"self_improvement_disabled"/);
+    }
     const moduleText = await readFile(module, "utf8");
     assert.equal(moduleText.includes('"tokens":1000'), true);
     await writeFile(module, moduleText.replace('"tokens":1000', '"tokens":1001'));
-    const changedModuleBudget = run(["worker", "--module", module, "--enable", "--once"]);
-    assert.equal(changedModuleBudget.status, 1);
-    assert.match(changedModuleBudget.stderr, /one-time confirmation/);
+    const changedModuleBudget = run(["worker", "--module", module, "--once"]);
+    assert.equal(changedModuleBudget.status, 0, changedModuleBudget.stderr);
+    assert.doesNotMatch(changedModuleBudget.stderr, /one-time confirmation/);
     await writeFile(module, moduleText);
-    const stamp = JSON.parse(
-      await readFile(join(root, ".state", "activation.json"), "utf8"),
-    ) as {
-      entries: Record<
-        string,
-        { planHash: string; confirmedBy: string; confirmedAt: string; mode: string }
-      >;
-    };
-    assert.match(stamp.entries["app/dev"]!.confirmedAt, /^\d{4}-\d{2}-\d{2}T/);
-    assert.ok(stamp.entries["app/dev"]!.confirmedBy.trim());
-    assert.equal(stamp.entries["app/dev"]!.planHash.length, 64);
-    assert.equal(stamp.entries["app/dev"]!.mode, "autonomous");
-    const otherTimeout = run([
-      "worker",
-      "--module",
-      module,
-      "--enable",
-      "--once",
-      "--step-timeout-ms",
-      "60000",
-    ]);
-    assert.equal(otherTimeout.status, 0, otherTimeout.stderr);
-    assert.doesNotMatch(otherTimeout.stderr, /one-time confirmation/);
-    const shifted = run(["worker", "--module", module, "--enable", "--once"], {
-      LOOPITER_NAMESPACE: "env/other",
-    });
-    assert.equal(shifted.status, 1);
-    assert.match(shifted.stderr, /one-time confirmation/);
-    assert.equal(
-      JSON.parse(await readFile(join(root, ".state", "activation.json"), "utf8")).entries[
-        "env/other"
-      ],
-      undefined,
-    );
     const planPath = join(root, "integration-plan.json");
     const storedPlan = JSON.parse(await readFile(planPath, "utf8"));
     storedPlan.budget = { tokens: 1000 };
     await writeFile(planPath, JSON.stringify(storedPlan));
-    const changedBudget = run(["worker", "--module", module, "--enable", "--once"]);
-    assert.equal(changedBudget.status, 1);
-    assert.match(changedBudget.stderr, /one-time confirmation/);
+    const changedBudget = run(["worker", "--module", module, "--once"]);
+    assert.equal(changedBudget.status, 0, changedBudget.stderr);
+    assert.doesNotMatch(changedBudget.stderr, /one-time confirmation/);
     delete storedPlan.budget;
     storedPlan.namespace = "app/other";
     await writeFile(planPath, JSON.stringify(storedPlan));
-    const freshNamespace = run(["worker", "--module", module, "--enable", "--once"]);
-    assert.equal(freshNamespace.status, 1);
-    assert.match(freshNamespace.stderr, /one-time confirmation/);
+    const freshNamespace = run(["worker", "--module", module, "--once"]);
+    assert.equal(freshNamespace.status, 0, freshNamespace.stderr);
+    assert.doesNotMatch(freshNamespace.stderr, /one-time confirmation/);
     storedPlan.namespace = "app/dev";
     storedPlan.audit.minimumUnits = 60;
     await writeFile(planPath, JSON.stringify(storedPlan));
-    const changedAudit = run(["worker", "--module", module, "--enable", "--once"]);
-    assert.equal(changedAudit.status, 1);
-    assert.match(changedAudit.stderr, /one-time confirmation/);
+    const changedAudit = run(["worker", "--module", module, "--once"]);
+    assert.equal(changedAudit.status, 0, changedAudit.stderr);
+    assert.doesNotMatch(changedAudit.stderr, /one-time confirmation/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -554,7 +533,8 @@ test("documented worker recipe follows plan.mode recommend", async () => {
       .map((line) => line.trim())
       .find((line) => line.includes("loopiter worker") && !line.includes("--mode"));
     assert.ok(recipe);
-    assert.match(recipe, /--enable --once/);
+    assert.match(recipe, /--once/);
+    assert.doesNotMatch(recipe, /--enable/);
     assert.doesNotMatch(recipe, /--mode/);
     const planPath = join(destination, "integration-plan.json");
     const plan = JSON.parse(await readFile(planPath, "utf8"));
@@ -622,8 +602,6 @@ export async function createIntegration() {
           "worker",
           "--module",
           module,
-          "--enable",
-          "--confirm-activation",
           "--once",
         ],
         { cwd: root, encoding: "utf8", input: "", env: { ...baseEnv, ...env } },
@@ -697,7 +675,7 @@ test("step timeout accepts only decimal integers", async () => {
   }
 });
 
-test("TTY activation prompt shows the effective namespace", async () => {
+test("worker does not wait for an activation prompt", async () => {
   const root = await mkdtemp(join(tmpdir(), "loopiter-tty-"));
   try {
     const module = join(root, "application.mjs");
@@ -714,42 +692,15 @@ test("TTY activation prompt shows the effective namespace", async () => {
       }),
     );
     const cli = new URL("../src/cli.js", import.meta.url);
-    const script = `
-import os, pty, select, sys
-node = ${JSON.stringify(process.execPath)}
-argv = [node, ${JSON.stringify(cli.pathname)}, "worker", "--module", ${JSON.stringify(module)}, "--enable", "--once"]
-pid, fd = pty.fork()
-if pid == 0:
-    os.chdir(${JSON.stringify(root)})
-    os.execv(node, argv)
-data = b""
-while b"Type activate to confirm" not in data:
-    ready, _, _ = select.select([fd], [], [], 8)
-    if not ready:
-        break
-    chunk = os.read(fd, 4096)
-    if not chunk:
-        break
-    data += chunk
-os.write(fd, b"no\\n")
-while True:
-    ready, _, _ = select.select([fd], [], [], 1)
-    if not ready:
-        break
-    try:
-        extra = os.read(fd, 4096)
-    except OSError:
-        break
-    if not extra:
-        break
-    data += extra
-os.waitpid(pid, 0)
-sys.stdout.buffer.write(data)
-`;
-    const output = spawnSync("python3", ["-c", script], { encoding: "utf8" });
-    assert.equal(output.status, 0, output.stderr);
-    assert.match(output.stdout, /Namespace: app\/shown/);
-    assert.doesNotMatch(output.stdout, /imported too early/);
+    const output = spawnSync(
+      process.execPath,
+      [cli.pathname, "worker", "--module", module, "--once"],
+      { cwd: root, encoding: "utf8", input: "" },
+    );
+    assert.equal(output.status, 1);
+    assert.match(output.stderr, /imported too early/);
+    assert.doesNotMatch(output.stderr, /Type activate/);
+    assert.doesNotMatch(output.stderr, /one-time confirmation/);
     await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -807,7 +758,7 @@ export async function createIntegration() {
     const cli = new URL("../src/cli.js", import.meta.url);
     const failed = spawnSync(
       process.execPath,
-      [cli.pathname, "worker", "--module", module, "--enable", "--confirm-activation", "--once"],
+      [cli.pathname, "worker", "--module", module, "--once"],
       { cwd: root, encoding: "utf8" },
     );
     assert.equal(failed.status, 0, failed.stderr);
@@ -818,14 +769,16 @@ export async function createIntegration() {
       [cli.pathname, "worker", "--module", module, "--enable", "--once"],
       { cwd: root, encoding: "utf8" },
     );
-    assert.equal(again.status, 1);
-    assert.match(again.stderr, /one-time confirmation/);
+    assert.equal(again.status, 0, again.stderr);
+    assert.match(again.stderr, /--enable is deprecated and ignored/);
+    assert.doesNotMatch(again.stderr, /one-time confirmation/);
+    assert.match(again.stdout, /callback_failed/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("a legacy activation stamp is kept and gains the current budget hash", async () => {
+test("a legacy activation stamp is ignored and left unchanged", async () => {
   const root = await mkdtemp(join(tmpdir(), "loopiter-legacy-stamp-"));
   try {
     const module = join(root, "application.mjs");
@@ -890,16 +843,15 @@ export async function createIntegration() {
     const cli = new URL("../src/cli.js", import.meta.url);
     const run = (args: string[]) =>
       spawnSync(process.execPath, [cli.pathname, ...args], { cwd: root, encoding: "utf8" });
-    const first = run(["worker", "--module", module, "--enable", "--once"]);
+    const original = await readFile(join(root, ".state", "activation.json"), "utf8");
+    const first = run(["worker", "--module", module, "--once"]);
     assert.equal(first.status, 0, first.stderr);
-    const stamp = JSON.parse(await readFile(join(root, ".state", "activation.json"), "utf8")) as {
-      entries: Record<string, { budgetHash?: string; confirmedAt: string; confirmedBy: string }>;
-    };
-    assert.equal(stamp.entries["app/dev"]?.confirmedAt, confirmedAt);
-    assert.equal(stamp.entries["app/dev"]?.confirmedBy, "legacy");
-    assert.match(stamp.entries["app/dev"]?.budgetHash ?? "", /^[a-f0-9]{64}$/);
+    assert.doesNotMatch(first.stderr, /one-time confirmation/);
+    assert.equal(await readFile(join(root, ".state", "activation.json"), "utf8"), original);
     const again = run(["worker", "--module", module, "--enable", "--once"]);
     assert.equal(again.status, 0, again.stderr);
+    assert.match(again.stderr, /--enable is deprecated and ignored/);
+    assert.equal(await readFile(join(root, ".state", "activation.json"), "utf8"), original);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -32,10 +32,12 @@ evaluation is expected and must not be rewritten as a success.
 Recommend stores proposals only and never applies a candidate. Experiment evaluates
 without automatic deployment, but callbacks are ordinary code in your process.
 A fresh onboarding plan records autonomous mode and self-improving on. Autonomous
-mode still requires the explicit `--enable` spending authorization, an exact
+mode runs in the worker without `--enable`. Pass `--disable` or set
+`LOOPITER_DISABLE=1` to pause it. It still needs an exact
 prompt/routing/`agent_release` policy, an audit partition, budgets and
 observation/rollback adapters. It fails closed without those. The old experimental
-apply mode is rejected. Omit the controller mode to stay on recommend.
+apply mode is rejected. Omit the controller mode and it is autonomous. Pass mode
+`recommend` or `observe` to keep proposals from being applied.
 
 ### A deploy timed out. Should I retry?
 

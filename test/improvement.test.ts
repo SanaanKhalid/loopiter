@@ -274,10 +274,35 @@ for (const scenario of fixtures.scenarios)
     if (scenario.name === "regression" || scenario.name === "missing")
       assert.equal(x.registry.version, null);
   });
-test("omitted controller mode stays recommend and never applies", async () => {
+test("omitted controller mode is autonomous and self-improving", async () => {
   const x = setup();
   const controller = new ImprovementController(x.loop, {
     workflows: [x.workflow],
+  });
+  let result = await controller.tick("classification");
+  for (
+    let i = 0;
+    i < 8 &&
+    !["completed", "no_improvement", "rolled_back", "waiting_for_evidence"].includes(
+      result.state,
+    );
+    i++
+  ) {
+    if (result.state === "observing") x.advance();
+    result = await controller.tick("classification");
+  }
+  assert.equal(result.state, "completed");
+  assert.equal(x.registry.applications, 1);
+  const page = await x.loop.list("coordination", { limit: 1000 });
+  const row = page.items.find((item) => item.id === "workflow:classification");
+  assert.equal(row?.data.mode, "autonomous");
+  assert.equal(row?.data.selfImproving, true);
+});
+test("recommend mode stores a proposal and never applies", async () => {
+  const x = setup();
+  const controller = new ImprovementController(x.loop, {
+    workflows: [x.workflow],
+    mode: "recommend",
   });
   const result = await controller.tick("classification");
   assert.equal(result.state, "completed");
@@ -287,15 +312,24 @@ test("omitted controller mode stays recommend and never applies", async () => {
   const again = await controller.tick("classification");
   assert.equal(again.reason, "unchanged_evidence");
   assert.equal(x.registry.applications, 0);
-  const page = await x.loop.list("coordination");
-  const row = page.items.find((item) => item.id === "workflow:classification");
-  assert.equal(row?.data.mode, "recommend");
-  assert.equal(row?.data.selfImproving, false);
+});
+test("default autonomous mode blocks a losing candidate", async () => {
+  const x = setup({ name: "rejected", scores: [0], errors: 0 });
+  const controller = new ImprovementController(x.loop, {
+    workflows: [x.workflow],
+  });
+  let result = await controller.tick("classification");
+  for (let i = 0; i < 8 && result.state !== "no_improvement"; i++)
+    result = await controller.tick("classification");
+  assert.equal(result.state, "no_improvement");
+  assert.equal(result.reason, "validation_failed");
+  assert.equal(x.registry.applications, 0);
 });
 test("autonomous fails closed without audit, budget, or enable", async () => {
   const disabled = setup();
   const paused = await new ImprovementController(disabled.loop, {
     mode: "autonomous",
+    selfImproving: false,
     workflows: [disabled.workflow],
   }).tick("classification");
   assert.equal(paused.reason, "self_improvement_disabled");
@@ -318,6 +352,7 @@ test("flag, exact schema and required budgets fail closed", async () => {
     (
       await new ImprovementController(x.loop, {
         mode: "autonomous",
+        selfImproving: false,
         workflows: [x.workflow],
       }).tick("classification")
     ).reason,

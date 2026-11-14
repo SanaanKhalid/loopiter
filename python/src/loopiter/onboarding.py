@@ -72,7 +72,7 @@ def read_worker_settings(
         raise ValueError("Invalid mode in integration plan.")
     if mode is not None and mode not in MODES:
         raise ValueError("Invalid improvement mode.")
-    resolved_mode = mode if mode is not None else (plan or {}).get("mode", "recommend")
+    resolved_mode = mode if mode is not None else (plan or {}).get("mode", "autonomous")
     if resolved_mode not in MODES:
         raise ValueError("Invalid improvement mode.")
     resolved_mode_source = (
@@ -433,19 +433,15 @@ Your agent creates application.py here, exporting async create_integration(*, ca
 
 This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.
 
-After doctor reports configured and verify passes, autonomous remains the first worker recipe. Before the first run with --enable --mode autonomous, stop and get explicit confirmation from the human. That confirmation is one-time, for initial activation and spend. A completed checklist, doctor report, or plan output alone is not confirmation. After that one confirmation, autonomous runs continue without per-candidate approval.
+After doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 to pause improvement work. Set mode to recommend or observe to keep proposals from being applied. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
 
-On a terminal the worker asks you to type activate. When stdin is not a terminal, the first autonomous run passes --confirm-activation or --yes. The worker stores that confirmation in .state/activation.json for this namespace and plan, with who confirmed it and when. The stamp is a consent record, not a security boundary: it is not signed and it is not bound to a machine. Its hash covers the effective mode, self-improving, the effective namespace (LOOPITER_NAMESPACE when set, otherwise the plan namespace), the plan step timeout, audit sizing, the plan's policy and budget, and the effective budget on the application workflows (daily limits and the per-callback reservation). A one-off --step-timeout-ms is not part of the hash. The stamp records the effective mode that ran. A later run reuses the stamp. A new namespace or a change to those settings asks again. The flag does not bypass audit, budget, or rollback gates. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
-
-    python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --once
-
---enable authorizes improvement work and provider spending in this process: proposal, replay and judge calls, and, in autonomous mode, a deployment that has passed validation and audit. It does not bypass validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, or lease checks. Autonomous mode fails closed without an audit partition, a budget, or --enable. Omit --enable and the worker refuses to start.
+    python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --once
 
 --mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:
 
-    python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --enable --mode recommend --once
+    python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --disable --mode recommend --once
 
-The recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. Constructing ImprovementController without a mode stays on recommend with self-improving off. Existing schemaVersion 1 plans are left unchanged.
+The recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. With no integration plan, the worker uses autonomous. Existing schemaVersion 1 plans are left unchanged.
 
 One tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your process manager. A worker does not remain running after its process exits.
 
@@ -556,7 +552,7 @@ async def verify_self_hosted_installation():
 
 
 def _integration_factory(module_path):
-    # Import trusted application code on the worker's thread, after explicit enablement.
+    # Import trusted application code on the worker's thread.
     path = Path(module_path).resolve()
     spec = importlib.util.spec_from_file_location("_loopiter_application_integration", path)
     if not spec or not spec.loader:
@@ -577,7 +573,7 @@ async def run_self_hosted_worker(
     mode_source=None,
     step_timeout_ms=None,
     step_timeout_source=None,
-    self_improving=False,
+    self_improving=True,
     once=False,
     interval_ms=30000,
     cancellation=None,
@@ -585,9 +581,12 @@ async def run_self_hosted_worker(
     record_activation=False,
     confirm_budget=None,
 ):
-    if self_improving is not True:
-        raise ValueError(
-            "Worker is disabled. Review the setup and pass --enable to permit improvement work and provider spending."
+    if type(self_improving) is not bool:
+        raise ValueError("self_improving must be boolean.")
+    if record_activation or confirm_budget is not None:
+        print(
+            "warning: activation confirmation is deprecated and ignored. Activation confirmation is no longer required.",
+            file=sys.stderr,
         )
     settings = read_worker_settings(
         module_path,
@@ -634,43 +633,19 @@ async def run_self_hosted_worker(
             if settings["mode"] == "autonomous":
                 raise ValueError(message)
             print("warning: " + message, file=sys.stderr)
-        budget_hash = effective_budget_fingerprint(integration["workflows"])
-        if (
-            settings["mode"] == "autonomous"
-            and self_improving is True
-            and not activation_budget_current(module_path, budget_hash)
-        ):
-            if not record_activation:
-                accepted = confirm_budget() if confirm_budget else False
-                if not accepted:
-                    raise ValueError(
-                        "Autonomous activation needs a one-time confirmation for this namespace and plan. "
-                        "Pass --confirm-activation or --yes when stdin is not a terminal."
-                    )
-                record_activation = True
         controller = ImprovementController(
             integration["loop"],
             workflows=integration["workflows"],
             mode=settings["mode"],
-            self_improving=True,
+            self_improving=self_improving,
             step_timeout_ms=settings["step_timeout_ms"],
         )
         results = []
-        pending_activation = record_activation
         while not cancellation.is_set():
             for workflow in integration["workflows"]:
                 if cancellation.is_set():
                     break
                 result = await controller.tick(workflow.id, cancellation)
-                if pending_activation:
-                    pending_activation = False
-                    if (
-                        result.get("state") != "failed"
-                        and result.get("reason") != "callback_failed"
-                    ):
-                        record_autonomous_activation(
-                            module_path, mode=settings["mode"], budget_hash=budget_hash
-                        )
                 if once:
                     results.append(result)
                 if on_tick:
@@ -705,13 +680,18 @@ def main(argv=None):
     worker.add_argument(
         "--enable",
         action="store_true",
-        help="Authorize improvement work and provider spending. Required before the worker imports application code.",
+        help="Deprecated no-op. Improvement work runs unless --disable or LOOPITER_DISABLE=1 is set.",
+    )
+    worker.add_argument(
+        "--disable",
+        action="store_true",
+        help="Pause improvement work. Same as LOOPITER_DISABLE=1. Evidence gates stay in place.",
     )
     worker.add_argument(
         "--mode",
         choices=MODES,
         default=None,
-        help="Overrides plan.mode. Omit to use the integration plan, or recommend when no plan is present.",
+        help="Overrides plan.mode. Omit to use the integration plan, or autonomous when no plan is present.",
     )
     worker.add_argument("--once", action="store_true")
     worker.add_argument("--interval-ms", type=int, default=30000)
@@ -724,17 +704,12 @@ def main(argv=None):
     worker.add_argument(
         "--confirm-activation",
         action="store_true",
-        help=(
-            "Record the one-time autonomous confirmation for this namespace and plan. "
-            "Later runs reuse it until mode, namespace, audit, policy, plan budget, "
-            "or the application workflow budget changes. "
-            "The stamp is a consent record, not a signed or machine-bound check."
-        ),
+        help="Deprecated no-op. Activation confirmation is no longer required.",
     )
     worker.add_argument(
         "--yes",
         action="store_true",
-        help="Same as --confirm-activation.",
+        help="Deprecated no-op. Same as --confirm-activation.",
     )
     args = parser.parse_args(argv)
     try:
@@ -758,39 +733,26 @@ def main(argv=None):
                 step_timeout_ms=args.step_timeout_ms,
                 step_timeout_source="flag" if args.step_timeout_ms is not None else None,
             )
-            granted = bool(args.yes or args.confirm_activation)
-            already = settings["mode"] == "autonomous" and autonomous_activation_current(
-                args.module, settings["mode"]
-            )
-
-            def ask_activation():
-                if not sys.stdin.isatty():
-                    return False
+            if args.enable:
                 print(
-                    autonomous_activation_prompt(effective_namespace(_load_plan(args.module))),
-                    end="",
+                    "warning: --enable is deprecated and ignored. Improvement work runs unless --disable or LOOPITER_DISABLE=1 is set.",
                     file=sys.stderr,
-                    flush=True,
                 )
-                if input("").strip() != "activate":
-                    raise ValueError("Autonomous activation was not confirmed.")
-                return True
-
-            if args.enable and settings["mode"] == "autonomous" and not already and not granted:
-                if not ask_activation():
-                    raise ValueError(
-                        "Autonomous activation needs a one-time confirmation for this namespace and plan. "
-                        "Pass --confirm-activation or --yes when stdin is not a terminal."
-                    )
-                granted = True
-            record_activation = bool(
-                args.enable and settings["mode"] == "autonomous" and (granted or not already)
-            )
-
-            def confirm_budget():
-                if granted:
-                    return True
-                return ask_activation()
+            if args.confirm_activation:
+                print(
+                    "warning: --confirm-activation is deprecated and ignored. Activation confirmation is no longer required.",
+                    file=sys.stderr,
+                )
+            if args.yes:
+                print(
+                    "warning: --yes is deprecated and ignored. Activation confirmation is no longer required.",
+                    file=sys.stderr,
+                )
+            disabled = args.disable or os.environ.get("LOOPITER_DISABLE", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
 
             async def run():
                 cancellation = asyncio.Event()
@@ -809,13 +771,11 @@ def main(argv=None):
                         mode_source=settings["mode_source"],
                         step_timeout_ms=settings["step_timeout_ms"],
                         step_timeout_source=settings["step_timeout_source"],
-                        self_improving=args.enable,
+                        self_improving=not disabled,
                         once=args.once,
                         interval_ms=args.interval_ms,
                         cancellation=cancellation,
                         on_tick=lambda result: print(json.dumps(result), flush=True),
-                        record_activation=record_activation,
-                        confirm_budget=confirm_budget,
                     )
                 finally:
                     for signum in installed:

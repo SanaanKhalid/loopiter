@@ -259,8 +259,6 @@ async def create_integration(*, cancellation):
                     "worker",
                     "--module",
                     str(module),
-                    "--enable",
-                    "--confirm-activation",
                     "--once",
                 ],
                 cwd=work,

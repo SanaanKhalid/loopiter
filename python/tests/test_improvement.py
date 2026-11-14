@@ -226,11 +226,33 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reason"], "audit_evaluation_conflict")
         self.assertEqual(self.registry.calls, 0)
 
-    async def test_omitted_mode_stays_recommend_and_never_applies(self):
+    async def test_omitted_mode_is_autonomous_and_self_improving(self):
         self.setup_workflow(FIXTURES["scenarios"][0])
         controller = ImprovementController(self.loop, workflows=[self.workflow])
-        self.assertEqual(controller.mode, "recommend")
-        self.assertIs(controller.self_improving, False)
+        self.assertEqual(controller.mode, "autonomous")
+        self.assertIs(controller.self_improving, True)
+        result = await controller.tick("classification")
+        for _ in range(8):
+            if result["state"] in (
+                "completed",
+                "no_improvement",
+                "rolled_back",
+                "waiting_for_evidence",
+            ):
+                break
+            if result["state"] == "observing":
+                self.now += timedelta(hours=2)
+            result = await controller.tick("classification")
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(self.registry.calls, 1)
+        page = await self.loop.list("coordination", limit=1000)
+        row = next(item for item in page["items"] if item["id"] == "workflow:classification")
+        self.assertEqual(row["data"]["mode"], "autonomous")
+        self.assertIs(row["data"]["self_improving"], True)
+
+    async def test_recommend_mode_stores_a_proposal_and_never_applies(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        controller = ImprovementController(self.loop, workflows=[self.workflow], mode="recommend")
         result = await controller.tick("classification")
         self.assertEqual(result["state"], "completed")
         self.assertEqual(result["reason"], "recommendations_only")
@@ -239,14 +261,27 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         again = await controller.tick("classification")
         self.assertEqual(again["reason"], "unchanged_evidence")
         self.assertEqual(self.registry.calls, 0)
-        page = await self.loop.list("coordination")
-        row = next(item for item in page["items"] if item["id"] == "workflow:classification")
-        self.assertEqual(row["data"]["mode"], "recommend")
-        self.assertIs(row["data"]["self_improving"], False)
+
+    async def test_default_autonomous_mode_blocks_a_losing_candidate(self):
+        rejected = next(
+            scenario for scenario in FIXTURES["scenarios"] if scenario["name"] == "rejected"
+        )
+        self.setup_workflow(rejected)
+        controller = ImprovementController(self.loop, workflows=[self.workflow])
+        result = await controller.tick("classification")
+        for _ in range(8):
+            if result["state"] == "no_improvement":
+                break
+            result = await controller.tick("classification")
+        self.assertEqual(result["state"], "no_improvement")
+        self.assertEqual(result["reason"], "validation_failed")
+        self.assertEqual(self.registry.calls, 0)
 
     async def test_autonomous_fails_closed_without_audit_budget_or_enable(self):
         self.setup_workflow(FIXTURES["scenarios"][0])
-        disabled = ImprovementController(self.loop, workflows=[self.workflow], mode="autonomous")
+        disabled = ImprovementController(
+            self.loop, workflows=[self.workflow], mode="autonomous", self_improving=False
+        )
         paused = await disabled.tick("classification")
         self.assertEqual(paused["reason"], "self_improvement_disabled")
         self.assertEqual(paused["state"], "paused")
