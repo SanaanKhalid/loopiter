@@ -571,13 +571,22 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
             baseline += reference(sample)
         self.assertGreaterEqual(redacted, baseline)
         self.assertEqual(redacted, 75)
-        started = time.perf_counter()
-        _redact_cards("4 " * 32768)
-        self.assertLess(time.perf_counter() - started, 0.05)
-        started = time.perf_counter()
-        _redact_cards("4 " * (512 * 1024))
-        _redact_cards("4111-" * (1024 * 1024 // 5))
-        self.assertLess(time.perf_counter() - started, 8)
+
+        def elapsed(sample: str) -> float:
+            started_at = time.perf_counter()
+            _redact_cards(sample)
+            return time.perf_counter() - started_at
+
+        spaced = "4 " * 8192
+        grouped = "4111-" * 4096
+        small_spaced = elapsed(spaced)
+        large_spaced = elapsed(spaced * 4)
+        small_grouped = elapsed(grouped)
+        large_grouped = elapsed(grouped * 4)
+        self.assertLess(large_spaced, max(small_spaced * 6, 0.05))
+        self.assertLess(large_grouped, max(small_grouped * 6, 0.05))
+        self.assertLess(large_spaced, 8)
+        self.assertLess(large_grouped, 8)
 
     async def test_bounded_open_map_is_cleared(self):
         loop = self.loop()

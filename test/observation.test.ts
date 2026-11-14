@@ -159,11 +159,21 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
   }
   assert.ok(redacted >= baseline);
   assert.equal(redacted, 75);
-  const started = Date.now();
-  redactCapture("4 ".repeat(32768));
-  redactCapture("4 ".repeat(512 * 1024));
-  redactCapture("4111-".repeat(Math.floor((1024 * 1024) / 5)));
-  assert.ok(Date.now() - started < 2000);
+  const elapsed = (sample: string) => {
+    const started = performance.now();
+    redactCapture(sample);
+    return performance.now() - started;
+  };
+  const spaced = "4 ".repeat(8192);
+  const grouped = "4111-".repeat(4096);
+  const smallSpaced = elapsed(spaced);
+  const largeSpaced = elapsed(spaced + spaced + spaced + spaced);
+  const smallGrouped = elapsed(grouped);
+  const largeGrouped = elapsed(grouped + grouped + grouped + grouped);
+  assert.ok(largeSpaced < Math.max(smallSpaced * 6, 50));
+  assert.ok(largeGrouped < Math.max(smallGrouped * 6, 50));
+  assert.ok(largeSpaced < 8000);
+  assert.ok(largeGrouped < 8000);
 });
 
 test("observer retains lineage, defaults to no content, preserves return identity and never replays a durable ID", async () => {

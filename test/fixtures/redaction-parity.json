@@ -157,6 +157,14 @@
     {
       "input": "order 12345 4111111111111111",
       "output": "order 12345 [REDACTED]"
+    },
+    {
+      "input": "password=4111 1111 1111 1111",
+      "output": "password=[REDACTED]"
+    },
+    {
+      "input": "secret=-----BEGIN FIXTURE PRIVATE KEY-----\nabc",
+      "output": "secret=[REDACTED]"
     }
   ],
   "boundaries": [

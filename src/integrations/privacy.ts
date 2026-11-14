@@ -154,18 +154,13 @@ const cardLayouts: readonly (readonly number[])[] = [
   [4, 4, 4, 3],
   [4, 4, 6],
 ];
-
-function layoutPrefix(groups: readonly number[]): boolean {
-  return cardLayouts.some((layout) => layout.length >= groups.length && layout.slice(0, groups.length).every((size, index) => size === groups[index]));
-}
-
-function longerLayout(groups: readonly number[]): boolean {
-  return cardLayouts.some((layout) => layout.length > groups.length && layout.slice(0, groups.length).every((size, index) => size === groups[index]));
-}
-
-function exactLayout(groups: readonly number[]): boolean {
-  return cardLayouts.some((layout) => layout.length === groups.length && layout.every((size, index) => size === groups[index]));
-}
+const exactLayouts = new Set(cardLayouts.map((layout) => layout.join(",")));
+const layoutPrefixes = new Set(
+  cardLayouts.flatMap((layout) => layout.map((_, index) => layout.slice(0, index + 1).join(","))),
+);
+const longerPrefixes = new Set(
+  cardLayouts.flatMap((layout) => layout.slice(0, -1).map((_, index) => layout.slice(0, index + 1).join(","))),
+);
 
 function redactCards(value: string): string {
   let out = "";
@@ -198,64 +193,131 @@ function redactCards(value: string): string {
       i = j;
       continue;
     }
-    if (!layoutPrefix([first])) {
+    if (!layoutPrefixes.has(String(first))) {
       const nxt = nextGroup(start);
       out += value.slice(start, nxt);
       i = nxt;
       continue;
     }
-    const groups = [first];
-    const ends = [j];
-    let total = first;
-    const sep = value[j]!;
-    while (j < value.length && value[j] === sep && j + 1 < value.length && digit(j + 1) && longerLayout(groups)) {
-      let k = j + 1;
-      while (k < value.length && digit(k)) k += 1;
-      const nxt = k - (j + 1);
-      if (total + nxt > 19 || !layoutPrefix(groups.concat(nxt))) break;
-      total += nxt;
-      groups.push(nxt);
-      ends.push(k);
-      j = k;
-    }
-    let matched = -1;
-    for (let count = groups.length; count > 0; count -= 1) {
-      const prefix = groups.slice(0, count);
-      if (!exactLayout(prefix)) continue;
-      const end = ends[count - 1]!;
-      if (luhn(value.slice(start, end).replace(/[ -]/g, ""))) {
-        matched = end;
+    if (first === 4) {
+      const sepChar = value[j]!;
+      let pos = start;
+      const quad = (at: number) =>
+        at + 4 <= value.length &&
+        digit(at) && digit(at + 1) && digit(at + 2) && digit(at + 3);
+      const luhnQuads = (at: number) => {
+        let sum = 0;
+        let alt = false;
+        for (const off of [18, 17, 16, 15, 13, 12, 11, 10, 8, 7, 6, 5, 3, 2, 1, 0]) {
+          let n = value.charCodeAt(at + off) - 48;
+          if (alt) {
+            n *= 2;
+            if (n > 9) n -= 9;
+          }
+          sum += n;
+          alt = !alt;
+        }
+        return sum % 10 === 0;
+      };
+      while (quad(pos) && (pos + 4 >= value.length || value[pos + 4] === sepChar)) {
+        if (
+          pos + 19 <= value.length &&
+          value[pos + 4] === sepChar &&
+          value[pos + 9] === sepChar &&
+          value[pos + 14] === sepChar &&
+          quad(pos + 5) &&
+          quad(pos + 10) &&
+          quad(pos + 15)
+        ) {
+          if (luhnQuads(pos)) {
+            out += value.slice(i, pos) + "[REDACTED]";
+            i = pos + 19;
+            pos += 20;
+            continue;
+          }
+          pos += 5;
+          continue;
+        }
         break;
       }
+      if (pos !== start) {
+        out += value.slice(i, pos);
+        i = pos;
+        continue;
+      }
     }
-    if (matched >= 0) {
-      out += "[REDACTED]";
+    const sep = value[j]!;
+    const spans: { start: number; end: number; length: number }[] = [{ start, end: j, length: first }];
+    let pos = j;
+    while (pos < value.length && value[pos] === sep && pos + 1 < value.length && digit(pos + 1)) {
+      let k = pos + 1;
+      while (k < value.length && digit(k)) k += 1;
+      spans.push({ start: pos + 1, end: k, length: k - (pos + 1) });
+      pos = k;
+    }
+    let groupIndex = 0;
+    while (groupIndex < spans.length) {
+      const group = spans[groupIndex]!;
+      if (group.length >= 13 && group.length <= 19 && luhn(value.slice(group.start, group.end))) {
+        out += value.slice(i, group.start) + "[REDACTED]";
+        i = group.end;
+        groupIndex += 1;
+        continue;
+      }
+      if (group.length !== 4) {
+        groupIndex += 1;
+        continue;
+      }
+      const lengths: number[] = [];
+      const ends: number[] = [];
+      let total = 0;
+      let look = groupIndex;
+      while (look < spans.length && total < 19) {
+        const lookLen = spans[look]!.length;
+        if (total + lookLen > 19) break;
+        const candidate = lengths.concat(lookLen).join(",");
+        if (!layoutPrefixes.has(candidate)) break;
+        lengths.push(lookLen);
+        ends.push(spans[look]!.end);
+        total += lookLen;
+        if (!longerPrefixes.has(candidate)) break;
+        look += 1;
+      }
+      let matched = -1;
+      for (let count = lengths.length; count > 0; count -= 1) {
+        if (!exactLayouts.has(lengths.slice(0, count).join(","))) continue;
+        const end = ends[count - 1]!;
+        if (luhn(value.slice(group.start, end).replace(/[ -]/g, ""))) {
+          matched = end;
+          break;
+        }
+      }
+      if (matched < 0) {
+        groupIndex += 1;
+        continue;
+      }
+      out += value.slice(i, group.start) + "[REDACTED]";
       i = matched;
-      continue;
+      while (groupIndex < spans.length && spans[groupIndex]!.start < matched) groupIndex += 1;
     }
-    const resume = nextGroup(start);
-    out += value.slice(start, resume);
-    i = resume;
+    out += value.slice(i, spans[spans.length - 1]!.end);
+    i = spans[spans.length - 1]!.end;
   }
   return out;
 }
 
 function redactText(value: string): string {
-  return redactCards(
-    redactEmails(
-      redactUrls(
-        value
-          .replace(bearer, "Bearer [REDACTED]")
-          .replace(basic, "Basic [REDACTED]")
-          .replace(tokens, "[REDACTED]")
-          .replace(jwt, "[REDACTED]")
-          .replace(awsSecret, "$1[REDACTED]")
-          .replace(assigned, "$1[REDACTED]")
-          .replace(queryToken, "$1[REDACTED]")
-          .replace(privateKey, "[REDACTED]"),
-      ),
-    ),
-  );
+  let text = value.replace(privateKey, "[REDACTED]");
+  text = redactCards(text);
+  text = text
+    .replace(bearer, "Bearer [REDACTED]")
+    .replace(basic, "Basic [REDACTED]")
+    .replace(tokens, "[REDACTED]")
+    .replace(jwt, "[REDACTED]")
+    .replace(awsSecret, "$1[REDACTED]")
+    .replace(assigned, "$1[REDACTED]")
+    .replace(queryToken, "$1[REDACTED]");
+  return redactEmails(redactUrls(text));
 }
 
 function walk(value: JsonValue, patterns: boolean): JsonValue {
