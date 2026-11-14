@@ -213,29 +213,45 @@ def _next_card_group(value: str, start: int) -> int:
 def _redact_cards(value: str) -> str:
     out: list[str] = []
     i = 0
+    copied = 0
     length = len(value)
+
+    def keep(end: int) -> None:
+        nonlocal copied
+        if copied < end:
+            out.append(value[copied:end])
+            copied = end
+
     while i < length:
-        if not _ascii_digit(value[i]) or (i > 0 and _ascii_digit(value[i - 1])):
-            out.append(value[i])
+        ch = value[i]
+        if not ("0" <= ch <= "9") or (i > 0 and "0" <= value[i - 1] <= "9"):
             i += 1
             continue
         start = i
-        j = i
-        while j < length and _ascii_digit(value[j]):
+        j = i + 1
+        while j < length and "0" <= value[j] <= "9":
             j += 1
         first = j - start
-        grouped = j < length and value[j] in " -" and j + 1 < length and _ascii_digit(value[j + 1])
+        grouped = j + 1 < length and value[j] in " -" and "0" <= value[j + 1] <= "9"
+        if first != 4:
+            if not grouped:
+                if 13 <= first <= 19 and _luhn(value[start:j]):
+                    keep(start)
+                    out.append("[REDACTED]")
+                    copied = j
+                i = j
+                continue
+            i = j + 1
+            continue
         if not grouped:
             if 13 <= first <= 19 and _luhn(value[start:j]):
+                keep(start)
                 out.append("[REDACTED]")
-            else:
-                out.append(value[start:j])
+                copied = j
             i = j
             continue
         if not _layout_prefix((first,)):
-            nxt = _next_card_group(value, start)
-            out.append(value[start:nxt])
-            i = nxt
+            i = _next_card_group(value, start)
             continue
         groups = [first]
         total = first
@@ -261,13 +277,14 @@ def _redact_cards(value: str) -> str:
             j -= 1
         digits = "".join(ch for ch in value[start:j] if _ascii_digit(ch))
         if _exact_layout(tuple(groups)) and _luhn(digits):
+            keep(start)
             out.append("[REDACTED]")
+            copied = j
             i = j
             continue
-        nxt = _next_card_group(value, start)
-        out.append(value[start:nxt])
-        i = nxt
-    return "".join(out)
+        i = _next_card_group(value, start)
+    keep(length)
+    return "".join(out) if out else value
 
 
 def _redact_text(value: str) -> str:
