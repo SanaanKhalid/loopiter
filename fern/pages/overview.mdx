@@ -8,8 +8,7 @@ The **0.3 alpha** (`0.3.0-alpha.1` on npm; `0.3.0a1` on PyPI) adds
 [autonomous improvement](/closing-the-loop/opt-in-autonomous-improvement) in both SDKs.
 Constructing `ImprovementController` without a mode is autonomous with self-improving on.
 A fresh self-hosted init records the same preset. The worker runs unless `--disable`
-or `LOOPITER_DISABLE=1` is set. Pass mode `recommend` or `observe` to keep proposals
-from being applied. Start with the native, async **Python 3.11+ SDK**:
+or `LOOPITER_DISABLE=1` is set. Pass mode `recommend` to store proposals without applying them. Pass mode `observe` to inspect evidence without proposing. Start with the native, async **Python 3.11+ SDK**:
 capture predictions and verified corrections, evaluate proposed changes, and deploy
 through your own application adapters. The core has **zero runtime dependencies**
 and no telemetry; PostgreSQL support is optional. No Node.js installation is needed
@@ -64,7 +63,7 @@ callbacks. Loopiter stores evidence, bounds orchestration and protects lifecycle
 - Durable deployment attempts, target reservations, receipts, inspect/reconcile and
   explicit predecessor-based rollback through your deployment adapter.
 - Node store v3 / Python store v2 contracts, optional PostgreSQL 16/17 reference adapters and conformance suites.
-- On main, unreleased, the controller default is autonomous with self-improving on. Mode recommend or observe stores proposals and does not apply. `--disable` or `LOOPITER_DISABLE` (any non-empty value except 0, false, no, or off) pauses before the application module is imported, in every mode, and spends nothing. The published 0.3.0 alphas still default to recommend and still require `--enable`. Independent audit, production observation, and automatic rollback stay in place.
+- On main, unreleased, the controller default is autonomous with self-improving on. Mode recommend stores proposals and does not apply. Mode observe inspects evidence and does not propose. `--disable` or `LOOPITER_DISABLE` (any non-empty value except 0, false, no, or off) pauses before the application module is imported, in every mode, and spends nothing. The published 0.3.0 alphas still default to recommend and still require `--enable`. Independent audit, production observation, and automatic rollback stay in place.
 - Native Python and Node.js autonomous workflow examples, plus offline fixtures.
 - A separate Node.js reviewed support-intent CLI with PostgreSQL and OpenAI/Azure integration.
 

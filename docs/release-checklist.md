@@ -72,7 +72,7 @@ usefulness on production data or model reliability.
 
 Newest-alpha fixes only; no SLA, billing or managed operations. Document breaking
 changes and data migration. On main, unreleased, omitting mode is autonomous with
-self-improving on. Mode recommend or observe keeps suggest-only behavior. `--disable`
+self-improving on. Mode recommend stores proposals without applying them. Mode observe inspects evidence without proposing. `--disable`
 or `LOOPITER_DISABLE` (any non-empty value except 0, false, no, or off) is a full
 pause before the application is imported, in every mode. The published 0.3.0 alphas
 still default to recommend and still require `--enable`. The removed auto-apply path

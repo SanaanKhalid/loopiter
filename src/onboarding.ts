@@ -1,12 +1,16 @@
 /** Node-only self-hosted onboarding. No platform account or external service is used. */
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { appendFile, lstat, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { FeedbackLoop } from "./feedback-loop.js";
-import { ImprovementController, improvementWorkDisabled } from "./improvement-controller.js";
+import {
+  ImprovementController,
+  improvementWorkDisabled,
+  warnAmbiguousImprovementDisable,
+} from "./improvement-controller.js";
 import type {
   ImprovementMode,
   ImprovementWorkflow,
@@ -88,18 +92,6 @@ function loadIntegrationPlan(
   return record;
 }
 
-type ActivationStamp = {
-  planHash: string;
-  budgetHash?: string;
-  confirmedBy: string;
-  confirmedAt: string;
-  mode: string;
-};
-
-function activationFile(modulePath: string): string {
-  return resolve(dirname(resolve(modulePath)), ".state", "activation.json");
-}
-
 export function activationActor(env: NodeJS.ProcessEnv = process.env): string {
   const provided = env.LOOPITER_ACTIVATION_ACTOR?.trim();
   if (provided) return provided;
@@ -145,129 +137,54 @@ export function autonomyPlanHash(
   });
 }
 
-function readActivationEntries(modulePath: string): Record<string, ActivationStamp> {
-  const path = activationFile(modulePath);
-  if (!existsSync(path)) return {};
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as {
-      entries?: Record<string, ActivationStamp>;
-    };
-    if (!parsed?.entries || typeof parsed.entries !== "object" || Array.isArray(parsed.entries))
-      return {};
-    return parsed.entries;
-  } catch {
-    return {};
-  }
-}
+const ACTIVATION_RETIRED =
+  "warning: activation confirmation is retired. This helper is a no-op. Use mode recommend to store proposals without applying them, or mode observe to inspect evidence without proposing, or --disable / LOOPITER_DISABLE to pause.";
 
 export function autonomousActivationCurrent(
-  modulePath: string,
-  mode?: ImprovementMode,
+  _modulePath: string,
+  _mode?: ImprovementMode,
 ): boolean {
-  const plan = loadIntegrationPlan(modulePath);
-  if (!plan) return false;
-  const effectiveMode = mode ?? (typeof plan.mode === "string" ? plan.mode : "recommend");
-  const namespace = effectiveNamespace(plan);
-  const stamp = readActivationEntries(modulePath)[namespace];
-  return (
-    !!stamp &&
-    stamp.mode === effectiveMode &&
-    stamp.planHash === autonomyPlanHash(plan, { namespace, mode: effectiveMode }) &&
-    typeof stamp.confirmedBy === "string" &&
-    stamp.confirmedBy.trim().length > 0 &&
-    typeof stamp.confirmedAt === "string" &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(stamp.confirmedAt)
-  );
+  console.error(ACTIVATION_RETIRED);
+  return false;
 }
 
 export function autonomousActivationPrompt(namespace: string): string {
-  return (
-    "Autonomous mode can spend provider budget and deploy a candidate that passes validation and audit.\n" +
-    `Namespace: ${namespace}\n` +
-    "Type activate to confirm: "
-  );
+  console.error(ACTIVATION_RETIRED);
+  return `Activation confirmation is no longer required.\nNamespace: ${namespace}\n`;
 }
 
 export function moduleActivationNamespace(modulePath: string): string {
+  console.error(ACTIVATION_RETIRED);
   return effectiveNamespace(loadIntegrationPlan(modulePath));
 }
 
-/** Daily limits and per-callback reservations the worker will actually enforce. */
+/** Retired with activation confirmation. The worker no longer fingerprints budgets for a stamp. */
 export function effectiveBudgetFingerprint(
-  workflows: readonly ImprovementWorkflow[],
+  _workflows: readonly ImprovementWorkflow[],
 ): string {
-  return hash(
-    workflows.map((workflow) => ({
-      id: workflow.id,
-      daily: workflow.policy.daily,
-      callbackReservation: workflow.policy.callbackReservation,
-    })),
-  );
+  console.error(ACTIVATION_RETIRED);
+  return "";
 }
 
-function writeActivationEntries(
-  modulePath: string,
-  entries: Record<string, ActivationStamp>,
-): void {
-  const path = activationFile(modulePath);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 1, entries }, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  renameSync(temporary, path);
-}
-
-export function activationBudgetCurrent(modulePath: string, budgetHash: string): boolean {
-  const namespace = effectiveNamespace(loadIntegrationPlan(modulePath));
-  const entries = readActivationEntries(modulePath);
-  const stamp = entries[namespace];
-  if (!stamp) return false;
-  if (stamp.budgetHash === budgetHash) return true;
-  if (typeof stamp.budgetHash === "string" && stamp.budgetHash.length > 0) return false;
-  entries[namespace] = { ...stamp, budgetHash };
-  writeActivationEntries(modulePath, entries);
-  return true;
+export function activationBudgetCurrent(
+  _modulePath: string,
+  _budgetHash: string,
+): boolean {
+  console.error(ACTIVATION_RETIRED);
+  return false;
 }
 
 export function recordAutonomousActivation(
-  modulePath: string,
-  actor = activationActor(),
-  mode?: ImprovementMode,
-  budgetHash?: string,
+  _modulePath: string,
+  _actor = activationActor(),
+  _mode?: ImprovementMode,
+  _budgetHash?: string,
 ): void {
-  const plan = loadIntegrationPlan(modulePath);
-  const effectiveMode =
-    mode ?? (typeof plan?.mode === "string" ? (plan.mode as ImprovementMode) : "recommend");
-  const namespace = effectiveNamespace(plan);
-  const entries = readActivationEntries(modulePath);
-  entries[namespace] = {
-    planHash: autonomyPlanHash(plan, { namespace, mode: effectiveMode }),
-    ...(budgetHash ? { budgetHash } : {}),
-    mode: effectiveMode,
-    confirmedBy: actor.trim() || "unknown",
-    confirmedAt: new Date().toISOString(),
-  };
-  writeActivationEntries(modulePath, entries);
+  console.error(ACTIVATION_RETIRED);
 }
 
-export function clearAutonomousActivation(modulePath: string): void {
-  const namespace = effectiveNamespace(loadIntegrationPlan(modulePath));
-  const entries = readActivationEntries(modulePath);
-  if (!Object.hasOwn(entries, namespace)) return;
-  delete entries[namespace];
-  const path = activationFile(modulePath);
-  if (Object.keys(entries).length === 0) {
-    try {
-      unlinkSync(path);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return;
-      throw error;
-    }
-    return;
-  }
-  writeActivationEntries(modulePath, entries);
+export function clearAutonomousActivation(_modulePath: string): void {
+  console.error(ACTIVATION_RETIRED);
 }
 
 export function readWorkerSettings(
@@ -278,6 +195,7 @@ export function readWorkerSettings(
     stepTimeoutMs?: number;
     stepTimeoutSource?: "flag" | "option" | "plan" | "default";
   } = {},
+  options: { warnMissingPlan?: boolean } = {},
 ) {
   const plan = loadIntegrationPlan(modulePath);
   if (
@@ -294,7 +212,7 @@ export function readWorkerSettings(
     : plan?.mode
       ? "plan"
       : "default";
-  if (!plan && !overrides.mode)
+  if (!plan && !overrides.mode && options.warnMissingPlan !== false)
     console.error(
       "warning: no integration plan found; falling back to autonomous mode.",
     );
@@ -463,7 +381,7 @@ export async function initializeSelfHosted(directory: string) {
     "integration-plan.json": JSON.stringify(plan, null, 2) + "\n",
     "verify.mjs":
       'import { verifySelfHostedInstallation } from "loopiter/onboarding";\nconsole.log(JSON.stringify(await verifySelfHostedInstallation(), null, 2));\n',
-    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 to pause before the application module is imported, in every mode, including recommend and experiment. Any non-empty value pauses except 0, false, no, and off. The pause makes no provider call and stores no proposal. It is not mode recommend. Set mode to recommend or observe, or set plan.mode, to store proposals without applying them. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --once\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --mode recommend --once\n\nThe recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. With no integration plan, the worker uses autonomous. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
+    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 to pause before the application module is imported, in every mode, including recommend and experiment. Any non-empty value pauses except 0, false, no, and off. The pause makes no provider call and stores no proposal. It is not mode recommend. Set mode to recommend, or set plan.mode to recommend, to store proposals without applying them. Set mode to observe, or set plan.mode to observe, to inspect evidence without proposing. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --once\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --mode recommend --once\n\nThe recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. With no integration plan, the worker uses autonomous. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
   };
   for (const [name, contents] of Object.entries(files)) {
     await writeFile(resolve(destination, name), contents, {
@@ -618,21 +536,27 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
   )
     throw Error("selfImproving must be boolean.");
   const selfImproving = options.selfImproving !== false;
+  const disabled = options.selfImproving === false || improvementWorkDisabled();
+  warnAmbiguousImprovementDisable();
   if (options.recordActivation || options.confirmBudget)
     console.error(
       "warning: activation confirmation is deprecated and ignored. Activation confirmation is no longer required.",
     );
-  const settings = readWorkerSettings(options.module, {
-    ...(options.mode
-      ? { mode: options.mode, modeSource: options.modeSource }
-      : {}),
-    ...(options.stepTimeoutMs !== undefined
-      ? {
-          stepTimeoutMs: options.stepTimeoutMs,
-          stepTimeoutSource: options.stepTimeoutSource,
-        }
-      : {}),
-  });
+  const settings = readWorkerSettings(
+    options.module,
+    {
+      ...(options.mode
+        ? { mode: options.mode, modeSource: options.modeSource }
+        : {}),
+      ...(options.stepTimeoutMs !== undefined
+        ? {
+            stepTimeoutMs: options.stepTimeoutMs,
+            stepTimeoutSource: options.stepTimeoutSource,
+          }
+        : {}),
+    },
+    { warnMissingPlan: !disabled },
+  );
   const interval = options.intervalMs ?? 30000;
   if (!Number.isSafeInteger(interval) || interval < 1000)
     throw Error("intervalMs must be an integer of at least 1000.");
@@ -643,7 +567,7 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
     `effective step timeout ${settings.stepTimeoutMs}ms (source: ${settings.stepTimeoutSource})`,
   );
   options.signal?.throwIfAborted();
-  if (options.selfImproving === false || improvementWorkDisabled()) {
+  if (disabled) {
     const paused: TickResult = {
       runId: null,
       state: "paused",

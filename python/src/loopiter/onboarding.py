@@ -2,8 +2,6 @@
 
 import argparse
 import asyncio
-import errno
-import getpass
 import importlib
 import importlib.resources
 import importlib.util
@@ -14,12 +12,11 @@ import shlex
 import signal
 import stat
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 from . import FeedbackLoop, ImprovementController
 from ._validation import fingerprint
-from .improvement import improvement_work_disabled
+from .improvement import improvement_work_disabled, warn_ambiguous_improvement_disable
 from .improvement_evidence import describe_audit_floor, minimum_certifiable_audit_units
 
 REFERENCES = {
@@ -68,7 +65,13 @@ def _load_plan(module_path):
 
 
 def read_worker_settings(
-    module_path, *, mode=None, mode_source=None, step_timeout_ms=None, step_timeout_source=None
+    module_path,
+    *,
+    mode=None,
+    mode_source=None,
+    step_timeout_ms=None,
+    step_timeout_source=None,
+    warn_missing_plan=True,
 ):
     plan = _load_plan(module_path)
     if plan is not None and plan.get("mode") not in MODES:
@@ -85,7 +88,7 @@ def read_worker_settings(
         if plan and plan.get("mode")
         else "default"
     )
-    if plan is None and mode is None:
+    if plan is None and mode is None and warn_missing_plan:
         print(
             "warning: no integration plan found; falling back to autonomous mode.",
             file=sys.stderr,
@@ -120,20 +123,6 @@ def read_worker_settings(
         "step_timeout_ms": resolved_timeout,
         "step_timeout_source": resolved_timeout_source,
     }
-
-
-def activation_actor(environment=None):
-    environment = os.environ if environment is None else environment
-    provided = str(environment.get("LOOPITER_ACTIVATION_ACTOR", "")).strip()
-    if provided:
-        return provided
-    try:
-        name = getpass.getuser().strip()
-        if name:
-            return name
-    except Exception:
-        pass
-    return "unknown"
 
 
 def effective_namespace(plan, environment=None):
@@ -171,142 +160,6 @@ def autonomy_plan_hash(plan, mode=None, environment=None):
             "budget": plan.get("budget"),
         }
     )
-
-
-def _activation_path(module_path):
-    return Path(module_path).resolve().parent / ".state" / "activation.json"
-
-
-def _activation_entries(module_path):
-    path = _activation_path(module_path)
-    if not path.is_file():
-        return {}
-    try:
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-        entries = parsed.get("entries") if isinstance(parsed, dict) else None
-        return entries if isinstance(entries, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def autonomous_activation_current(module_path, mode=None):
-    plan = _load_plan(module_path)
-    if plan is None:
-        return False
-    effective_mode = (
-        mode
-        if isinstance(mode, str)
-        else plan.get("mode")
-        if isinstance(plan.get("mode"), str)
-        else "recommend"
-    )
-    namespace = effective_namespace(plan)
-    stamp = _activation_entries(module_path).get(namespace)
-    if not isinstance(stamp, dict):
-        return False
-    confirmed_by = stamp.get("confirmedBy")
-    confirmed_at = stamp.get("confirmedAt")
-    return (
-        stamp.get("mode") == effective_mode
-        and stamp.get("planHash") == autonomy_plan_hash(plan, effective_mode)
-        and isinstance(confirmed_by, str)
-        and confirmed_by.strip()
-        and isinstance(confirmed_at, str)
-        and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z", confirmed_at)
-    )
-
-
-def autonomous_activation_prompt(namespace):
-    return (
-        "Autonomous mode can spend provider budget and deploy a candidate that passes validation and audit.\n"
-        f"Namespace: {namespace}\n"
-        "Type activate to confirm: "
-    )
-
-
-def effective_budget_fingerprint(workflows):
-    """Daily limits and per-callback reservations the worker will actually enforce."""
-    return fingerprint(
-        [
-            {
-                "id": workflow.id,
-                "daily": workflow.policy.get("daily"),
-                "callback_reservation": workflow.policy.get("callback_reservation"),
-            }
-            for workflow in workflows
-        ]
-    )
-
-
-def _write_activation_entries(module_path, entries):
-    path = _activation_path(module_path)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps({"schemaVersion": 1, "entries": entries}, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
-
-
-def activation_budget_current(module_path, budget_hash):
-    plan = _load_plan(module_path)
-    namespace = effective_namespace(plan)
-    entries = _activation_entries(module_path)
-    stamp = entries.get(namespace)
-    if not isinstance(stamp, dict):
-        return False
-    recorded = stamp.get("budgetHash")
-    if recorded == budget_hash:
-        return True
-    if isinstance(recorded, str) and recorded:
-        return False
-    entries[namespace] = {**stamp, "budgetHash": budget_hash}
-    _write_activation_entries(module_path, entries)
-    return True
-
-
-def record_autonomous_activation(module_path, actor=None, mode=None, budget_hash=None):
-    plan = _load_plan(module_path) or {}
-    effective_mode = (
-        mode
-        if isinstance(mode, str)
-        else plan.get("mode")
-        if isinstance(plan.get("mode"), str)
-        else "recommend"
-    )
-    namespace = effective_namespace(plan)
-    entries = _activation_entries(module_path)
-    entry = {
-        "planHash": autonomy_plan_hash(plan, effective_mode),
-        "mode": effective_mode,
-        "confirmedBy": (actor or activation_actor()).strip() or "unknown",
-        "confirmedAt": datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-    }
-    if budget_hash:
-        entry["budgetHash"] = budget_hash
-    entries[namespace] = entry
-    _write_activation_entries(module_path, entries)
-
-
-def clear_autonomous_activation(module_path):
-    plan = _load_plan(module_path)
-    namespace = effective_namespace(plan)
-    entries = _activation_entries(module_path)
-    if namespace not in entries:
-        return
-    del entries[namespace]
-    path = _activation_path(module_path)
-    if not entries:
-        try:
-            path.unlink()
-        except OSError as error:
-            if error.errno == errno.ENOENT:
-                return
-            raise
-        return
-    _write_activation_entries(module_path, entries)
 
 
 def _audit_plan_messages(plan):
@@ -441,7 +294,7 @@ Your agent creates application.py here, exporting async create_integration(*, ca
 
 This plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.
 
-After doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 to pause before the application module is imported, in every mode, including recommend and experiment. Any non-empty value pauses except 0, false, no, and off. The pause makes no provider call and stores no proposal. It is not mode recommend. Set mode to recommend or observe, or set plan.mode, to store proposals without applying them. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
+After doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 to pause before the application module is imported, in every mode, including recommend and experiment. Any non-empty value pauses except 0, false, no, and off. The pause makes no provider call and stores no proposal. It is not mode recommend. Set mode to recommend, or set plan.mode to recommend, to store proposals without applying them. Set mode to observe, or set plan.mode to observe, to inspect evidence without proposing. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.
 
     python -m loopiter worker --module {shlex.quote(str(Path(directory) / "application.py"))} --once
 
@@ -591,6 +444,8 @@ async def run_self_hosted_worker(
 ):
     if type(self_improving) is not bool:
         raise ValueError("self_improving must be boolean.")
+    disabled = self_improving is False or improvement_work_disabled()
+    warn_ambiguous_improvement_disable()
     if record_activation or confirm_budget is not None:
         print(
             "warning: activation confirmation is deprecated and ignored. Activation confirmation is no longer required.",
@@ -602,6 +457,7 @@ async def run_self_hosted_worker(
         mode_source=mode_source,
         step_timeout_ms=step_timeout_ms,
         step_timeout_source=step_timeout_source,
+        warn_missing_plan=not disabled,
     )
     if type(interval_ms) is not int or interval_ms < 1000:
         raise ValueError("Choose a valid mode and an integer interval_ms of at least 1000.")
@@ -616,7 +472,7 @@ async def run_self_hosted_worker(
     cancellation = cancellation if cancellation is not None else asyncio.Event()
     if cancellation.is_set():
         raise asyncio.CancelledError
-    if self_improving is False or improvement_work_disabled():
+    if disabled:
         paused = {
             "run_id": None,
             "state": "paused",
@@ -745,12 +601,14 @@ def main(argv=None):
         elif args.command == "verify":
             report = asyncio.run(verify_self_hosted_installation())
         else:
+            disabled = args.disable or improvement_work_disabled()
             settings = read_worker_settings(
                 args.module,
                 mode=args.mode,
                 mode_source="flag" if args.mode else None,
                 step_timeout_ms=args.step_timeout_ms,
                 step_timeout_source="flag" if args.step_timeout_ms is not None else None,
+                warn_missing_plan=not disabled,
             )
             if args.enable:
                 print(
@@ -767,7 +625,6 @@ def main(argv=None):
                     "warning: --yes is deprecated and ignored. Activation confirmation is no longer required.",
                     file=sys.stderr,
                 )
-            disabled = args.disable or improvement_work_disabled()
 
             async def run():
                 cancellation = asyncio.Event()

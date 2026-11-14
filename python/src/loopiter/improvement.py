@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
@@ -40,6 +41,21 @@ def improvement_work_disabled(environment=None):
     if not raw:
         return False
     return raw not in _DISABLE_OFF
+
+
+def warn_ambiguous_improvement_disable(environment=None):
+    """enable and enabled still disable. Warn so that is not silent."""
+    environment = os.environ if environment is None else environment
+    shown = environment.get("LOOPITER_DISABLE", "")
+    shown = "" if shown is None else str(shown).strip()
+    if shown.lower() not in {"enable", "enabled"}:
+        return
+    print(
+        f"warning: LOOPITER_DISABLE={shown} disables improvement work. "
+        "It does not turn work on. Unset it, or set 0, false, no, or off, "
+        "to leave improvement work running.",
+        file=sys.stderr,
+    )
 
 
 STATES = (
@@ -1259,20 +1275,32 @@ class ImprovementController:
                         "operation": "apply",
                     },
                 )
-        elif d["state"] in ("deploying", "rolling_back", "reconciliation_required") and not d.get(
-            "pending_promotion"
-        ):
+        elif (
+            d["state"] in ("deploying", "rolling_back", "reconciliation_required")
+            or (d["state"] == "paused" and d.get("operation") == "apply")
+        ) and not d.get("pending_promotion"):
             async with self._tx() as tx:
                 existing = await self._read(tx, "attempts", d["attempt_id"])
             if existing:
                 attempt = await self.loop.reconcile_deployment(d["attempt_id"], w.deployment)
             else:
                 if d["operation"] == "apply" and (
-                    not self.self_improving or self.mode != "autonomous" or paused
+                    not self.self_improving
+                    or self.mode != "autonomous"
+                    or paused
+                    or improvement_work_disabled()
                 ):
                     await self._save(rid, owner, {"reason": "self_improvement_disabled"}, True)
                     return
                 current = await self._plain(w, w.artifact)
+                if d["operation"] == "apply" and improvement_work_disabled():
+                    await self._save(
+                        rid,
+                        owner,
+                        {"state": "paused", "reason": "self_improvement_disabled"},
+                        True,
+                    )
+                    return
                 v.baseline(current)
                 if d["operation"] == "apply" and current != d["baseline"]:
                     v.fail("stale_baseline", "Target changed before dispatch.")
@@ -1281,6 +1309,8 @@ class ImprovementController:
                     or current["configuration_hash"] != d["observation_configuration_hash"]
                 ):
                     v.fail("out_of_band_change", "Will not roll back an unrelated configuration.")
+                if d["operation"] == "apply" and d["state"] == "paused":
+                    await self._save(rid, owner, {"state": "deploying"}, True)
                 method = (
                     self.loop.rollback_candidate
                     if d["operation"] == "rollback"
@@ -1484,7 +1514,12 @@ class ImprovementController:
                 if observed["improvement_lower_bound"] <= p["objective"]["minimum_improvement"]:
                     await self._save(rid, owner, {"reason": "canary_not_superior"}, True)
                     return
-                if paused or not self.self_improving or self.mode != "autonomous":
+                if (
+                    paused
+                    or not self.self_improving
+                    or self.mode != "autonomous"
+                    or improvement_work_disabled()
+                ):
                     await self._save(rid, owner, {"reason": "promotion_paused"}, True)
                     return
                 opid = rid + ":promote"

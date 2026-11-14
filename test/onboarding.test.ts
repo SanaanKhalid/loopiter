@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -14,6 +13,10 @@ import {
   parseStepTimeout,
   recordAutonomousActivation,
   autonomousActivationPrompt,
+  autonomousActivationCurrent,
+  effectiveBudgetFingerprint,
+  activationBudgetCurrent,
+  moduleActivationNamespace,
   readAgentGuide,
   readReference,
   readWorkerSettings,
@@ -418,8 +421,25 @@ test("doctor refuses an audit that cannot certify and plan.mode is honored", asy
       guide,
       /An ImprovementController created with no mode is autonomous with self-improving on/,
     );
-    assert.match(autonomousActivationPrompt("app/shown"), /Namespace: app\/shown/);
-    assert.match(autonomousActivationPrompt("app/shown"), /Type activate to confirm/);
+    const activationNotes: string[] = [];
+    const previousError = console.error;
+    console.error = (...args: unknown[]) => {
+      activationNotes.push(args.map(String).join(" "));
+    };
+    try {
+      assert.equal(autonomousActivationCurrent(module), false);
+      assert.match(autonomousActivationPrompt("app/shown"), /no longer required/);
+      assert.doesNotMatch(autonomousActivationPrompt("app/shown"), /Type activate/);
+      assert.equal(effectiveBudgetFingerprint([]), "");
+      assert.equal(activationBudgetCurrent(module, "abc"), false);
+      recordAutonomousActivation(module, "tester", "autonomous", "abc");
+      clearAutonomousActivation(module);
+      assert.equal(moduleActivationNamespace(module), "app/dev");
+    } finally {
+      console.error = previousError;
+    }
+    assert.match(activationNotes.join("\n"), /activation confirmation is retired/);
+    await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
     const cli = new URL("../src/cli.js", import.meta.url);
     const entry = new URL("../src/index.js", import.meta.url).href;
     const policy = JSON.parse(
@@ -883,11 +903,23 @@ test("disabled worker does not import the application in any mode", async () => 
       assert.match(result.stdout, /"reason":"self_improvement_disabled"/);
       assert.doesNotMatch(`${result.stderr}\n${result.stdout}`, /imported the application/);
     }
-    const enabledWord = run(["worker", "--module", module, "--mode", "experiment", "--once"], {
+    const enabledWord = run(["worker", "--module", module, "--once"], {
       LOOPITER_DISABLE: "enabled",
     });
     assert.equal(enabledWord.status, 0, enabledWord.stderr);
     assert.doesNotMatch(enabledWord.stderr, /imported the application/);
+    assert.match(enabledWord.stderr, /LOOPITER_DISABLE=enabled disables improvement work/);
+    assert.doesNotMatch(enabledWord.stderr, /no integration plan found/);
+    const enableWord = run(["worker", "--module", module, "--once"], {
+      LOOPITER_DISABLE: " Enable ",
+    });
+    assert.equal(enableWord.status, 0, enableWord.stderr);
+    assert.match(enableWord.stderr, /LOOPITER_DISABLE=Enable disables improvement work/);
+    assert.doesNotMatch(enableWord.stderr, /no integration plan found/);
+    const flagOnly = run(["worker", "--module", module, "--disable", "--once"]);
+    assert.equal(flagOnly.status, 0, flagOnly.stderr);
+    assert.doesNotMatch(flagOnly.stderr, /no integration plan found/);
+    assert.doesNotMatch(flagOnly.stderr, /disables improvement work/);
     const off = run(["worker", "--module", module, "--once"], { LOOPITER_DISABLE: "off" });
     assert.equal(off.status, 1);
     assert.match(off.stderr, /imported the application/);
@@ -915,32 +947,29 @@ test("a directory plan fails closed", async () => {
   }
 });
 
-test("clearing a stamp surfaces a removal error and ignores a missing file", async () => {
-  const root = await mkdtemp(join(tmpdir(), "loopiter-clear-stamp-"));
+test("retired activation helpers warn and do not write a stamp", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loopiter-retired-activation-"));
   const module = join(root, "application.mjs");
-  const state = join(root, ".state");
   try {
     await writeFile(module, "export {};\n");
     await writeFile(
       join(root, "integration-plan.json"),
       JSON.stringify({ schemaVersion: 2, mode: "autonomous", namespace: "app/dev" }),
     );
-    recordAutonomousActivation(module, "tester", "autonomous", "abc");
-    chmodSync(state, 0o500);
-    assert.throws(() => clearAutonomousActivation(module));
-    chmodSync(state, 0o700);
-    const stamp = JSON.parse(await readFile(join(state, "activation.json"), "utf8")) as {
-      entries: Record<string, { confirmedBy: string }>;
+    const notes: string[] = [];
+    const previousError = console.error;
+    console.error = (...args: unknown[]) => {
+      notes.push(args.map(String).join(" "));
     };
-    assert.equal(stamp.entries["app/dev"]?.confirmedBy, "tester");
-    await rm(join(state, "activation.json"));
-    clearAutonomousActivation(module);
-  } finally {
     try {
-      chmodSync(state, 0o700);
-    } catch {
-      // The directory may already be writable.
+      recordAutonomousActivation(module, "tester", "autonomous", "abc");
+      clearAutonomousActivation(module);
+    } finally {
+      console.error = previousError;
     }
+    assert.match(notes.join("\n"), /activation confirmation is retired/);
+    await assert.rejects(readFile(join(root, ".state", "activation.json"), "utf8"));
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

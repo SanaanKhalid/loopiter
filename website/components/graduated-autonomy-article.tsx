@@ -117,7 +117,7 @@ export function GraduatedAutonomyArticle({ post }: { post: Post }) {
             After doctor and verify, the recipe init writes omits <code>--mode</code>. The worker then follows <code>plan.mode</code>. On a fresh plan, that is autonomous. Pass <code>--mode</code> to override the plan: <code>observe</code>, <code>recommend</code>, <code>experiment</code>, or <code>autonomous</code>. With no integration plan file, the worker uses autonomous.
           </p>
           <p>
-            Set <code>plan.mode</code> to <code>recommend</code> when you want the recipe, which omits the flag, to store proposals and stop before apply. The flag form is <code>--mode recommend</code>. The same pattern selects observe or experiment.
+            Set <code>plan.mode</code> to <code>recommend</code> when you want the recipe, which omits the flag, to store proposals and stop before apply. The flag form is <code>--mode recommend</code>. Set <code>plan.mode</code> to <code>observe</code>, or pass <code>--mode observe</code>, to inspect evidence without proposing. The same pattern selects experiment.
           </p>
           <pre>
             <code>{workerExample}</code>

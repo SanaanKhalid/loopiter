@@ -145,6 +145,7 @@ const plus = (time: string, ms: number) =>
 
 /** No background work. One tick advances one durable phase; application owns scheduling. */
 const IMPROVEMENT_DISABLE_OFF = new Set(["0", "false", "no", "off"]);
+const AMBIGUOUS_DISABLE = new Set(["enable", "enabled"]);
 
 /** Any non-empty LOOPITER_DISABLE except 0, false, no, or off pauses improvement work. */
 export function improvementWorkDisabled(
@@ -153,6 +154,18 @@ export function improvementWorkDisabled(
   const raw = (env.LOOPITER_DISABLE ?? "").trim().toLowerCase();
   if (!raw) return false;
   return !IMPROVEMENT_DISABLE_OFF.has(raw);
+}
+
+/** `enable` and `enabled` still disable. Warn once per process so that is not silent. */
+export function warnAmbiguousImprovementDisable(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const shown = (env.LOOPITER_DISABLE ?? "").trim();
+  const raw = shown.toLowerCase();
+  if (!AMBIGUOUS_DISABLE.has(raw)) return;
+  console.error(
+    `warning: LOOPITER_DISABLE=${shown} disables improvement work. It does not turn work on. Unset it, or set 0, false, no, or off, to leave improvement work running.`,
+  );
 }
 
 export class ImprovementController {
@@ -1365,9 +1378,10 @@ export class ImprovementController {
           });
         }
       } else if (
-        ["deploying", "rolling_back", "reconciliation_required"].includes(
+        (["deploying", "rolling_back", "reconciliation_required"].includes(
           d.state,
-        ) &&
+        ) ||
+          (d.state === "paused" && d.operation === "apply")) &&
         !d.pendingPromotion
       ) {
         const attemptId = d.attemptId!,
@@ -1388,7 +1402,8 @@ export class ImprovementController {
             d.operation === "apply" &&
             (this.options.selfImproving !== true ||
               mode !== "autonomous" ||
-              lock.paused)
+              lock.paused ||
+              improvementWorkDisabled())
           )
             return {
               ...(await idle("self_improvement_disabled", "paused")),
@@ -1396,6 +1411,19 @@ export class ImprovementController {
               candidateIds: d.candidateIds,
             };
           const current = await this.plain(w, (c) => w.artifact(c), signal2);
+          if (d.operation === "apply" && improvementWorkDisabled()) {
+            await this.save(
+              rid,
+              owner,
+              { state: "paused", reason: "self_improvement_disabled" },
+              true,
+            );
+            return {
+              ...(await idle("self_improvement_disabled", "paused")),
+              runId: rid,
+              candidateIds: d.candidateIds,
+            };
+          }
           this.baseline(current);
           if (d.operation === "apply" && hash(current) !== hash(d.baseline))
             fail("stale_baseline", "Target changed before dispatch.");
@@ -1408,6 +1436,8 @@ export class ImprovementController {
               "out_of_band_change",
               "Will not roll back an unrelated configuration.",
             );
+          if (d.operation === "apply" && d.state === "paused")
+            await this.save(rid, owner, { state: "deploying" }, true);
           // Check durable authorization immediately before the adapter dispatch, after
           // the core has persisted its attempt. Failed authorization is inspect-only.
           const adapter = {
@@ -1667,7 +1697,8 @@ export class ImprovementController {
               if (
                 lock.paused ||
                 this.options.selfImproving !== true ||
-                mode !== "autonomous"
+                mode !== "autonomous" ||
+                improvementWorkDisabled()
               )
                 return {
                   ...(await idle("promotion_paused", "paused")),

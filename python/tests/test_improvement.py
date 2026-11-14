@@ -549,6 +549,128 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
                         (await self.controller().tick("classification"))["state"], "rolled_back"
                     )
 
+    async def test_disable_setting_on_apply_paths(self):
+        previous = os.environ.get("LOOPITER_DISABLE")
+        try:
+            self.setup_workflow(FIXTURES["scenarios"][0])
+            self.workflow.policy["rollout"]["mode"] = "canary"
+
+            class Rollout:
+                calls = 0
+
+                async def promote(inner, *_):
+                    inner.calls += 1
+
+                async def inspect(inner, *_):
+                    return "promoted"
+
+            rollout, observe = Rollout(), self.workflow.observe
+
+            async def canary(i, c, observe=observe):
+                return {
+                    **await observe(i, c),
+                    "control_version": i["baseline"]["artifact_version"],
+                    "assignment_hash": "stable-cohort-v1",
+                    "control_unit_ids": [f"control-{n}" for n in range(10)],
+                    "improvement_lower_bound": 0.5,
+                }
+
+            self.workflow = replace(self.workflow, rollout=rollout, observe=canary)
+            await self.advance_to_observation()
+            self.now += timedelta(hours=2)
+            os.environ["LOOPITER_DISABLE"] = "1"
+            held = await self.controller().tick("classification")
+            self.assertEqual(held["reason"], "promotion_paused")
+            self.assertEqual(rollout.calls, 0)
+
+            os.environ.pop("LOOPITER_DISABLE", None)
+            self.setup_workflow(FIXTURES["scenarios"][0])
+            ready = None
+            for _ in range(8):
+                ready = await self.controller().tick("classification")
+                if ready["reason"] == "audit_passed":
+                    break
+            self.assertEqual(ready["reason"], "audit_passed")
+            self.assertEqual(self.registry.calls, 0)
+            os.environ["LOOPITER_DISABLE"] = "1"
+            blocked = await self.controller().tick("classification")
+            self.assertEqual(blocked["reason"], "self_improvement_disabled")
+            self.assertEqual(self.registry.calls, 0)
+
+            os.environ.pop("LOOPITER_DISABLE", None)
+            regression = next(
+                scenario for scenario in FIXTURES["scenarios"] if scenario["name"] == "regression"
+            )
+            self.setup_workflow(regression)
+            await self.advance_to_observation()
+            self.now += timedelta(hours=2)
+            rolling = await self.controller().tick("classification")
+            self.assertEqual(rolling["state"], "rolling_back")
+            os.environ["LOOPITER_DISABLE"] = "1"
+            recovered = await self.controller().tick("classification")
+            self.assertEqual(recovered["state"], "rolled_back")
+        finally:
+            if previous is None:
+                os.environ.pop("LOOPITER_DISABLE", None)
+            else:
+                os.environ["LOOPITER_DISABLE"] = previous
+
+    async def test_disable_check_before_apply(self):
+        previous = os.environ.get("LOOPITER_DISABLE")
+        try:
+            os.environ.pop("LOOPITER_DISABLE", None)
+            self.setup_workflow(FIXTURES["scenarios"][0])
+            ready = None
+            for _ in range(8):
+                ready = await self.controller().tick("classification")
+                if ready["reason"] == "audit_passed":
+                    break
+            self.assertEqual(ready["reason"], "audit_passed")
+            self.assertEqual(self.registry.calls, 0)
+            original = self.workflow.artifact
+
+            async def artifact(context, original=original):
+                current = await original(context)
+                os.environ["LOOPITER_DISABLE"] = "1"
+                return current
+
+            self.workflow = replace(self.workflow, artifact=artifact)
+            blocked = await self.controller().tick("classification")
+            self.assertEqual(blocked["reason"], "self_improvement_disabled")
+            self.assertEqual(blocked["state"], "paused")
+            self.assertEqual(self.registry.calls, 0)
+            again = await self.controller().tick("classification")
+            self.assertEqual(again["reason"], "self_improvement_disabled")
+            self.assertEqual(again["state"], "paused")
+            held = await self.controller().get_run(again["run_id"])
+            self.assertEqual(held["data"]["state"], "paused")
+            self.assertNotEqual(held["data"]["state"], "reconciliation_required")
+            self.assertEqual(self.registry.calls, 0)
+            attempts = (await self.loop.list("attempts", limit=100))["items"]
+            self.assertEqual(len(attempts), 0)
+            targets = (await self.loop.list("targets", limit=100))["items"]
+            for target in targets:
+                self.assertIsNone(target.get("pending_attempt_id"))
+            coordination = (await self.loop.list("coordination", limit=1000))["items"]
+            lock = next(row for row in coordination if row["id"].startswith("target:"))
+            self.assertEqual(lock["data"].get("consecutive_failures", 0), 0)
+            self.workflow = replace(self.workflow, artifact=original)
+            os.environ.pop("LOOPITER_DISABLE", None)
+            resumed = await self.controller().tick("classification")
+            for _ in range(8):
+                if resumed["state"] == "completed":
+                    break
+                if resumed["state"] == "observing":
+                    self.now += timedelta(hours=2)
+                resumed = await self.controller().tick("classification")
+            self.assertEqual(resumed["state"], "completed")
+            self.assertEqual(self.registry.calls, 1)
+        finally:
+            if previous is None:
+                os.environ.pop("LOOPITER_DISABLE", None)
+            else:
+                os.environ["LOOPITER_DISABLE"] = previous
+
     async def test_out_of_band_change_blocks_rollback(self):
         self.setup_workflow(FIXTURES["scenarios"][5])
         await self.advance_to_observation()

@@ -81,10 +81,11 @@ in [building application adapters](/closing-the-loop/building-application-adapte
 
 ## 7. Exercise reviewed and experiment modes first
 
-The controller's omitted-mode default is recommend: it produces candidates without
-deploying. A fresh onboarding plan records autonomous mode and self-improving on.
-Pass `--mode recommend`, or construct the controller without autonomous mode, to
-stay on recommendations. Experiment mode
+The controller's omitted-mode default is autonomous with self-improving on.
+Pass mode `recommend` to store proposals without deploying. Pass mode `observe` to inspect evidence without proposing.
+`selfImproving: false` pauses every mode, including recommend and experiment,
+and returns `self_improvement_disabled`. It does not select recommend.
+A fresh onboarding plan records the same autonomous default. Experiment mode
 validates alternatives, selects one and audits it without automatic application.
 Inspect candidate content, per-example results, frozen identities, budget usage and
 reasons. Remember that audits are consumed even when not deployed.
