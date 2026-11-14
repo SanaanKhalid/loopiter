@@ -68,16 +68,10 @@ test("bounded capture does not wait on a stalled store, drops a full queue, coun
     loop: stalled,
     bounded: { queueLimit: 2, writeTimeoutMs: 60 },
   });
-  let droppedNotes = 0;
-  const dropping = createObserver({
-    loop: stalled,
-    onError: () => { droppedNotes += 1; },
-    bounded: { queueLimit: 1, writeTimeoutMs: 60 },
-  });
-  assert.equal(await dropping.observe("only", () => 1), 1);
-  assert.equal(dropping.stats().dropped, 1);
-  assert.equal(droppedNotes, 1);
-  await dropping.shutdown(20);
+  assert.throws(
+    () => createObserver({ loop: stalled, bounded: { queueLimit: 1, writeTimeoutMs: 60 } }),
+    /at least 2/,
+  );
   assert.equal(await tight.observe("first", () => 1), 1);
   assert.equal(await tight.observe("second", () => 2), 2);
   assert.equal(tight.stats().dropped, 1);
@@ -259,6 +253,85 @@ test("shutdown ignores a hung record and does not finish after abandon", async (
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(streamWrites, []);
   assert.ok(streaming.stats().backlog >= 0);
+});
+
+test("shutdown drains admitted writes, and an open flush does not free a hung write or a reservation", async () => {
+  const loop = setup();
+  const drained = createObserver({
+    loop,
+    bounded: { queueLimit: 4, writeTimeoutMs: 500, shutdownTimeoutMs: 200 },
+  });
+  assert.equal(await drained.observe("saved", () => "ok", { context: { id: "shutdown-row" } }), "ok");
+  await drained.shutdown();
+  assert.equal(state((await loop.getExecution("shutdown-row"))!).status, "completed");
+  assert.equal(drained.stats().dropped, 0);
+  assert.equal(drained.stats().failed, 0);
+  let notes = 0;
+  let calls = 0;
+  const hung = {
+    getExecution: async () => undefined,
+    recordExecution: () => {
+      calls += 1;
+      return new Promise(() => {});
+    },
+    completeExecution: () => new Promise(() => {}),
+  } as unknown as FeedbackLoop;
+  const stall = createObserver({
+    loop: hung,
+    onError: () => { notes += 1; },
+    bounded: { queueLimit: 4, writeTimeoutMs: 5_000, shutdownTimeoutMs: 40 },
+  });
+  await stall.observe("hung", () => 1);
+  await stall.shutdown();
+  assert.ok(stall.stats().dropped + stall.stats().failed >= 1);
+  assert.ok(notes >= 1);
+  assert.equal(calls, 1);
+  let release: (value: string) => void = () => {};
+  const open = createObserver({
+    loop,
+    bounded: { queueLimit: 4, writeTimeoutMs: 500, shutdownTimeoutMs: 30 },
+  });
+  const pending = open.observe("hold", () => new Promise<string>((resolve) => { release = resolve; }), {
+    context: { id: "held-row" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const droppedBefore = open.stats().dropped;
+  await open.forceFlush(30);
+  assert.equal(open.stats().dropped, droppedBefore);
+  assert.ok(open.stats().backlog >= 1);
+  release("later");
+  assert.equal(await pending, "later");
+  await open.forceFlush(200);
+  assert.equal(state((await loop.getExecution("held-row"))!).status, "completed");
+  await open.shutdown(20);
+  const repeated = createObserver({
+    loop: hung,
+    bounded: { queueLimit: 4, writeTimeoutMs: 5_000, shutdownTimeoutMs: 15 },
+  });
+  await repeated.observe("once", () => true);
+  for (let i = 0; i < 5; i++) await repeated.forceFlush(15);
+  assert.equal(calls, 2);
+  await repeated.shutdown(15);
+  let releaseOverlap: (value: string) => void = () => {};
+  const overlap = createObserver({
+    loop,
+    bounded: { queueLimit: 4, writeTimeoutMs: 500, shutdownTimeoutMs: 40 },
+  });
+  const running = overlap.observe(
+    "overlap",
+    () => new Promise<string>((resolve) => { releaseOverlap = resolve; }),
+    { context: { id: "overlap-row" } },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const shortFlush = overlap.forceFlush(40);
+  const drainedShutdown = overlap.shutdown(400);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  releaseOverlap("done");
+  assert.equal(await running, "done");
+  await shortFlush;
+  await drainedShutdown;
+  assert.equal(state((await loop.getExecution("overlap-row"))!).status, "completed");
+  assert.equal(overlap.stats().dropped, 0);
 });
 
 test("telemetry outage does not retry or replace application errors; strict capture fails before the call", async () => {
