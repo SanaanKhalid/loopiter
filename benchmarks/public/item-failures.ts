@@ -37,8 +37,11 @@ export interface ItemFailureCount {
   count: number;
 }
 
+/** Incomplete because the output bound was spent. Reported on its own, not as a content-filter failure. */
+export const TRUNCATION_REASON = "incomplete:max_output_tokens";
+
 export class ItemFailureStop extends Error {
-  readonly reason: "item_failure_fraction" | "item_failure_consecutive";
+  readonly reason: "item_failure_fraction" | "item_failure_consecutive" | "output_truncated";
   constructor(reason: ItemFailureStop["reason"], message: string) {
     super(message);
     this.name = "ItemFailureStop";
@@ -68,6 +71,7 @@ export class ItemFailureTracker {
   readonly failures: ItemFailure[] = [];
   private consecutive = 0;
   private readonly counts = new Map<string, number>();
+  private readonly truncations = new Map<string, number>();
   private halt: ItemFailureStop | null = null;
 
   noteSuccess(): void {
@@ -84,6 +88,18 @@ export class ItemFailureTracker {
       reason,
       categories,
     });
+    if (reason === TRUNCATION_REASON) {
+      const key = `${call.arm}\0${call.split}`;
+      const count = (this.truncations.get(key) ?? 0) + 1;
+      this.truncations.set(key, count);
+      if (call.planned > 0 && count / call.planned > ITEM_FAILURE_FRACTION) {
+        this.halt = new ItemFailureStop(
+          "output_truncated",
+          `Stopping: ${count} of ${call.planned} ${call.arm} ${call.split} predictions hit max_output_tokens, above ${Math.round(ITEM_FAILURE_FRACTION * 100)}% of that split.`,
+        );
+      }
+      return;
+    }
     this.consecutive += 1;
     const key = `${call.arm}\0${call.split}`;
     const count = (this.counts.get(key) ?? 0) + 1;

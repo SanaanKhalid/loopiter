@@ -67,8 +67,10 @@ The artifact is one versioned system prompt, `hotpotqa-system-v1`. The
 character cap is 8000 Unicode code points, the same cap as the IFBench prompt
 and larger than the 800-character kb-qa fragment. Answers are short, but a
 reasoning model counts reasoning tokens against `max_output_tokens`. The
-default is 1024, not 256, so effort `low` can finish before the answer. It may
-be set from 1 to 2048. Propose defaults to 2048. Free-form text is the `text`
+harness sends `reasoning.effort` (default `low`). The default bound is 2048,
+so that effort can finish and still leave room for the short answer. It may
+be set from 1 to 8192. IFBench uses a higher answer bound because those
+answers are long. Propose defaults to 2048. Free-form text is the `text`
 field of a strict JSON schema, because the Azure Responses client used here
 only accepts that shape.
 
