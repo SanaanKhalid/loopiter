@@ -5,8 +5,8 @@ import { docUrl, docsHref } from '../../lib/docs-links';
 import { pageMetadata } from '../../lib/site';
 
 export const metadata: Metadata = pageMetadata({
-  title: 'The Loopiter Manifesto — Agents improve themselves automatically.',
-  description: 'Agents improve themselves automatically, while they\u2019re in use. Production signals drive tested changes to prompt and knowledge. A change ships only when held-out evidence shows it is better.',
+  title: 'Loopiter Manifesto: Agents Improve Themselves While in Use',
+  description: 'Self-improving AI agents, by default: tested prompt changes ship only when held-out evidence shows they beat the current version.',
   path: '/manifesto',
 });
 
@@ -23,17 +23,17 @@ export default function Manifesto() {
 
         <div className="manifesto-body">
           <p>A support agent tells a customer the warranty is one year. The order says two. The conversation ends, and the outcome is wrong.</p>
-          <p>The next time that question comes up, nobody has to find the transcript, edit the prompt, and ship a patch. The miss is already a signal. The agent proposes a change to its prompt or knowledge, tests it on held-out cases, and ships it when the new version beats the one in use. The following customer gets two years.</p>
+          <p>The next time that question comes up, nobody has to find the transcript, edit the prompt, and ship a patch. The miss is already a signal. The agent proposes a change to its prompt, tests it on held-out cases, and ships it when the new version beats the one in use. The following customer gets two years.</p>
 
           <section aria-labelledby="default-is-improvement">
             <h2 id="default-is-improvement">Improvement is the default.</h2>
-            <p>An agent should get better at its job while people are using it. That is the ordinary state, not a project someone starts later.</p>
+            <p>A self-improving agent gets better at its job while people are using it. That is the ordinary state, not a project someone starts later.</p>
             <p>Outcomes, failures, evaluations, and human feedback when someone gives it, all feed the same loop. The agent does not wait for a developer to notice. It keeps working between conversations.</p>
           </section>
 
           <section aria-labelledby="agent-does-the-work">
             <h2 id="agent-does-the-work">The agent does the work.</h2>
-            <p>It looks at what happened, decides whether a change is worth trying, and proposes a small update to its prompt or knowledge. Then it tests that update against the cases it must still get right.</p>
+            <p>It looks at what happened, decides whether a change is worth trying, and proposes a small update to its prompt. Then it tests that update against the cases it must still get right.</p>
             <p>When the evidence says the change is better, it ships. Later answers use the new version. What changed is on the record.</p>
           </section>
 
@@ -57,9 +57,9 @@ export default function Manifesto() {
         </div>
 
         <div className="manifesto-next">
-          <Link className="text-link" href="/#how-it-works">How Loopiter works <span aria-hidden="true">↗</span></Link>
+          <Link className="text-link" href="/#how-it-works">How it works <span aria-hidden="true">↗</span></Link>
           <Link className="text-link" href="/blog/self-improving-ai-agents-need-a-feedback-loop-you-can-evaluate">Why the loop has to be evaluable <span aria-hidden="true">↗</span></Link>
-          <Link className="text-link" href="/blog/graduated-autonomy-for-self-improving-ai-agents">Graduated autonomy for self-improving agents <span aria-hidden="true">↗</span></Link>
+          <Link className="text-link" href="/blog/graduated-autonomy-for-self-improving-ai-agents">Graduated autonomy <span aria-hidden="true">↗</span></Link>
           <a className="text-link" href={docUrl('autonomous')}>Autonomy modes in the documentation <span aria-hidden="true">↗</span></a>
           <a className="text-link" href={docsHref()}>Read the documentation <span aria-hidden="true">↗</span></a>
         </div>
