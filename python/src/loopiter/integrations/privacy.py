@@ -156,108 +156,32 @@ def _redact_emails(value: str) -> str:
     return "".join(out)
 
 
-def _luhn(digits: str) -> bool:
-    return _luhn_span(digits, 0, len(digits))
+# A card is any whole-group prefix of 13 to 19 digits. Checked once, not per group.
+_MIN_CARD_DIGITS = 13
+_MAX_CARD_DIGITS = 19
 
 
-def _luhn_digits(digits: tuple[int, ...]) -> bool:
+def _luhn_range(digits: list[int], start: int, end: int) -> bool:
     total = 0
     alt = False
-    for n in reversed(digits):
-        if alt:
-            n *= 2
-            if n > 9:
-                n -= 9
-        total += n
-        alt = not alt
-    return total % 10 == 0
-
-
-def _luhn_parts(*parts: tuple[int, ...]) -> bool:
-    total = 0
-    alt = False
-    for part in reversed(parts):
-        for n in reversed(part):
-            if alt:
-                n *= 2
-                if n > 9:
-                    n -= 9
-            total += n
-            alt = not alt
-    return total % 10 == 0
-
-
-def _exact_quad(value: str, at: int, length: int) -> bool:
-    return (
-        at + 3 < length
-        and "0" <= value[at] <= "9"
-        and "0" <= value[at + 1] <= "9"
-        and "0" <= value[at + 2] <= "9"
-        and "0" <= value[at + 3] <= "9"
-        and (at + 4 >= length or not "0" <= value[at + 4] <= "9")
-    )
-
-
-def _luhn_quads(value: str, pos: int) -> bool:
-    """Luhn of four 4-digit groups separated by one character, starting at pos."""
-    total = 0
-    alt = False
-    for off in (18, 17, 16, 15, 13, 12, 11, 10, 8, 7, 6, 5, 3, 2, 1, 0):
-        n = ord(value[pos + off]) - 48
-        if alt:
-            n *= 2
-            if n > 9:
-                n -= 9
-        total += n
-        alt = not alt
-    return total % 10 == 0
-
-
-def _luhn_span(value: str, start: int, end: int) -> bool:
-    total = 0
-    alt = False
-    index = end - 1
-    while index >= start:
-        ch = value[index]
-        if "0" <= ch <= "9":
-            n = ord(ch) - 48
-            if alt:
-                n *= 2
-                if n > 9:
-                    n -= 9
-            total += n
-            alt = not alt
+    index = end
+    while index > start:
         index -= 1
+        n = digits[index]
+        if alt:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+        alt = not alt
     return total % 10 == 0
-
-
-def _ascii_digit(ch: str) -> bool:
-    return "0" <= ch <= "9"
-
-
-_CARD_LAYOUTS = (
-    (4, 4, 4, 4),
-    (4, 4, 4, 4, 3),
-    (4, 6, 5),
-    (4, 6, 4),
-    (4, 4, 5),
-    (4, 4, 4, 3),
-    (4, 4, 6),
-)
-_EXACT_LAYOUTS = frozenset(_CARD_LAYOUTS)
-_LAYOUT_PREFIXES = frozenset(
-    layout[:size] for layout in _CARD_LAYOUTS for size in range(1, len(layout) + 1)
-)
-_LONGER_PREFIXES = frozenset(
-    layout[:size] for layout in _CARD_LAYOUTS for size in range(1, len(layout))
-)
 
 
 def _redact_cards(value: str) -> str:
     out: list[str] = []
-    i = 0
     copied = 0
     length = len(value)
+    i = 0
 
     def keep(end: int) -> None:
         nonlocal copied
@@ -266,165 +190,59 @@ def _redact_cards(value: str) -> str:
             copied = end
 
     while i < length:
-        ch = value[i]
-        if not ("0" <= ch <= "9") or (i > 0 and "0" <= value[i - 1] <= "9"):
+        if not ("0" <= value[i] <= "9"):
             i += 1
             continue
-        start = i
-        j = i + 1
-        while j < length and "0" <= value[j] <= "9":
-            j += 1
-        first = j - start
-        grouped = j + 1 < length and value[j] in " -" and "0" <= value[j + 1] <= "9"
-        if first != 4:
-            if not grouped:
-                if 13 <= first <= 19 and _luhn(value[start:j]):
-                    keep(start)
-                    out.append("[REDACTED]")
-                    copied = j
-                i = j
+        # One pass over groups joined by a single space or dash. Each start then
+        # keeps only the groups that share its own separator.
+        starts: list[int] = []
+        ends: list[int] = []
+        seps: list[str] = []
+        digits: list[int] = []
+        prefix = [0]
+        while i < length and "0" <= value[i] <= "9":
+            starts.append(i)
+            while i < length and "0" <= value[i] <= "9":
+                digits.append(ord(value[i]) - 48)
+                i += 1
+            ends.append(i)
+            prefix.append(len(digits))
+            if i + 1 < length and value[i] in " -" and "0" <= value[i + 1] <= "9":
+                seps.append(value[i])
+                i += 1
                 continue
-            i = j + 1
-            continue
-        if not grouped:
-            i = j
-            continue
-        sep = value[j]
-        pos = start
-        while _exact_quad(value, pos, length) and (pos + 4 >= length or value[pos + 4] == sep):
-            if (
-                pos + 14 < length
-                and value[pos + 4] == sep
-                and value[pos + 9] == sep
-                and value[pos + 14] == sep
-                and _exact_quad(value, pos + 5, length)
-                and _exact_quad(value, pos + 10, length)
-                and _exact_quad(value, pos + 15, length)
-            ):
-                fifth = (
-                    pos + 22 < length
-                    and value[pos + 19] == sep
-                    and "0" <= value[pos + 20] <= "9"
-                    and "0" <= value[pos + 21] <= "9"
-                    and "0" <= value[pos + 22] <= "9"
-                    and (pos + 23 >= length or not "0" <= value[pos + 23] <= "9")
-                )
-                if fifth and _luhn_span(value, pos, pos + 23):
-                    keep(pos)
-                    out.append("[REDACTED]")
-                    copied = pos + 23
-                    pos += 24 if pos + 23 < length and value[pos + 23] == sep else 23
-                    continue
-                if _luhn_quads(value, pos):
-                    keep(pos)
-                    out.append("[REDACTED]")
-                    copied = pos + 19
-                    pos += 20
-                    continue
-                pos += 5
-                continue
+            seps.append("")
             break
-        if pos != start:
-            i = pos
-            continue
-        sep = value[j]
-        first_digits = tuple(ord(value[p]) - 48 for p in range(start, j))
-        spans: list[tuple[int, int, int, tuple[int, ...]]] = [(start, j, first, first_digits)]
-        pos = j
-        while (
-            pos < length and value[pos] == sep and pos + 1 < length and "0" <= value[pos + 1] <= "9"
-        ):
-            k = pos + 1
-            while k < length and "0" <= value[k] <= "9":
-                k += 1
-            spans.append(
-                (pos + 1, k, k - (pos + 1), tuple(ord(value[p]) - 48 for p in range(pos + 1, k)))
-            )
-            pos = k
-        group_index = 0
-        while group_index < len(spans):
-            group_start, group_end, group_len, group_digits = spans[group_index]
-            if 13 <= group_len <= 19 and _luhn_digits(group_digits):
-                keep(group_start)
-                out.append("[REDACTED]")
-                copied = group_end
-                group_index += 1
+        group = 0
+        count = len(starts)
+        while group < count:
+            base = prefix[group]
+            if prefix[group + 1] - base > _MAX_CARD_DIGITS:
+                group += 1
                 continue
-            if (
-                group_len == 4
-                and group_index + 3 < len(spans)
-                and spans[group_index + 1][2] == 4
-                and spans[group_index + 2][2] == 4
-                and spans[group_index + 3][2] == 4
-            ):
-                end4 = spans[group_index + 3][1]
-                fifth = spans[group_index + 4] if group_index + 4 < len(spans) else None
-                if (
-                    fifth is not None
-                    and fifth[2] == 3
-                    and _luhn_parts(
-                        spans[group_index][3],
-                        spans[group_index + 1][3],
-                        spans[group_index + 2][3],
-                        spans[group_index + 3][3],
-                        fifth[3],
-                    )
+            horizon = group + 1
+            sep = seps[group]
+            if sep and prefix[horizon] - base <= _MAX_CARD_DIGITS:
+                while (
+                    horizon < count
+                    and seps[horizon - 1] == sep
+                    and prefix[horizon + 1] - base <= _MAX_CARD_DIGITS
                 ):
-                    matched = fifth[1]
-                elif _luhn_parts(
-                    spans[group_index][3],
-                    spans[group_index + 1][3],
-                    spans[group_index + 2][3],
-                    spans[group_index + 3][3],
-                ):
-                    matched = end4
-                else:
-                    group_index += 1
-                    continue
-                keep(group_start)
-                out.append("[REDACTED]")
-                copied = matched
-                while group_index < len(spans) and spans[group_index][0] < matched:
-                    group_index += 1
-                continue
-            if group_len != 4:
-                group_index += 1
-                continue
-            lengths: list[int] = []
-            ends: list[int] = []
-            total = 0
-            look = group_index
-            while look < len(spans) and total < 19:
-                look_len = spans[look][2]
-                if total + look_len > 19:
-                    break
-                candidate = tuple(lengths + [look_len])
-                if candidate not in _LAYOUT_PREFIXES:
-                    break
-                lengths.append(look_len)
-                ends.append(spans[look][1])
-                total += look_len
-                if candidate not in _LONGER_PREFIXES:
-                    break
-                look += 1
-            matched = None
-            for count in range(len(lengths), 0, -1):
-                if tuple(lengths[:count]) not in _EXACT_LAYOUTS:
-                    continue
-                end = ends[count - 1]
-                digits = "".join(ch for ch in value[group_start:end] if "0" <= ch <= "9")
-                if _luhn(digits):
+                    horizon += 1
+            end = horizon
+            matched = 0
+            while end > group and prefix[end] - base >= _MIN_CARD_DIGITS:
+                if _luhn_range(digits, base, prefix[end]):
                     matched = end
                     break
-            if matched is None:
-                group_index += 1
+                end -= 1
+            if matched == 0:
+                group += 1
                 continue
-            keep(group_start)
+            keep(starts[group])
             out.append("[REDACTED]")
-            copied = matched
-            while group_index < len(spans) and spans[group_index][0] < matched:
-                group_index += 1
-        i = spans[-1][1]
+            copied = ends[matched - 1]
+            group = matched
     keep(length)
     return "".join(out) if out else value
 

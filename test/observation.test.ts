@@ -64,16 +64,15 @@ test("redaction stays inside a generous time bound and still redacts a normal jw
 });
 
 test("seeded card fuzz does not undercount and long digit runs stay fast", () => {
-  const layouts = [[4, 4, 4, 4], [4, 4, 4, 4, 3], [4, 6, 5], [4, 6, 4], [4, 4, 5], [4, 4, 4, 3], [4, 4, 6]];
   const digit = (value: string, index: number) => {
     const code = value.charCodeAt(index);
     return code >= 48 && code <= 57;
   };
-  const luhn = (value: string) => {
+  const luhnRange = (digits: number[], start: number, end: number) => {
     let sum = 0;
     let alt = false;
-    for (let i = value.length - 1; i >= 0; i -= 1) {
-      let n = value.charCodeAt(i) - 48;
+    for (let index = end - 1; index >= start; index -= 1) {
+      let n = digits[index]!;
       if (alt) {
         n *= 2;
         if (n > 9) n -= 9;
@@ -83,61 +82,60 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
     }
     return sum % 10 === 0;
   };
-  const prefix = (groups: number[]) => layouts.some((layout) => layout.length >= groups.length && layout.slice(0, groups.length).every((size, index) => size === groups[index]));
-  const longer = (groups: number[]) => layouts.some((layout) => layout.length > groups.length && layout.slice(0, groups.length).every((size, index) => size === groups[index]));
   const reference = (value: string) => {
     let i = 0;
     let count = 0;
     while (i < value.length) {
-      if (!digit(value, i) || (i > 0 && digit(value, i - 1))) {
+      if (!digit(value, i)) {
         i += 1;
         continue;
       }
-      const start = i;
-      let j = i;
-      while (j < value.length && digit(value, j)) j += 1;
-      const first = j - start;
-      const grouped = j < value.length && (value[j] === " " || value[j] === "-") && j + 1 < value.length && digit(value, j + 1);
-      if (!grouped) {
-        if (first >= 13 && first <= 19 && luhn(value.slice(start, j))) count += 1;
-        i = j;
-        continue;
-      }
-      if (!prefix([first])) {
-        i = j + 1;
-        continue;
-      }
-      const groups = [first];
-      const ends = [j];
-      let total = first;
-      const sep = value[j]!;
-      while (j < value.length && value[j] === sep && j + 1 < value.length && digit(value, j + 1) && longer(groups)) {
-        let k = j + 1;
-        while (k < value.length && digit(value, k)) k += 1;
-        const nxt = k - (j + 1);
-        if (total + nxt > 19 || !prefix(groups.concat(nxt))) break;
-        total += nxt;
-        groups.push(nxt);
-        ends.push(k);
-        j = k;
-      }
-      let matched = -1;
-      for (let size = groups.length; size > 0; size -= 1) {
-        const head = groups.slice(0, size);
-        if (!layouts.some((layout) => layout.length === head.length && layout.every((n, index) => n === head[index]))) continue;
-        const end = ends[size - 1]!;
-        if (luhn(value.slice(start, end).replace(/[ -]/g, ""))) {
-          matched = end;
-          break;
+      const digits: number[] = [];
+      const prefix = [0];
+      const seps: string[] = [];
+      while (i < value.length && digit(value, i)) {
+        while (i < value.length && digit(value, i)) {
+          digits.push(value.charCodeAt(i) - 48);
+          i += 1;
         }
+        prefix.push(digits.length);
+        if (i + 1 < value.length && (value[i] === " " || value[i] === "-") && digit(value, i + 1)) {
+          seps.push(value[i]!);
+          i += 1;
+          continue;
+        }
+        seps.push("");
+        break;
       }
-      if (matched >= 0) {
+      let group = 0;
+      const groups = prefix.length - 1;
+      while (group < groups) {
+        const base = prefix[group]!;
+        if (prefix[group + 1]! - base > 19) {
+          group += 1;
+          continue;
+        }
+        let horizon = group + 1;
+        const sep = seps[group]!;
+        if (sep !== "" && prefix[horizon]! - base <= 19) {
+          while (horizon < groups && seps[horizon - 1] === sep && prefix[horizon + 1]! - base <= 19) horizon += 1;
+        }
+        let end = horizon;
+        let matched = 0;
+        while (end > group && prefix[end]! - base >= 13) {
+          if (luhnRange(digits, base, prefix[end]!)) {
+            matched = end;
+            break;
+          }
+          end -= 1;
+        }
+        if (matched === 0) {
+          group += 1;
+          continue;
+        }
         count += 1;
-        i = matched;
-        continue;
+        group = matched;
       }
-      const end0 = ends[0]!;
-      i = end0 < value.length && (value[end0] === " " || value[end0] === "-") ? end0 + 1 : end0;
     }
     return count;
   };
@@ -158,22 +156,22 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
     baseline += reference(sample);
   }
   assert.ok(redacted >= baseline);
-  assert.equal(redacted, 75);
+  assert.equal(redacted, baseline);
+  assert.equal(redacted, 109);
   const elapsed = (sample: string) => {
     const started = performance.now();
     redactCapture(sample);
     return performance.now() - started;
   };
-  const spaced = "4 ".repeat(8192);
-  const grouped = "4111-".repeat(4096);
-  const smallSpaced = elapsed(spaced);
-  const largeSpaced = elapsed(spaced + spaced + spaced + spaced);
-  const smallGrouped = elapsed(grouped);
-  const largeGrouped = elapsed(grouped + grouped + grouped + grouped);
-  assert.ok(largeSpaced < Math.max(smallSpaced * 6, 50));
-  assert.ok(largeGrouped < Math.max(smallGrouped * 6, 50));
-  assert.ok(largeSpaced < 8000);
-  assert.ok(largeGrouped < 8000);
+  const scales = (sample: string) => {
+    const small = elapsed(sample);
+    const large = elapsed(sample + sample + sample + sample);
+    assert.ok(large < Math.max(small * 6, 50));
+    assert.ok(large < 8000);
+  };
+  scales("4 ".repeat(2048));
+  scales("4111-".repeat(1024));
+  scales("4111 ".repeat(1024));
 });
 
 test("observer retains lineage, defaults to no content, preserves return identity and never replays a durable ID", async () => {

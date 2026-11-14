@@ -168,11 +168,95 @@
     },
     {
       "input": "0000 0000 0000 000000",
-      "output": "0000 [REDACTED]"
+      "output": "[REDACTED]"
     },
     {
       "input": "4111 1111 1111 1112 001",
       "output": "[REDACTED]"
+    },
+    {
+      "input": "token=abc-----BEGIN RSA PRIVATE KEY-----\nfixture-line-one\nfixture-line-two\n-----END RSA PRIVATE KEY-----",
+      "output": "token=[REDACTED]"
+    },
+    {
+      "input": "password=-----BEGIN RSA PRIVATE KEY-----\nfixture-line-one\nfixture-line-two\n-----END RSA PRIVATE KEY-----",
+      "output": "password=[REDACTED]"
+    },
+    {
+      "input": "Bearer -----BEGIN RSA PRIVATE KEY-----\nfixture-line-one\nfixture-line-two\n-----END RSA PRIVATE KEY-----",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "token=abc​-----BEGIN RSA PRIVATE KEY-----\nfixture-line-one\nfixture-line-two\n-----END RSA PRIVATE KEY-----",
+      "output": "token=[REDACTED]"
+    },
+    {
+      "input": "password=3782 822463 10005",
+      "output": "password=[REDACTED]"
+    },
+    {
+      "input": "Bearer 4111 1111 1111 1111",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Bearer ​4111 1111 1111 1111",
+      "output": "Bearer ​[REDACTED]"
+    },
+    {
+      "input": "token=abc​4111 1111 1111 1111",
+      "output": "token=[REDACTED]"
+    },
+    {
+      "input": "41111111 11111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111 1111 11111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111 111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "41 11 11 11 11 11 11 11",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4000 0000 00006",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4000 000000 0002",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4000 0000 000002",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4000 0000 0000 006",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4000 0000 0000 0000 006",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "555 1234 5678",
+      "output": "555 1234 5678"
+    },
+    {
+      "input": "2026-11-15",
+      "output": "2026-11-15"
+    },
+    {
+      "input": "order 12345",
+      "output": "order 12345"
+    },
+    {
+      "input": "1234567890123456",
+      "output": "1234567890123456"
     }
   ],
   "boundaries": [

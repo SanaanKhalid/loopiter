@@ -458,24 +458,16 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(omitted["value"]["omitted"])
 
     def test_seeded_card_fuzz_does_not_undercount(self):
-        layouts = (
-            (4, 4, 4, 4),
-            (4, 4, 4, 4, 3),
-            (4, 6, 5),
-            (4, 6, 4),
-            (4, 4, 5),
-            (4, 4, 4, 3),
-            (4, 4, 6),
-        )
-
         def digit(ch):
             return "0" <= ch <= "9"
 
-        def luhn(value):
+        def luhn_range(digits, start, end):
             total = 0
             alt = False
-            for ch in reversed(value):
-                n = ord(ch) - 48
+            index = end
+            while index > start:
+                index -= 1
+                n = digits[index]
                 if alt:
                     n *= 2
                     if n > 9:
@@ -484,72 +476,57 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
                 alt = not alt
             return total % 10 == 0
 
-        def prefix(groups):
-            return any(layout[: len(groups)] == groups for layout in layouts)
-
-        def longer(groups):
-            return any(
-                len(layout) > len(groups) and layout[: len(groups)] == groups for layout in layouts
-            )
-
         def reference(value):
+            """Whole groups joined by one separator, longest 13-19 digit Luhn prefix."""
             i = 0
             count = 0
             n = len(value)
             while i < n:
-                if not digit(value[i]) or (i and digit(value[i - 1])):
+                if not digit(value[i]):
                     i += 1
                     continue
-                start = i
-                j = i
-                while j < n and digit(value[j]):
-                    j += 1
-                first = j - start
-                grouped = j < n and value[j] in " -" and j + 1 < n and digit(value[j + 1])
-                if not grouped:
-                    if 13 <= first <= 19 and luhn(value[start:j]):
-                        count += 1
-                    i = j
-                    continue
-                if not prefix((first,)):
-                    i = j + 1
-                    continue
-                groups = [first]
-                ends = [j]
-                total = first
-                sep = value[j]
-                while (
-                    j < n
-                    and value[j] == sep
-                    and j + 1 < n
-                    and digit(value[j + 1])
-                    and longer(tuple(groups))
-                ):
-                    k = j + 1
-                    while k < n and digit(value[k]):
-                        k += 1
-                    nxt = k - (j + 1)
-                    if total + nxt > 19 or not prefix((*groups, nxt)):
-                        break
-                    total += nxt
-                    groups.append(nxt)
-                    ends.append(k)
-                    j = k
-                matched = None
-                for size in range(len(groups), 0, -1):
-                    if tuple(groups[:size]) not in layouts:
+                digits = []
+                prefix = [0]
+                seps = []
+                while i < n and digit(value[i]):
+                    while i < n and digit(value[i]):
+                        digits.append(ord(value[i]) - 48)
+                        i += 1
+                    prefix.append(len(digits))
+                    if i + 1 < n and value[i] in " -" and digit(value[i + 1]):
+                        seps.append(value[i])
+                        i += 1
                         continue
-                    end = ends[size - 1]
-                    digits = "".join(ch for ch in value[start:end] if digit(ch))
-                    if luhn(digits):
-                        matched = end
-                        break
-                if matched is not None:
+                    seps.append("")
+                    break
+                group = 0
+                groups = len(prefix) - 1
+                while group < groups:
+                    base = prefix[group]
+                    if prefix[group + 1] - base > 19:
+                        group += 1
+                        continue
+                    horizon = group + 1
+                    sep = seps[group]
+                    if sep and prefix[horizon] - base <= 19:
+                        while (
+                            horizon < groups
+                            and seps[horizon - 1] == sep
+                            and prefix[horizon + 1] - base <= 19
+                        ):
+                            horizon += 1
+                    end_group = horizon
+                    matched = 0
+                    while end_group > group and prefix[end_group] - base >= 13:
+                        if luhn_range(digits, base, prefix[end_group]):
+                            matched = end_group
+                            break
+                        end_group -= 1
+                    if matched == 0:
+                        group += 1
+                        continue
                     count += 1
-                    i = matched
-                    continue
-                end0 = ends[0]
-                i = end0 + 1 if end0 < n and value[end0] in " -" else end0
+                    group = matched
             return count
 
         state = 42
@@ -570,23 +547,24 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
             redacted += redact_capture(sample).count("[REDACTED]")
             baseline += reference(sample)
         self.assertGreaterEqual(redacted, baseline)
-        self.assertEqual(redacted, 75)
+        self.assertEqual(redacted, baseline)
+        self.assertEqual(redacted, 109)
 
         def elapsed(sample: str) -> float:
             started_at = time.perf_counter()
             _redact_cards(sample)
             return time.perf_counter() - started_at
 
-        spaced = "4 " * 8192
-        grouped = "4111-" * 4096
-        small_spaced = elapsed(spaced)
-        large_spaced = elapsed(spaced * 4)
-        small_grouped = elapsed(grouped)
-        large_grouped = elapsed(grouped * 4)
-        self.assertLess(large_spaced, max(small_spaced * 6, 0.05))
-        self.assertLess(large_grouped, max(small_grouped * 6, 0.05))
-        self.assertLess(large_spaced, 8)
-        self.assertLess(large_grouped, 8)
+        def scales(sample: str) -> None:
+            small = elapsed(sample)
+            large = elapsed(sample * 4)
+            self.assertLess(large, max(small * 6, 0.05))
+            self.assertLess(large, 8)
+
+        scales("4 " * 2048)
+        scales("4111-" * 1024)
+        scales("4111 " * 1024)
+        self.assertLess(elapsed("4111 " * 13107), 0.05)
 
     async def test_bounded_open_map_is_cleared(self):
         loop = self.loop()

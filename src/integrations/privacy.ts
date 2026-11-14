@@ -130,11 +130,14 @@ function redactEmails(value: string): string {
   return out;
 }
 
-function luhn(digits: string): boolean {
+const MIN_CARD_DIGITS = 13;
+const MAX_CARD_DIGITS = 19;
+
+function luhnRange(digits: number[], start: number, end: number): boolean {
   let sum = 0;
   let alt = false;
-  for (let i = digits.length - 1; i >= 0; i -= 1) {
-    let n = digits.charCodeAt(i) - 48;
+  for (let index = end - 1; index >= start; index -= 1) {
+    let n = digits[index]!;
     if (alt) {
       n *= 2;
       if (n > 9) n -= 9;
@@ -145,192 +148,79 @@ function luhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
-const cardLayouts: readonly (readonly number[])[] = [
-  [4, 4, 4, 4],
-  [4, 4, 4, 4, 3],
-  [4, 6, 5],
-  [4, 6, 4],
-  [4, 4, 5],
-  [4, 4, 4, 3],
-  [4, 4, 6],
-];
-const exactLayouts = new Set(cardLayouts.map((layout) => layout.join(",")));
-const layoutPrefixes = new Set(
-  cardLayouts.flatMap((layout) => layout.map((_, index) => layout.slice(0, index + 1).join(","))),
-);
-const longerPrefixes = new Set(
-  cardLayouts.flatMap((layout) => layout.slice(0, -1).map((_, index) => layout.slice(0, index + 1).join(","))),
-);
-
 function redactCards(value: string): string {
-  let out = "";
+  const parts: string[] = [];
+  let copied = 0;
+  const length = value.length;
   let i = 0;
-  const digit = (index: number) => {
+  const digitAt = (index: number) => {
     const code = value.charCodeAt(index);
     return code >= 48 && code <= 57;
   };
-  const nextGroup = (from: number) => {
-    let j = from;
-    while (j < value.length && digit(j)) j += 1;
-    if (j < value.length && (value[j] === " " || value[j] === "-") && j + 1 < value.length && digit(j + 1))
-      return j + 1;
-    return j;
-  };
-  while (i < value.length) {
-    if (!digit(i) || (i > 0 && digit(i - 1))) {
-      out += value[i];
+  while (i < length) {
+    if (!digitAt(i)) {
       i += 1;
       continue;
     }
-    const start = i;
-    let j = i;
-    while (j < value.length && digit(j)) j += 1;
-    const first = j - start;
-    const grouped = j < value.length && (value[j] === " " || value[j] === "-") && j + 1 < value.length && digit(j + 1);
-    if (!grouped) {
-      if (first >= 13 && first <= 19 && luhn(value.slice(start, j))) out += "[REDACTED]";
-      else out += value.slice(start, j);
-      i = j;
-      continue;
-    }
-    if (!layoutPrefixes.has(String(first))) {
-      const nxt = nextGroup(start);
-      out += value.slice(start, nxt);
-      i = nxt;
-      continue;
-    }
-    if (first === 4) {
-      const sepChar = value[j]!;
-      let pos = start;
-      const exactQuad = (at: number) =>
-        at + 3 < value.length &&
-        digit(at) && digit(at + 1) && digit(at + 2) && digit(at + 3) &&
-        (at + 4 >= value.length || !digit(at + 4));
-      const luhnQuads = (at: number) => {
-        let sum = 0;
-        let alt = false;
-        for (const off of [18, 17, 16, 15, 13, 12, 11, 10, 8, 7, 6, 5, 3, 2, 1, 0]) {
-          let n = value.charCodeAt(at + off) - 48;
-          if (alt) {
-            n *= 2;
-            if (n > 9) n -= 9;
-          }
-          sum += n;
-          alt = !alt;
-        }
-        return sum % 10 === 0;
-      };
-      const luhnSpan = (from: number, to: number) => {
-        let sum = 0;
-        let alt = false;
-        for (let index = to - 1; index >= from; index -= 1) {
-          if (!digit(index)) continue;
-          let n = value.charCodeAt(index) - 48;
-          if (alt) {
-            n *= 2;
-            if (n > 9) n -= 9;
-          }
-          sum += n;
-          alt = !alt;
-        }
-        return sum % 10 === 0;
-      };
-      while (exactQuad(pos) && (pos + 4 >= value.length || value[pos + 4] === sepChar)) {
-        if (
-          pos + 14 < value.length &&
-          value[pos + 4] === sepChar &&
-          value[pos + 9] === sepChar &&
-          value[pos + 14] === sepChar &&
-          exactQuad(pos + 5) &&
-          exactQuad(pos + 10) &&
-          exactQuad(pos + 15)
-        ) {
-          const fifth =
-            pos + 22 < value.length &&
-            value[pos + 19] === sepChar &&
-            digit(pos + 20) && digit(pos + 21) && digit(pos + 22) &&
-            (pos + 23 >= value.length || !digit(pos + 23));
-          if (fifth && luhnSpan(pos, pos + 23)) {
-            out += value.slice(i, pos) + "[REDACTED]";
-            i = pos + 23;
-            pos += pos + 23 < value.length && value[pos + 23] === sepChar ? 24 : 23;
-            continue;
-          }
-          if (luhnQuads(pos)) {
-            out += value.slice(i, pos) + "[REDACTED]";
-            i = pos + 19;
-            pos += 20;
-            continue;
-          }
-          pos += 5;
-          continue;
-        }
-        break;
+    const starts: number[] = [];
+    const ends: number[] = [];
+    const seps: string[] = [];
+    const digits: number[] = [];
+    const prefix = [0];
+    while (i < length && digitAt(i)) {
+      starts.push(i);
+      while (i < length && digitAt(i)) {
+        digits.push(value.charCodeAt(i) - 48);
+        i += 1;
       }
-      if (pos !== start) {
-        out += value.slice(i, pos);
-        i = pos;
+      ends.push(i);
+      prefix.push(digits.length);
+      if (i + 1 < length && (value[i] === " " || value[i] === "-") && digitAt(i + 1)) {
+        seps.push(value[i]!);
+        i += 1;
         continue;
       }
+      seps.push("");
+      break;
     }
-    const sep = value[j]!;
-    const spans: { start: number; end: number; length: number }[] = [{ start, end: j, length: first }];
-    let pos = j;
-    while (pos < value.length && value[pos] === sep && pos + 1 < value.length && digit(pos + 1)) {
-      let k = pos + 1;
-      while (k < value.length && digit(k)) k += 1;
-      spans.push({ start: pos + 1, end: k, length: k - (pos + 1) });
-      pos = k;
-    }
-    let groupIndex = 0;
-    while (groupIndex < spans.length) {
-      const group = spans[groupIndex]!;
-      if (group.length >= 13 && group.length <= 19 && luhn(value.slice(group.start, group.end))) {
-        out += value.slice(i, group.start) + "[REDACTED]";
-        i = group.end;
-        groupIndex += 1;
+    let group = 0;
+    const count = starts.length;
+    while (group < count) {
+      const base = prefix[group]!;
+      if (prefix[group + 1]! - base > MAX_CARD_DIGITS) {
+        group += 1;
         continue;
       }
-      if (group.length !== 4) {
-        groupIndex += 1;
-        continue;
+      let horizon = group + 1;
+      const sep = seps[group]!;
+      if (sep !== "" && prefix[horizon]! - base <= MAX_CARD_DIGITS) {
+        while (
+          horizon < count &&
+          seps[horizon - 1] === sep &&
+          prefix[horizon + 1]! - base <= MAX_CARD_DIGITS
+        ) horizon += 1;
       }
-      const lengths: number[] = [];
-      const ends: number[] = [];
-      let total = 0;
-      let look = groupIndex;
-      while (look < spans.length && total < 19) {
-        const lookLen = spans[look]!.length;
-        if (total + lookLen > 19) break;
-        const candidate = lengths.concat(lookLen).join(",");
-        if (!layoutPrefixes.has(candidate)) break;
-        lengths.push(lookLen);
-        ends.push(spans[look]!.end);
-        total += lookLen;
-        if (!longerPrefixes.has(candidate)) break;
-        look += 1;
-      }
-      let matched = -1;
-      for (let count = lengths.length; count > 0; count -= 1) {
-        if (!exactLayouts.has(lengths.slice(0, count).join(","))) continue;
-        const end = ends[count - 1]!;
-        if (luhn(value.slice(group.start, end).replace(/[ -]/g, ""))) {
+      let end = horizon;
+      let matched = 0;
+      while (end > group && prefix[end]! - base >= MIN_CARD_DIGITS) {
+        if (luhnRange(digits, base, prefix[end]!)) {
           matched = end;
           break;
         }
+        end -= 1;
       }
-      if (matched < 0) {
-        groupIndex += 1;
+      if (matched === 0) {
+        group += 1;
         continue;
       }
-      out += value.slice(i, group.start) + "[REDACTED]";
-      i = matched;
-      while (groupIndex < spans.length && spans[groupIndex]!.start < matched) groupIndex += 1;
+      if (copied < starts[group]!) parts.push(value.slice(copied, starts[group]));
+      parts.push("[REDACTED]");
+      copied = ends[matched - 1]!;
+      group = matched;
     }
-    out += value.slice(i, spans[spans.length - 1]!.end);
-    i = spans[spans.length - 1]!.end;
   }
-  return out;
+  if (copied < length) parts.push(value.slice(copied));
+  return parts.length === 0 ? value : parts.join("");
 }
 
 function redactText(value: string): string {
