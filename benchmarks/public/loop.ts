@@ -60,6 +60,7 @@ export interface ArmRun {
   gates: "none" | "improvement-controller";
   state: string;
   reason: string;
+  detail: string | null;
   transitions: { state: string; reason: string }[];
   readIds: string[];
 }
@@ -123,6 +124,7 @@ export async function runOneShot<T extends PublicExample>(input: {
     gates: "none",
     state: "applied",
     reason: "ungated",
+    detail: null,
     transitions: [],
     readIds,
   };
@@ -398,6 +400,7 @@ export async function runController<T extends PublicExample>(input: {
       gates: "improvement-controller",
       state: result.state,
       reason: result.reason,
+      detail: result.detail ?? null,
       transitions,
       readIds,
     };

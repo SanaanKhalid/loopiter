@@ -13,8 +13,13 @@ import {
   DEFAULT_RATE_LIMIT_BUDGET_MS,
 } from "../kb-qa/live.js";
 import { planTask } from "./estimate.js";
+import { PRODUCT_MINIMUM_IMPROVEMENT } from "./constants.js";
+import { PREDICT_NAME, PROPOSE_INSTRUCTIONS, PROPOSE_NAME } from "./instructions.js";
 import { resolveLimits } from "./limits.js";
+import { requestBody } from "./bodies.js";
+import { runController } from "./loop.js";
 import { PROPOSE_BYTE_BUDGET, PROPOSE_EXAMPLE_CAP } from "./propose-bound.js";
+import { buildSeededSplit } from "./splits.js";
 
 test("retry hints and full jitter stay inside the per-wait cap", () => {
   const both = rateLimitDelayMs({
@@ -223,6 +228,142 @@ test("HotpotQA propose sends supporting paragraphs inside the byte budget", () =
   assert.ok(Buffer.byteLength(ifbenchPayload, "utf8") <= PROPOSE_BYTE_BUDGET);
   assert.equal(ifbenchParsed.examples[0]?.prompt, "prompt-3");
   assert.ok(ifbenchParsed.examples.length <= PROPOSE_EXAMPLE_CAP);
+});
+
+test("a rate-limited controller call retries without failing the arm", async () => {
+  const directory = await import("node:os").then((os) =>
+    import("node:fs/promises").then((fs) => fs.mkdtemp(`${os.tmpdir()}/controller-retry-`)),
+  );
+  const original = console.error;
+  console.error = () => undefined;
+  let fetches = 0;
+  const rejections = 24;
+  try {
+    const ledger = new LiveLedger(
+      { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+      { inputUsdPerMillion: 1, outputUsdPerMillion: 2, cachedInputUsdPerMillion: 0 },
+      `${directory}/ledger.json`,
+    );
+    const session = new LiveSession(ledger, [], false, {
+      endpoint: "https://example.openai.azure.com/",
+      apiKey: "test-key",
+      deployment: "loopiter-gpt-5-6",
+      apiVersion: "v1",
+      fetch: async (_url, init) => {
+        fetches += 1;
+        if (fetches <= rejections) {
+          return new Response(JSON.stringify({ error: { message: "slow down", type: "rate_limit_error" } }), {
+            status: 429,
+            headers: { "content-type": "application/json", "retry-after-ms": "0" },
+          });
+        }
+        const request = JSON.parse(String(init?.body ?? "{}")) as { text?: { format?: { name?: string } } };
+        const text = JSON.stringify(
+          request.text?.format?.name === PROPOSE_NAME
+            ? { fragment: `${hotpotTask.baselinePrompt}\nBe concise.` }
+            : { text: "unknown" },
+        );
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            output: [{ type: "message", content: [{ type: "output_text", text }] }],
+            usage: { input_tokens: 12, output_tokens: 8, input_tokens_details: { cached_tokens: 0 } },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+      maxTokensPerMinute: 0,
+      maxRetryWaitMs: 1_000,
+      max429Retries: rejections + 2,
+      requestTimeoutMs: 5_000,
+      maxTotalWaitMs: 60_000,
+      now: Date.now,
+      sleep: async () => undefined,
+      random: () => 0,
+      predictMaxOutputTokens: hotpotTask.predict.defaultValue,
+      proposeMaxOutputTokens: hotpotTask.propose.defaultValue,
+      reasoningEffort: "low",
+      maximumInputBytes: 262_144,
+    });
+    const loaded = hotpotTask.fixtures();
+    const split = buildSeededSplit({
+      pool: loaded.pool,
+      heldOut: loaded.heldOut,
+      seed: 1,
+      sizes: hotpotTask.fixtureSizes,
+    });
+    const directMeter = async <T>(_maximum: number, call: () => Promise<{ value: T; tokens: number | null }>) =>
+      (await call()).value;
+    const result = await runController({
+      task: hotpotTask,
+      split,
+      runner: {
+        async answer(prompt, row, context) {
+          const payload = hotpotTask.predictPayload(row);
+          const generation = await session.generate(
+            { instructions: prompt, input: payload, name: PREDICT_NAME, schema: hotpotTask.predictSchema() },
+            requestBody({
+              model: session.provider.model,
+              instructions: prompt,
+              payload,
+              name: PREDICT_NAME,
+              schema: hotpotTask.predictSchema(),
+              maxOutputTokens: session.limits.predictMaxOutputTokens,
+              reasoningEffort: session.limits.reasoningEffort,
+            }),
+            session.limits.predictMaxOutputTokens,
+            context ? context.meter.bind(context) : directMeter,
+            context?.signal ?? new AbortController().signal,
+          );
+          const text = generation.value.text;
+          return { text: typeof text === "string" ? text : "", latencyMs: generation.latencyMs };
+        },
+        async propose(request, context) {
+          const payload = hotpotTask.proposePayload(request.current, request.rows, request.feedback);
+          const generation = await session.generate(
+            {
+              instructions: PROPOSE_INSTRUCTIONS,
+              input: payload,
+              name: PROPOSE_NAME,
+              schema: hotpotTask.proposeSchema(),
+            },
+            requestBody({
+              model: session.provider.model,
+              instructions: PROPOSE_INSTRUCTIONS,
+              payload,
+              name: PROPOSE_NAME,
+              schema: hotpotTask.proposeSchema(),
+              maxOutputTokens: session.limits.proposeMaxOutputTokens,
+              reasoningEffort: session.limits.reasoningEffort,
+            }),
+            session.limits.proposeMaxOutputTokens,
+            context ? context.meter.bind(context) : directMeter,
+            context?.signal ?? new AbortController().signal,
+          );
+          const fragment = generation.value.fragment;
+          if (typeof fragment !== "string") throw new Error("Model proposal is missing the prompt.");
+          return fragment;
+        },
+      },
+      mode: "improve",
+      observation: "honest",
+      minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+      batchSize: 1,
+      observeChunk: 2,
+      latencyMs: 120_000,
+      predictMaxOutputTokens: hotpotTask.predict.defaultValue,
+      proposeMaxOutputTokens: hotpotTask.propose.defaultValue,
+      modelId: "loopiter-gpt-5-6",
+      scenario: "rate-limit-retry",
+      tickLimit: 40,
+    });
+    assert.equal(result.state, "no_improvement");
+    assert.equal(result.reason, "validation_failed");
+    assert.ok(fetches > rejections);
+  } finally {
+    console.error = original;
+    await import("node:fs/promises").then((fs) => fs.rm(directory, { recursive: true, force: true }));
+  }
 });
 
 function longRow(index: number): HotpotExample {
