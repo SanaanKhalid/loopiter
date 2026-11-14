@@ -15,17 +15,19 @@ and do not automatically enable autonomy while upgrading storage or code.
    Python schema version 2 still serves every collection except `historical`. A schema
    below 2 still fails closed and names `002-autonomy.sql`. Writing `historical` on a
    version-2 store fails with `migration_required` and names `003-historical.sql`.
-   That file takes the schema advisory lock, drops the old collection check under a
-   brief `ACCESS EXCLUSIVE` lock, adds the wider check with `NOT VALID` (no scan,
-   `SHARE UPDATE EXCLUSIVE`), then `VALIDATE CONSTRAINT` under `SHARE UPDATE EXCLUSIVE`
-   so the scan does not hold `ACCESS EXCLUSIVE`. `SET LOCAL lock_timeout = '5s'`
-   makes a blocked lock fail instead of waiting. The script does not rewrite rows
-   and does not insert a schema version, so older SDKs still see `max(version) = 2`.
-   The adapter allows `historical` only when that check already names it. Running the
-   file twice skips the `ALTER` statements in that case. `historical_down_sql()` reads
-   `003-historical-down.sql`, which is not part of `migration_sql()`. The down script
-   restores the version-2 check when no `historical` row exists, and rolls back
-   without deleting rows when one does.
+   The script is two transactions, each with `SET LOCAL lock_timeout = '5s'` and the
+   schema advisory lock. Transaction 1 drops the old check (`ACCESS EXCLUSIVE`, no scan)
+   and adds the wider check `NOT VALID` (`SHARE UPDATE EXCLUSIVE`, no scan), then commits,
+   so that exclusive lock does not cover validation. A `NOT VALID` check is still enforced
+   for new rows. Transaction 2 runs `VALIDATE CONSTRAINT` only when `convalidated` is false.
+   That scan uses `SHARE UPDATE EXCLUSIVE`, so reads and writes can proceed. The script
+   does not rewrite rows and does not insert a schema version, so older SDKs still see
+   `max(version) = 2`. The adapter allows `historical` only when that table's check names
+   it. Running the file twice, or after an interrupt between the transactions, is safe.
+   `historical_down_sql()` reads `003-historical-down.sql`, which is not part of
+   `migration_sql()` and uses the same two-transaction shape. It restores the version-2
+   check when no `historical` row exists, and transaction 1 rolls back without deleting
+   rows when one does.
 4. Upgrade adapters: Node contract version **3**, Python adapter contract version **2**.
    Python SQL schema version 2 still satisfies that adapter after `003-historical.sql`.
    New collections are

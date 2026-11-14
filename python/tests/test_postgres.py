@@ -97,8 +97,8 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
                 async with conn.cursor(row_factory=tuple_row) as cur:
                     await cur.execute(
                         "SELECT pg_get_constraintdef(oid), convalidated "
-                        "FROM pg_constraint WHERE conname = %s",
-                        ("loopiter_python_records_collection_check",),
+                        "FROM pg_constraint WHERE conrelid = %s::regclass AND conname = %s",
+                        ("loopiter_python_records", "loopiter_python_records_collection_check"),
                     )
                     definition, validated = await cur.fetchone()
                     await cur.execute("SELECT max(version) FROM loopiter_python_schema_migrations")
@@ -115,6 +115,12 @@ class PostgresTests(unittest.IsolatedAsyncioTestCase):
                 await import_batch(self.loop, [body])
             self.assertEqual(caught.exception.code, "migration_required")
             self.assertIn("003-historical.sql", str(caught.exception))
+            first, second = upgrade.split("\nCOMMIT;\n", 1)
+            async with await AsyncConnection.connect(URL, autocommit=True) as conn:
+                await conn.execute(first + "\nCOMMIT;\n")
+            halfway = await constraint()
+            self.assertIn("historical", halfway[0])
+            self.assertFalse(halfway[1])
             async with await AsyncConnection.connect(URL, autocommit=True) as conn:
                 await conn.execute(upgrade)
             self.assertEqual(

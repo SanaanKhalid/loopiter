@@ -91,8 +91,9 @@ class PostgresTransaction:
         if self._historical_ready is not None:
             return self._historical_ready
         rows = await self._query(
-            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = %s",
-            ("loopiter_python_records_collection_check",),
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conrelid = %s::regclass AND conname = %s",
+            ("loopiter_python_records", "loopiter_python_records_collection_check"),
         )
         definition = rows[0][0] if rows else ""
         self._historical_ready = "historical" in (definition or "")
