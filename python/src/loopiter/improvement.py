@@ -1275,9 +1275,10 @@ class ImprovementController:
                         "operation": "apply",
                     },
                 )
-        elif d["state"] in ("deploying", "rolling_back", "reconciliation_required") and not d.get(
-            "pending_promotion"
-        ):
+        elif (
+            d["state"] in ("deploying", "rolling_back", "reconciliation_required")
+            or (d["state"] == "paused" and d.get("operation") == "apply")
+        ) and not d.get("pending_promotion"):
             async with self._tx() as tx:
                 existing = await self._read(tx, "attempts", d["attempt_id"])
             if existing:
@@ -1292,6 +1293,14 @@ class ImprovementController:
                     await self._save(rid, owner, {"reason": "self_improvement_disabled"}, True)
                     return
                 current = await self._plain(w, w.artifact)
+                if d["operation"] == "apply" and improvement_work_disabled():
+                    await self._save(
+                        rid,
+                        owner,
+                        {"state": "paused", "reason": "self_improvement_disabled"},
+                        True,
+                    )
+                    return
                 v.baseline(current)
                 if d["operation"] == "apply" and current != d["baseline"]:
                     v.fail("stale_baseline", "Target changed before dispatch.")
@@ -1300,6 +1309,8 @@ class ImprovementController:
                     or current["configuration_hash"] != d["observation_configuration_hash"]
                 ):
                     v.fail("out_of_band_change", "Will not roll back an unrelated configuration.")
+                if d["operation"] == "apply" and d["state"] == "paused":
+                    await self._save(rid, owner, {"state": "deploying"}, True)
                 method = (
                     self.loop.rollback_candidate
                     if d["operation"] == "rollback"
@@ -1311,11 +1322,6 @@ class ImprovementController:
                     async def apply(self, request):
                         async with controller._tx() as tx:
                             await controller._owned(tx, rid, owner)
-                        if improvement_work_disabled():
-                            v.fail(
-                                "self_improvement_disabled",
-                                "Improvement work is disabled.",
-                            )
                         return await w.deployment.apply(request)
 
                     async def inspect(self, request):
@@ -1324,26 +1330,19 @@ class ImprovementController:
                     async def rollback(self, request):
                         return await w.deployment.rollback(request)
 
-                try:
-                    attempt = await method(
-                        d["selected_id"],
-                        AuthorizedAdapter(),
-                        attempt_id=d["attempt_id"],
-                        expected_artifact_version=d["artifact_version"]
-                        if d["operation"] == "rollback"
-                        else d["baseline"]["artifact_version"],
-                        **(
-                            {"authorization": {"run_id": rid, "lease_owner": owner}}
-                            if d["operation"] == "apply"
-                            else {}
-                        ),
-                    )
-                except Exception as exc:
-                    cause = exc.__cause__
-                    if getattr(cause, "code", None) == "self_improvement_disabled":
-                        await self._save(rid, owner, {"reason": "self_improvement_disabled"}, True)
-                        return
-                    raise
+                attempt = await method(
+                    d["selected_id"],
+                    AuthorizedAdapter(),
+                    attempt_id=d["attempt_id"],
+                    expected_artifact_version=d["artifact_version"]
+                    if d["operation"] == "rollback"
+                    else d["baseline"]["artifact_version"],
+                    **(
+                        {"authorization": {"run_id": rid, "lease_owner": owner}}
+                        if d["operation"] == "apply"
+                        else {}
+                    ),
+                )
             if attempt["status"] == "pending":
                 await self._save(
                     rid,

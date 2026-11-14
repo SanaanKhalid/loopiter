@@ -1378,9 +1378,10 @@ export class ImprovementController {
           });
         }
       } else if (
-        ["deploying", "rolling_back", "reconciliation_required"].includes(
+        (["deploying", "rolling_back", "reconciliation_required"].includes(
           d.state,
-        ) &&
+        ) ||
+          (d.state === "paused" && d.operation === "apply")) &&
         !d.pendingPromotion
       ) {
         const attemptId = d.attemptId!,
@@ -1410,6 +1411,19 @@ export class ImprovementController {
               candidateIds: d.candidateIds,
             };
           const current = await this.plain(w, (c) => w.artifact(c), signal2);
+          if (d.operation === "apply" && improvementWorkDisabled()) {
+            await this.save(
+              rid,
+              owner,
+              { state: "paused", reason: "self_improvement_disabled" },
+              true,
+            );
+            return {
+              ...(await idle("self_improvement_disabled", "paused")),
+              runId: rid,
+              candidateIds: d.candidateIds,
+            };
+          }
           this.baseline(current);
           if (d.operation === "apply" && hash(current) !== hash(d.baseline))
             fail("stale_baseline", "Target changed before dispatch.");
@@ -1422,6 +1436,8 @@ export class ImprovementController {
               "out_of_band_change",
               "Will not roll back an unrelated configuration.",
             );
+          if (d.operation === "apply" && d.state === "paused")
+            await this.save(rid, owner, { state: "deploying" }, true);
           // Check durable authorization immediately before the adapter dispatch, after
           // the core has persisted its attempt. Failed authorization is inspect-only.
           const adapter = {
@@ -1433,40 +1449,24 @@ export class ImprovementController {
               await this.loop.store.transaction(this.loop.namespace, (tx) =>
                 this.owned(tx, rid, owner),
               );
-              if (improvementWorkDisabled())
-                fail(
-                  "self_improvement_disabled",
-                  "Improvement work is disabled.",
-                );
               return w.deployment.apply(request);
             },
           };
-          try {
-            attempt =
-              d.operation === "rollback"
-                ? await this.loop.rollbackCandidate(cid, {
-                    adapter,
-                    attemptId,
-                    signal: signal2,
-                    expectedArtifactVersion: d.artifactVersion!,
-                  })
-                : await this.loop.deployCandidate(cid, {
-                    adapter,
-                    attemptId,
-                    signal: signal2,
-                    expectedArtifactVersion: d.baseline.artifactVersion,
-                    authorization: { runId: rid, leaseOwner: owner },
-                  });
-          } catch (error) {
-            const cause = (error as { cause?: { code?: unknown } }).cause;
-            if (cause?.code === "self_improvement_disabled")
-              return {
-                ...(await idle("self_improvement_disabled", "paused")),
-                runId: rid,
-                candidateIds: d.candidateIds,
-              };
-            throw error;
-          }
+          attempt =
+            d.operation === "rollback"
+              ? await this.loop.rollbackCandidate(cid, {
+                  adapter,
+                  attemptId,
+                  signal: signal2,
+                  expectedArtifactVersion: d.artifactVersion!,
+                })
+              : await this.loop.deployCandidate(cid, {
+                  adapter,
+                  attemptId,
+                  signal: signal2,
+                  expectedArtifactVersion: d.baseline.artifactVersion,
+                  authorization: { runId: rid, leaseOwner: owner },
+                });
         }
         if (attempt.status === "pending")
           run = await this.save(

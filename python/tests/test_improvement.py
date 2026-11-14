@@ -637,7 +637,34 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             self.workflow = replace(self.workflow, artifact=artifact)
             blocked = await self.controller().tick("classification")
             self.assertEqual(blocked["reason"], "self_improvement_disabled")
+            self.assertEqual(blocked["state"], "paused")
             self.assertEqual(self.registry.calls, 0)
+            again = await self.controller().tick("classification")
+            self.assertEqual(again["reason"], "self_improvement_disabled")
+            self.assertEqual(again["state"], "paused")
+            held = await self.controller().get_run(again["run_id"])
+            self.assertEqual(held["data"]["state"], "paused")
+            self.assertNotEqual(held["data"]["state"], "reconciliation_required")
+            self.assertEqual(self.registry.calls, 0)
+            attempts = (await self.loop.list("attempts", limit=100))["items"]
+            self.assertEqual(len(attempts), 0)
+            targets = (await self.loop.list("targets", limit=100))["items"]
+            for target in targets:
+                self.assertIsNone(target.get("pending_attempt_id"))
+            coordination = (await self.loop.list("coordination", limit=1000))["items"]
+            lock = next(row for row in coordination if row["id"].startswith("target:"))
+            self.assertEqual(lock["data"].get("consecutive_failures", 0), 0)
+            self.workflow = replace(self.workflow, artifact=original)
+            os.environ.pop("LOOPITER_DISABLE", None)
+            resumed = await self.controller().tick("classification")
+            for _ in range(8):
+                if resumed["state"] == "completed":
+                    break
+                if resumed["state"] == "observing":
+                    self.now += timedelta(hours=2)
+                resumed = await self.controller().tick("classification")
+            self.assertEqual(resumed["state"], "completed")
+            self.assertEqual(self.registry.calls, 1)
         finally:
             if previous is None:
                 os.environ.pop("LOOPITER_DISABLE", None)

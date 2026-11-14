@@ -688,7 +688,32 @@ test("tighten the disable check before apply", async () => {
     };
     const blocked = await x.controller().tick("classification");
     assert.equal(blocked.reason, "self_improvement_disabled");
+    assert.equal(blocked.state, "paused");
     assert.equal(x.registry.applications, 0);
+    const again = await x.controller().tick("classification");
+    assert.equal(again.reason, "self_improvement_disabled");
+    assert.equal(again.state, "paused");
+    const held = (await x.controller().getRun(again.runId!))!;
+    assert.equal(held.data.state, "paused");
+    assert.notEqual(held.data.state, "reconciliation_required");
+    assert.equal(x.registry.applications, 0);
+    const attempts = await x.loop.list("attempts", { limit: 100 });
+    assert.equal(attempts.items.length, 0);
+    const targets = await x.loop.list("targets", { limit: 100 });
+    for (const target of targets.items)
+      assert.equal(target.pendingAttemptId, undefined);
+    const coordination = await x.loop.list("coordination", { limit: 1000 });
+    const lock = coordination.items.find((row) => row.id.startsWith("target:"));
+    assert.equal(lock?.data.consecutiveFailures ?? 0, 0);
+    x.workflow.artifact = read;
+    delete process.env.LOOPITER_DISABLE;
+    let resumed = await x.controller().tick("classification");
+    for (let i = 0; i < 8 && resumed.state !== "completed"; i++) {
+      if (resumed.state === "observing") x.advance();
+      resumed = await x.controller().tick("classification");
+    }
+    assert.equal(resumed.state, "completed");
+    assert.equal(x.registry.applications, 1);
   } finally {
     if (previous === undefined) delete process.env.LOOPITER_DISABLE;
     else process.env.LOOPITER_DISABLE = previous;
