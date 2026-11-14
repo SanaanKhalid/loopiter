@@ -79,6 +79,7 @@ export const faqs = [
       'Install it with python -m pip install loopiter==0.3.0a1.',
       'The package pages are https://www.npmjs.com/package/loopiter and https://pypi.org/project/loopiter/.',
       'Those published archives are earlier alphas: the npm 0.3.0-alpha.1 tarball has no init or worker command, and the PyPI 0.3.0a1 sdist has no onboarding module.',
+      'They default the controller to recommend and do not ship init, worker, or --enable.',
       'The self-hosted init and worker described on this site are in the repository at https://github.com/SanaanKhalid/loopiter.',
     ]),
   },

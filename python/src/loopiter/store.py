@@ -102,7 +102,7 @@ class MemoryTransaction:
         self.check(collection)
         stored(collection, record, self.namespace)
         integer(expected_revision, "expected_revision")
-        if collection in ("signals", "events", "observations"):
+        if collection in ("signals", "events", "historical", "observations"):
             fail("immutable_record", "Collection is insert-only.")
         previous = self.state.get(collection, {}).get(record["id"])
         if (

@@ -40,17 +40,32 @@ export function sentencesOf(text) {
   return sentences;
 }
 
-/** A version exempts a sentence only when that sentence's recommend claim is about the release. */
-function versionQualifiesDefault(sentence, claimAt) {
+/**
+ * A version exempts a sentence only when the recommend claim is scoped to that
+ * release ("In 0.3.0-alpha.1, …" or "0.3.0-alpha.1 defaults to …"). Mentioning
+ * the version as a comparison does not qualify.
+ */
+function versionQualifiesDefault(sentence, _claimAt) {
   const version = sentence.match(PUBLISHED_RECOMMEND_DEFAULT);
   if (!version || version.index === undefined) return false;
-  if (/\b(?:unlike|whereas|however|instead)\b/i.test(sentence.slice(0, version.index)))
+  const before = sentence.slice(0, version.index);
+  if (
+    /\b(?:compared\s+with|compared\s+to|even\s+after|unlike|whereas|however|instead|versus|vs\.?|before|since|after)\b/i.test(
+      before,
+    )
+  )
     return false;
-  if (version.index > claimAt) {
-    const between = sentence.slice(claimAt, version.index);
-    if (/\b(?:unlike|whereas|however|instead)\b/i.test(between)) return false;
-  }
-  return true;
+  const after = sentence.slice(version.index + version[0].length);
+  const claimFollows =
+    /\b(?:still\s+)?(?:defaults?\s+to\s+recommend|recommends?\b|stays\s+on\s+recommend)\b/i.test(
+      after,
+    );
+  const versionIsSubject =
+    before.trim() === "" ||
+    /\b(?:published|package|packages|alpha|archive|release)\b/i.test(before) ||
+    /\bin\s+$/i.test(before);
+  if (claimFollows && versionIsSubject) return true;
+  return /\bin\s+$/i.test(before) && /\b(?:recommend|stays\s+off)\b/i.test(after);
 }
 
 /** Sentences that say omitting mode selects recommend or leaves self-improving off. */

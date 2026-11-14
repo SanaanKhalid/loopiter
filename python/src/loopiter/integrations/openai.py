@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from .._validation import LoopiterError
 from .context import guidance_messages, replace_guidance
+from .observe import CaptureClient
 
 
 def _json(value):
@@ -72,7 +73,7 @@ class _Capture:
                     raise ValueError("Captured response exceeded maximum_output_bytes.")
                 value = None
             identity = self.execution["metadata"]["loopiter_capture"]
-            saved = await self.owner.loop.complete_execution(
+            saved = await self.owner.capture.complete_execution(
                 self.execution["id"],
                 expected_revision=self.execution["revision"],
                 output=value,
@@ -161,8 +162,9 @@ class _Facade:
 
 
 class _Client(_Facade):
-    def __init__(self, client, *, loop, context, on_execution, maximum_output_bytes):
+    def __init__(self, client, *, loop, context, on_execution, maximum_output_bytes, capture):
         self.base = client.base if isinstance(client, _Client) else client
+        self.capture = capture
         self.loop, self.context, self.on_execution = loop, context, on_execution
         self.maximum_output_bytes = maximum_output_bytes
         super().__init__(
@@ -223,7 +225,7 @@ class _Client(_Facade):
                 "integration": request["integration"],
                 "status": "pending",
             }
-            execution = await self.loop.record_execution(
+            execution = await self.capture.record_execution(
                 **{
                     key: context[key]
                     for key in ("id", "episode_id", "entity_id", "parent_execution_id")
@@ -256,7 +258,9 @@ class _Client(_Facade):
         return captured
 
 
-def with_loopiter(client, *, loop, context, on_execution=None, maximum_output_bytes=65536):
+def with_loopiter(
+    client, *, loop, context, on_execution=None, maximum_output_bytes=65536, capture=None
+):
     """Return an isolated async client facade. Feedback remains an explicit record_signal call.
 
     Context returns artifact versions and optional id/episode_id/entity_id/guidance.
@@ -265,10 +269,12 @@ def with_loopiter(client, *, loop, context, on_execution=None, maximum_output_by
     """
     if type(maximum_output_bytes) is not int or maximum_output_bytes < 1:
         raise ValueError("maximum_output_bytes must be a positive integer.")
+    writer = capture if capture is not None else CaptureClient(loop, failure_mode="closed")
     return _Client(
         client,
-        loop=loop,
+        loop=writer.loop,
         context=context,
         on_execution=on_execution,
         maximum_output_bytes=maximum_output_bytes,
+        capture=writer,
     )

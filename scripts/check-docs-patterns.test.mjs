@@ -64,6 +64,22 @@ test("a published sentence in another paragraph does not exempt a stale claim", 
   assert.ok(omittedModeClaimsRecommend(text).length > 0);
 });
 
+test("a version exempts only a claim scoped to that release", () => {
+  for (const line of [
+    "Compared with 0.3.0-alpha.1, omitting the mode still selects recommend.",
+    "Even after 0.3.0-alpha.1, omitting the mode selects recommend.",
+  ])
+    assert.ok(omittedModeClaimsRecommend(line).length > 0, line);
+  for (const line of [
+    "In 0.3.0-alpha.1, omitting the mode selects recommend.",
+    "0.3.0-alpha.1 defaults to recommend.",
+    "Constructing the controller without a mode in 0.3.0-alpha.1 still recommends and does not apply.",
+    "With no mode the published 0.3.0a1 package stays on recommend.",
+    "The published v0.3.0-alpha.1 still defaults to recommend.",
+  ])
+    assert.deepEqual(omittedModeClaimsRecommend(line), [], line);
+});
+
 test("published alpha notes that mention recommend still pass", () => {
   assert.deepEqual(
     omittedModeClaimsRecommend(

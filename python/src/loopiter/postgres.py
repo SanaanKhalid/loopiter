@@ -101,7 +101,7 @@ class PostgresTransaction:
         self._check(collection)
         v.stored(collection, record, self.namespace)
         v.integer(expected_revision, "expected_revision")
-        if collection in ("signals", "events", "observations"):
+        if collection in ("signals", "events", "historical", "observations"):
             v.fail("immutable_record", "Collection is insert-only.")
         if record["revision"] != expected_revision + 1:
             v.fail("conflict", "Replacement revision must increment by one.")
