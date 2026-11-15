@@ -202,8 +202,8 @@ def _luhn_ok(even: list[int], odd: list[int], start: int, end: int) -> bool:
 
 def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
     length = len(value)
-    even = [0] * (length + 1)
-    odd = [0] * (length + 1)
+    even: list[int] | None = None
+    odd: list[int] | None = None
     i = 0
     while i < length:
         if not ("0" <= value[i] <= "9"):
@@ -214,12 +214,31 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
         seps: list[str] = []
         glens: list[int] = []
         gdigit = [0]
-        seen = 0
         while i < length and "0" <= value[i] <= "9":
             starts.append(i)
             glen = 0
             while i < length and "0" <= value[i] <= "9":
-                n = ord(value[i]) - 48
+                glen += 1
+                i += 1
+            ends.append(i)
+            glens.append(glen)
+            gdigit.append(gdigit[-1] + glen)
+            if i + 1 < length and value[i] in " -" and "0" <= value[i + 1] <= "9":
+                seps.append(value[i])
+                i += 1
+                continue
+            seps.append("")
+            break
+        if not any(glen == 4 or glen == 8 or 13 <= glen <= 19 for glen in glens):
+            continue
+        if even is None or odd is None:
+            even = [0] * (length + 1)
+            odd = [0] * (length + 1)
+        seen = 0
+        for group_at, group_end in zip(starts, ends, strict=True):
+            pos = group_at
+            while pos < group_end:
+                n = ord(value[pos]) - 48
                 doubled = n * 2
                 if doubled > 9:
                     doubled -= 9
@@ -231,17 +250,7 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
                 else:
                     even[seen] = even[prev] + n
                     odd[seen] = odd[prev] + doubled
-                glen += 1
-                i += 1
-            ends.append(i)
-            glens.append(glen)
-            gdigit.append(seen)
-            if i + 1 < length and value[i] in " -" and "0" <= value[i + 1] <= "9":
-                seps.append(value[i])
-                i += 1
-                continue
-            seps.append("")
-            break
+                pos += 1
 
         group = 0
         count = len(glens)
