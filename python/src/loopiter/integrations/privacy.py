@@ -51,6 +51,10 @@ _TOKEN = re.compile(
     r"AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![A-Za-z0-9_])",
     re.ASCII,
 )
+_JWT = re.compile(
+    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])",
+    re.ASCII,
+)
 _JWT_BODY = re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", re.ASCII)
 _JWT_EDGE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 _AWS_SECRET = re.compile(
@@ -406,10 +410,18 @@ def _boundary_ok(value: str, index: int, end: bool, edges: set[int]) -> bool:
 
 
 def _jwt_spans(value: str, spans: list[tuple[int, int, str, int]], edges: set[int]) -> None:
-    for match in _JWT_BODY.finditer(value):
-        start, end = match.start(), match.end()
-        if _boundary_ok(value, start, False, edges) and _boundary_ok(value, end, True, edges):
-            spans.append((start, end, _MARKER, start))
+    covered: set[int] = set()
+    for match in _JWT.finditer(value):
+        spans.append((match.start(), match.end(), _MARKER, match.start()))
+        covered.add(match.start())
+    for edge in edges:
+        if edge in covered or not value.startswith("eyJ", edge):
+            continue
+        match = _JWT_BODY.match(value, edge)
+        if match is None or not _boundary_ok(value, match.end(), True, edges):
+            continue
+        spans.append((match.start(), match.end(), _MARKER, match.start()))
+        covered.add(edge)
 
 
 def _redact_text(value: str) -> str:

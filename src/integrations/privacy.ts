@@ -35,7 +35,8 @@ const basic = new RegExp(
   "g",
 );
 const tokens = /(?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![A-Za-z0-9_])/g;
-const jwtBody = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+const jwt = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])/g;
+const jwtBody = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/y;
 const JWT_EDGE = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-");
 const awsSecret = new RegExp(
   `(?<![A-Za-z0-9])(["']?(?:aws[-_]?)?secret[-_]?access[-_]?key["']?${WS}*[=:]${WS}*["']?)[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])`,
@@ -184,13 +185,17 @@ function jwtBoundary(value: string, index: number, atEnd: boolean, edges: Set<nu
 }
 
 function pushJwts(value: string, spans: Span[], edges: Set<number>): void {
-  jwtBody.lastIndex = 0;
-  for (const match of value.matchAll(jwtBody)) {
-    const start = match.index ?? 0;
-    const end = start + match[0].length;
-    if (jwtBoundary(value, start, false, edges) && jwtBoundary(value, end, true, edges)) {
-      spans.push([start, end, MARKER, start]);
-    }
+  collect(jwt, value, spans, () => MARKER, (match) => match.index ?? 0);
+  const covered = new Set(spans.map((span) => span[0]));
+  for (const edge of edges) {
+    if (covered.has(edge) || !value.startsWith("eyJ", edge)) continue;
+    jwtBody.lastIndex = edge;
+    const match = jwtBody.exec(value);
+    if (!match || match.index !== edge) continue;
+    const end = edge + match[0].length;
+    if (!jwtBoundary(value, end, true, edges)) continue;
+    spans.push([edge, end, MARKER, edge]);
+    covered.add(edge);
   }
   jwtBody.lastIndex = 0;
 }
