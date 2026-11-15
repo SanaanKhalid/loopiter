@@ -35,7 +35,8 @@ const basic = new RegExp(
   "g",
 );
 const tokens = /(?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![A-Za-z0-9_])/g;
-const jwt = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])/g;
+const jwtBody = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+const JWT_EDGE = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-");
 const awsSecret = new RegExp(
   `(?<![A-Za-z0-9])(["']?(?:aws[-_]?)?secret[-_]?access[-_]?key["']?${WS}*[=:]${WS}*["']?)[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])`,
   "gi",
@@ -116,38 +117,82 @@ function pushUrls(value: string, spans: Span[]): void {
   }
 }
 
-function pushEmails(value: string, spans: Span[], blocked: Array<[number, number]>): void {
+function emailDomainEnd(domain: string): number {
+  let best = 0;
+  let index = 0;
+  while (index < domain.length) {
+    if (domain[index] !== ".") {
+      index += 1;
+      continue;
+    }
+    let tld = index + 1;
+    while (tld < domain.length && /[A-Za-z]/.test(domain[tld]!)) tld += 1;
+    if (index > 0 && tld - index > 2) best = tld;
+    index = tld > index ? tld : index + 1;
+  }
+  return best;
+}
+
+function pushEmails(value: string, spans: Span[], blocked: Array<[number, number]>, edges: Set<number>): void {
   let i = 0;
+  let pointer = 0;
   while (i < value.length) {
     const at = value.indexOf("@", i);
     if (at < 0) return;
     let left = at;
     while (left > i && localChar.test(value[left - 1]!)) left -= 1;
     const prev = left > 0 ? value[left - 1]! : "";
-    const boundary = left === 0 || isWs(prev) || prev === "<" || prev === "(" || prev === ":";
+    const boundary = left === 0 || isWs(prev) || prev === "<" || prev === "(" || prev === ":" || edges.has(left);
     let j = at + 1;
     while (j < value.length && domainChar.test(value[j]!)) j += 1;
-    const domain = value.slice(at + 1, j);
-    const dot = domain.lastIndexOf(".");
-    const tld = dot >= 0 ? domain.slice(dot + 1) : "";
-    const next = j < value.length ? value[j]! : "";
-    if (
-      left === at ||
-      !boundary ||
-      dot <= 0 ||
-      !/^[A-Za-z]{2,}$/.test(tld) ||
-      (next !== "" && /[A-Za-z0-9]/.test(next))
-    ) {
+    const prefix = emailDomainEnd(value.slice(at + 1, j));
+    const end = at + 1 + prefix;
+    const next = end < value.length ? value[end]! : "";
+    const full = prefix === j - (at + 1);
+    const rightBlocked = full && next !== "" && /[A-Za-z0-9]/.test(next) && !edges.has(end);
+    if (left === at || !boundary || prefix === 0 || rightBlocked) {
       i = at + 1;
       continue;
     }
-    if (blocked.some(([start, stop]) => left < stop && start < j)) {
-      i = j;
+    while (pointer < blocked.length && blocked[pointer]![1] <= left) pointer += 1;
+    const block = blocked[pointer];
+    if (block && block[0] < end && left < block[1]) {
+      i = end;
       continue;
     }
-    spans.push([left, j, MARKER, left]);
-    i = j;
+    spans.push([left, end, MARKER, left]);
+    i = end;
   }
+}
+
+function spanEdges(spans: Span[]): Set<number> {
+  const edges = new Set<number>();
+  for (const span of spans) {
+    edges.add(span[0]);
+    edges.add(span[1]);
+  }
+  return edges;
+}
+
+function jwtBoundary(value: string, index: number, atEnd: boolean, edges: Set<number>): boolean {
+  if (atEnd) {
+    if (index === value.length || edges.has(index)) return true;
+    return !JWT_EDGE.has(value[index]!);
+  }
+  if (index === 0 || edges.has(index)) return true;
+  return !JWT_EDGE.has(value[index - 1]!);
+}
+
+function pushJwts(value: string, spans: Span[], edges: Set<number>): void {
+  jwtBody.lastIndex = 0;
+  for (const match of value.matchAll(jwtBody)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (jwtBoundary(value, start, false, edges) && jwtBoundary(value, end, true, edges)) {
+      spans.push([start, end, MARKER, start]);
+    }
+  }
+  jwtBody.lastIndex = 0;
 }
 
 function luhnOk(even: number[], odd: number[], start: number, end: number): boolean {
@@ -358,17 +403,17 @@ function redactText(value: string): string {
   const spans: Span[] = [];
   collect(privateKey, value, spans, () => MARKER, (match) => match.index ?? 0);
   collect(tokens, value, spans, () => MARKER, (match) => match.index ?? 0);
-  collect(jwt, value, spans, () => MARKER, (match) => match.index ?? 0);
   collect(awsSecret, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
   collect(bearer, value, spans, () => `Bearer ${MARKER}`, (match) => tokenStart(value, (match.index ?? 0) + match[0].length));
   collect(basic, value, spans, () => `Basic ${MARKER}`, (match) => tokenStart(value, (match.index ?? 0) + match[0].length));
   const urls: Span[] = [];
   pushUrls(value, urls);
   spans.push(...urls);
-  pushEmails(value, spans, urls.map((span) => [span[0], span[1]]));
   pushCards(value, spans);
   collect(assigned, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
   collect(queryToken, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
+  pushEmails(value, spans, urls.map((span) => [span[0], span[1]]), spanEdges(spans));
+  pushJwts(value, spans, spanEdges(spans));
   return applySpans(value, spans);
 }
 

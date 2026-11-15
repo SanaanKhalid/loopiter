@@ -51,10 +51,8 @@ _TOKEN = re.compile(
     r"AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![A-Za-z0-9_])",
     re.ASCII,
 )
-_JWT = re.compile(
-    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])",
-    re.ASCII,
-)
+_JWT_BODY = re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", re.ASCII)
+_JWT_EDGE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 _AWS_SECRET = re.compile(
     rf"(?<![A-Za-z0-9])([\"']?(?:aws[-_]?)?secret[-_]?access[-_]?key[\"']?{_WS}*[=:]{_WS}*[\"']?)"
     r"[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])",
@@ -112,11 +110,33 @@ def _url_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
         i = j + 1
 
 
+def _email_domain_end(domain: str) -> int:
+    """Longest prefix that ends in a letter label.tld, or 0."""
+    best = 0
+    index = 0
+    limit = len(domain)
+    while index < limit:
+        if domain[index] != ".":
+            index += 1
+            continue
+        tld = index + 1
+        while tld < limit and domain[tld] in _LETTERS:
+            tld += 1
+        if index > 0 and tld - index > 2:
+            best = tld
+        index = tld if tld > index else index + 1
+    return best
+
+
 def _email_spans(
-    value: str, spans: list[tuple[int, int, str, int]], blocked: list[tuple[int, int]]
+    value: str,
+    spans: list[tuple[int, int, str, int]],
+    blocked: list[tuple[int, int]],
+    edges: set[int],
 ) -> None:
     i = 0
     length = len(value)
+    pointer = 0
     while i < length:
         at = value.find("@", i)
         if at < 0:
@@ -125,29 +145,25 @@ def _email_spans(
         while left > i and value[left - 1] in _LOCAL:
             left -= 1
         prev = value[left - 1] if left > 0 else ""
-        boundary = left == 0 or prev in _WS_SET or prev in "<(:"
+        boundary = left == 0 or prev in _WS_SET or prev in "<(:" or left in edges
         j = at + 1
         while j < length and value[j] in _DOMAIN:
             j += 1
-        domain = value[at + 1 : j]
-        dot = domain.rfind(".")
-        tld = domain[dot + 1 :] if dot >= 0 else ""
-        nxt = value[j] if j < length else ""
-        if (
-            left == at
-            or not boundary
-            or dot <= 0
-            or len(tld) < 2
-            or any(ch not in _LETTERS for ch in tld)
-            or (nxt != "" and nxt.isalnum() and nxt.isascii())
-        ):
+        prefix = _email_domain_end(value[at + 1 : j])
+        end = at + 1 + prefix
+        nxt = value[end] if end < length else ""
+        full = prefix == j - (at + 1)
+        right_blocked = full and nxt != "" and nxt.isalnum() and nxt.isascii() and end not in edges
+        if left == at or not boundary or prefix == 0 or right_blocked:
             i = at + 1
             continue
-        if any(left < stop and start < j for start, stop in blocked):
-            i = j
+        while pointer < len(blocked) and blocked[pointer][1] <= left:
+            pointer += 1
+        if pointer < len(blocked) and blocked[pointer][0] < end and left < blocked[pointer][1]:
+            i = end
             continue
-        spans.append((left, j, "[REDACTED]", left))
-        i = j
+        spans.append((left, end, "[REDACTED]", left))
+        i = end
 
 
 # Contiguous 13-19, or one separator and one of these group layouts.
@@ -371,13 +387,36 @@ def _token_start(value: str, end: int) -> int:
     return secret
 
 
+def _span_edges(spans: list[tuple[int, int, str, int]]) -> set[int]:
+    edges: set[int] = set()
+    for start, end, _repl, _secret in spans:
+        edges.add(start)
+        edges.add(end)
+    return edges
+
+
+def _boundary_ok(value: str, index: int, end: bool, edges: set[int]) -> bool:
+    if end:
+        if index == len(value) or index in edges:
+            return True
+        return value[index] not in _JWT_EDGE
+    if index == 0 or index in edges:
+        return True
+    return value[index - 1] not in _JWT_EDGE
+
+
+def _jwt_spans(value: str, spans: list[tuple[int, int, str, int]], edges: set[int]) -> None:
+    for match in _JWT_BODY.finditer(value):
+        start, end = match.start(), match.end()
+        if _boundary_ok(value, start, False, edges) and _boundary_ok(value, end, True, edges):
+            spans.append((start, end, _MARKER, start))
+
+
 def _redact_text(value: str) -> str:
     spans: list[tuple[int, int, str, int]] = []
     for match in _PRIVATE_KEY.finditer(value):
         spans.append((match.start(), match.end(), _MARKER, match.start()))
     for match in _TOKEN.finditer(value):
-        spans.append((match.start(), match.end(), _MARKER, match.start()))
-    for match in _JWT.finditer(value):
         spans.append((match.start(), match.end(), _MARKER, match.start()))
     for match in _AWS_SECRET.finditer(value):
         label = match.start() + len(match.group(1))
@@ -393,7 +432,6 @@ def _redact_text(value: str) -> str:
     urls: list[tuple[int, int, str, int]] = []
     _url_spans(value, urls)
     spans.extend(urls)
-    _email_spans(value, spans, [(span[0], span[1]) for span in urls])
     _card_spans(value, spans)
     for match in _ASSIGNED_SECRET.finditer(value):
         label = match.start() + len(match.group(1))
@@ -401,6 +439,10 @@ def _redact_text(value: str) -> str:
     for match in _QUERY_TOKEN.finditer(value):
         label = match.start() + len(match.group(1))
         spans.append((match.start(), match.end(), match.group(1) + _MARKER, label))
+    edges = _span_edges(spans)
+    _email_spans(value, spans, [(span[0], span[1]) for span in urls], edges)
+    edges = _span_edges(spans)
+    _jwt_spans(value, spans, edges)
     return _apply_spans(value, spans)
 
 

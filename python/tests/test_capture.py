@@ -628,6 +628,7 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         scales_text("sk-abcdefghijklmnop " * 3276)
         scales_text("eyJa.b.c " * 7281)
         scales_text("Basic 4111 " * 5957)
+        scales_text("http://u:p@a.co " * 4096)
 
     def test_detectors_read_the_original_text_only(self):
         from unittest.mock import patch
@@ -661,7 +662,7 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         names = (
             "_PRIVATE_KEY",
             "_TOKEN",
-            "_JWT",
+            "_JWT_BODY",
             "_AWS_SECRET",
             "_BEARER",
             "_BASIC",

@@ -457,6 +457,30 @@
     {
       "input": "4111 1111 1111 1111token=",
       "output": "[REDACTED]token="
+    },
+    {
+      "input": "user@example.com4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.com-----BEGIN FIXTURE PRIVATE KEY-----\nabc\n-----END FIXTURE PRIVATE KEY-----",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "-----BEGIN FIXTURE PRIVATE KEY-----\nabc\n-----END FIXTURE PRIVATE KEY-----user@example.com",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "-----BEGIN FIXTURE PRIVATE KEY-----\nabc\n-----END FIXTURE PRIVATE KEY-----eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111111111111111eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl3782 822463 10005",
+      "output": "[REDACTED]"
     }
   ],
   "boundaries": [
