@@ -219,6 +219,18 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
         if not ("0" <= value[i] <= "9"):
             i += 1
             continue
+        # An isolated group shorter than 13 digits cannot be a card. Skip it
+        # before allocating the run, which is the common case in mixed text.
+        run_at = i
+        glen = 0
+        while i < length and "0" <= value[i] <= "9":
+            glen += 1
+            i += 1
+        if not (
+            (i + 1 < length and value[i] in " -" and "0" <= value[i + 1] <= "9") or 13 <= glen <= 19
+        ):
+            continue
+        i = run_at
         starts: list[int] = []
         ends: list[int] = []
         seps: list[str] = []
@@ -239,7 +251,10 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
                 continue
             seps.append("")
             break
-        if not any(glen == 4 or glen == 8 or 13 <= glen <= 19 for glen in glens):
+        if not any(
+            13 <= glen <= 19 or ((glen == 4 or glen == 8) and sep)
+            for glen, sep in zip(glens, seps, strict=True)
+        ):
             continue
         if even is None or odd is None:
             even = [0] * (length + 1)
