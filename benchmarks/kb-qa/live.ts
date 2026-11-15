@@ -86,50 +86,45 @@ function boundAbort(ms: number): { signal: AbortSignal; done: () => void } {
   };
 }
 
-/** `/proc/<pid>/stat` field 22, the process start time. Null when it cannot be read. */
-export function readProcessStartTicks(pid: number): string | null {
+/** True when the pid exists. Signal 0 does not deliver a signal. EPERM means it exists and belongs to another user. */
+export function processIsRunning(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const field = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
-    return field && /^\d+$/.test(field) ? field : null;
-  } catch {
-    return null;
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
-/** Kill only when the parent is still the same process. A missing start time does not kill. */
+/** Kill only when this helper is still a child of that live process. */
 export function shouldForceKill(input: {
   ppid: number;
   parentPid: number;
-  expectedStart: string | null;
-  currentStart: string | null;
+  parentAlive: boolean;
 }): boolean {
-  if (input.ppid !== input.parentPid) return false;
-  if (input.expectedStart === null || input.currentStart === null) return false;
-  return input.currentStart === input.expectedStart;
+  return input.ppid === input.parentPid && input.parentAlive;
 }
 
 export function forceKillScript(
   parentPid: number,
   delayMs: number,
-  expectedStart: string | null,
   resultPath?: string,
 ): string {
   if (!Number.isInteger(parentPid) || parentPid <= 0 || !Number.isInteger(delayMs) || delayMs < 0)
     throw new Error("Invalid force-kill helper.");
-  if (expectedStart !== null && !/^\d+$/.test(expectedStart))
-    throw new Error("Invalid force-kill helper.");
-  const startLiteral = expectedStart === null ? "null" : JSON.stringify(expectedStart);
   const resultLiteral = resultPath === undefined ? "null" : JSON.stringify(resultPath);
-  return `const parentPid=${parentPid};const expectedStart=${startLiteral};const delay=${delayMs};const resultPath=${resultLiteral};
+  return `const parentPid=${parentPid};const delay=${delayMs};const resultPath=${resultLiteral};
 const fs=require("node:fs");
-function currentStart(){try{const stat=fs.readFileSync("/proc/"+parentPid+"/stat","utf8");const field=stat.slice(stat.lastIndexOf(")")+2).split(" ")[19];return field&&/^\\d+$/.test(field)?field:null;}catch{return null;}}
+function parentAlive(){
+  // EPERM is another user's live process. Treat it as skip; this helper's parent is the same user.
+  try{process.kill(parentPid,0);return true;}catch{return false;}
+}
 function note(kind){if(resultPath)fs.writeFileSync(resultPath,kind);}
 const started=Date.now();
 const timer=setInterval(()=>{
-  const sameParent=process.ppid===parentPid;
-  const current=currentStart();
-  if(!sameParent||expectedStart===null||current===null||current!==expectedStart){clearInterval(timer);note("skip");process.exit(0);}
+  if(process.ppid!==parentPid){clearInterval(timer);note("skip");process.exit(0);}
+  if(!parentAlive()){clearInterval(timer);note("dead");process.exit(0);}
   if(Date.now()-started<delay)return;
   clearInterval(timer);
   note("kill");
@@ -154,7 +149,7 @@ export function forceExit(
   timer.unref();
   const killer = hooks
     ? null
-    : spawn(process.execPath, ["-e", forceKillScript(process.pid, delay, readProcessStartTicks(process.pid))], {
+    : spawn(process.execPath, ["-e", forceKillScript(process.pid, delay)], {
         detached: true,
         stdio: "ignore",
         windowsHide: true,

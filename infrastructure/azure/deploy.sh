@@ -568,7 +568,9 @@ build_platform_image() {
     echo "LOOPITER_COMMIT must match ^[0-9a-f]{40}\$ from git rev-parse HEAD in the loopiter-platform checkout. Image was not built." >&2
     exit 1
   fi
-  if ! built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ); then
+  if [[ "$DRY" == "1" && -n "${LOOPITER_BUILT_AT_STUB:-}" ]]; then
+    built_at=$LOOPITER_BUILT_AT_STUB
+  elif ! built_at=$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))'); then
     echo "Could not format a UTC timestamp. Image was not built." >&2
     exit 1
   fi
