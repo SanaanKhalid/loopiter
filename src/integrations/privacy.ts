@@ -428,9 +428,32 @@ function pushTokensAtEdges(value: string, spans: Span[], edges: Set<number>): vo
 }
 
 function pushSuffixCards(value: string, spans: Span[], covers: Span[]): void {
-  if (covers.length === 0) return;
-  const ordered = covers.slice().sort((a, b) => a[0] - b[0]);
+  // A card suffix is only exposed by a span that begins before the digit group.
+  // Digit-leading spans are cards themselves; skipping them keeps this pass off
+  // the long contiguous-digit shapes.
   const length = value.length;
+  const ordered = covers
+    .filter((span) => {
+      const code = value.charCodeAt(span[0]!);
+      return span[0] < length && (code < 48 || code > 57) && span[1] > span[0];
+    })
+    .sort((a, b) => a[0] - b[0]);
+  if (ordered.length === 0) return;
+  let run = 0;
+  let longRun = false;
+  for (let index = 0; index < length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 48 && code <= 57) {
+      run += 1;
+      if (run > 4) {
+        longRun = true;
+        break;
+      }
+    } else {
+      run = 0;
+    }
+  }
+  if (!longRun) return;
   let i = 0;
   let pointer = 0;
   const digitAt = (index: number) => {

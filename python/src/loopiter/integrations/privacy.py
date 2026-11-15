@@ -464,10 +464,28 @@ def _token_spans_at_edges(
 def _suffix_card_spans(
     value: str, spans: list[tuple[int, int, str, int]], covers: list[tuple[int, int, str, int]]
 ) -> None:
-    if not covers:
-        return
-    ordered = sorted(covers, key=lambda span: span[0])
+    # A card suffix is only exposed by a span that begins before the digit group.
+    # Digit-leading spans are cards themselves; skipping them keeps this pass off
+    # the long contiguous-digit shapes.
     length = len(value)
+    ordered = [
+        span
+        for span in covers
+        if span[0] < length and not ("0" <= value[span[0]] <= "9") and span[1] > span[0]
+    ]
+    if not ordered:
+        return
+    ordered.sort(key=lambda span: span[0])
+    run = 0
+    for char in value:
+        if "0" <= char <= "9":
+            run += 1
+            if run > 4:
+                break
+        else:
+            run = 0
+    else:
+        return
     i = 0
     pointer = 0
     while i < length:
@@ -521,8 +539,6 @@ def _suffix_card_spans(
                 for size in range(len(lengths), 0, -1):
                     if tuple(lengths[:size]) not in _EXACT_LAYOUTS:
                         continue
-                    end_group = group + size - 1
-                    end_at = ends[group] if size == 1 else ends[end_group]
                     if size == 1:
                         end_at = char_start + lead
                     else:
