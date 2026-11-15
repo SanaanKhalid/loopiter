@@ -190,7 +190,7 @@ function pushJwts(value: string, spans: Span[], edges: Set<number>): void {
   collect(jwt, value, spans, () => MARKER, (match) => match.index ?? 0);
   const covered = new Set(spans.map((span) => span[0]));
   for (const edge of edges) {
-    if (covered.has(edge) || !value.startsWith("eyJ", edge)) continue;
+    if (covered.has(edge) || edge >= value.length || value.charCodeAt(edge) !== 101 || !value.startsWith("eyJ", edge)) continue;
     jwtBody.lastIndex = edge;
     const match = jwtBody.exec(value);
     if (!match || match.index !== edge) continue;
@@ -413,7 +413,9 @@ function tokenRightOk(value: string, end: number, edges: Set<number>): boolean {
 function pushTokensAtEdges(value: string, spans: Span[], edges: Set<number>): void {
   const covered = new Set(spans.map((span) => span[0]));
   for (const edge of edges) {
-    if (covered.has(edge) || edge >= value.length) continue;
+    if (edge >= value.length || covered.has(edge)) continue;
+    const headCode = value.charCodeAt(edge);
+    if (headCode !== 115 && headCode !== 103 && headCode !== 65 && headCode !== 120) continue;
     const head = value.slice(edge, edge + 12);
     const gh = head.length >= 4 && ["ghp", "gho", "ghu", "ghs", "ghr"].includes(head.slice(0, 3)) && head[3] === "_";
     const xox = head.length >= 5 && head.startsWith("xox") && "baprs".includes(head[3]!) && head[4] === "-";

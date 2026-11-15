@@ -210,6 +210,21 @@ def _luhn_ok(even: list[int], odd: list[int], start: int, end: int) -> bool:
     return (odd[end] - odd[start]) % 10 == 0
 
 
+_LUHN_DOUBLE = (0, 2, 4, 6, 8, 1, 3, 5, 7, 9)
+
+
+def _luhn_span(value: str, start: int, end: int) -> bool:
+    total = 0
+    alt = False
+    for pos in range(end - 1, start - 1, -1):
+        number = ord(value[pos]) - 48
+        if alt:
+            number = _LUHN_DOUBLE[number]
+        total += number
+        alt = not alt
+    return total % 10 == 0
+
+
 def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
     length = len(value)
     even: list[int] | None = None
@@ -255,6 +270,19 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
             13 <= glen <= 19 or ((glen == 4 or glen == 8) and sep)
             for glen, sep in zip(glens, seps, strict=True)
         ):
+            continue
+        if not any((glen == 4 or glen == 8) and sep for glen, sep in zip(glens, seps, strict=True)):
+            for group, glen in enumerate(glens):
+                if not 13 <= glen <= 19:
+                    continue
+                start_at = starts[group]
+                group_end = ends[group]
+                if start_at != 0 and _ascii_digit(value[start_at - 1]):
+                    continue
+                if group_end != length and _ascii_digit(value[group_end]):
+                    continue
+                if _luhn_span(value, start_at, group_end):
+                    spans.append((start_at, group_end, _MARKER, start_at))
             continue
         if even is None or odd is None:
             even = [0] * (length + 1)
@@ -455,8 +483,9 @@ def _token_spans_at_edges(
     value: str, spans: list[tuple[int, int, str, int]], edges: set[int]
 ) -> None:
     covered = {start for start, _end, _repl, _secret in spans}
+    length = len(value)
     for edge in edges:
-        if edge in covered or edge >= len(value):
+        if edge >= length or edge in covered or value[edge] not in "sgAGx":
             continue
         head = value[edge : edge + 12]
         if not (
@@ -588,8 +617,14 @@ def _jwt_spans(value: str, spans: list[tuple[int, int, str, int]], edges: set[in
     for match in _JWT.finditer(value):
         spans.append((match.start(), match.end(), _MARKER, match.start()))
         covered.add(match.start())
+    length = len(value)
     for edge in edges:
-        if edge in covered or not value.startswith("eyJ", edge):
+        if (
+            edge >= length
+            or edge in covered
+            or value[edge] != "e"
+            or not value.startswith("eyJ", edge)
+        ):
             continue
         match = _JWT_BODY.match(value, edge)
         if match is None or not _boundary_ok(value, match.end(), True, edges):
