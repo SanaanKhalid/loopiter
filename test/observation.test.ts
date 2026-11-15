@@ -180,7 +180,9 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
     let sample = "";
     for (let k = 0; k < length; k += 1) sample += alphabet[Math.floor(rnd() * alphabet.length)];
     if (rnd() < 0.3) sample += `${rnd() < 0.5 ? " " : "-"}4111111111111111`;
-    redacted += (String(redactCapture(sample)).match(/\[REDACTED\]/g) ?? []).length;
+    const once = String(redactCapture(sample));
+    assert.equal(String(redactCapture(once)), once);
+    redacted += (once.match(/\[REDACTED\]/g) ?? []).length;
     baseline += reference(sample);
   }
   assert.ok(redacted >= baseline);
@@ -211,6 +213,7 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
   scales("eyJa.b.c ".repeat(7281));
   scales("Basic 4111 ".repeat(5957));
   scales("http://u:p@a.co ".repeat(4096));
+  scales("https://u:p@h.io/ ".repeat(3640));
 });
 
 test("detectors read the original text only", () => {

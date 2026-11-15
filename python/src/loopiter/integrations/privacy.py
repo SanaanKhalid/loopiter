@@ -40,6 +40,10 @@ _PRIVATE_KEY = re.compile(
     r"-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|\Z)",
     re.ASCII,
 )
+_ARMOR = re.compile(
+    r"-----BEGIN [^-]*PRIVATE KEY-----|-----END [^-]*PRIVATE KEY-----",
+    re.ASCII,
+)
 _BEARER = re.compile(rf"(?<![A-Za-z0-9_])Bearer{_WS}+[A-Za-z0-9+/_.=~-]+", _FLAGS)
 _BASIC = re.compile(
     rf"(?<![A-Za-z0-9_])[Bb][Aa][Ss][Ii][Cc]{_WS}+(?![a-z]+(?![A-Za-z0-9_/+.=~-]))[A-Za-z0-9+/_.=~-]+",
@@ -49,6 +53,12 @@ _TOKEN = re.compile(
     r"(?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|"
     r"gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|"
     r"AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![A-Za-z0-9_])",
+    re.ASCII,
+)
+_TOKEN_BODY = re.compile(
+    r"(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|"
+    r"gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|"
+    r"AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})",
     re.ASCII,
 )
 _JWT = re.compile(
@@ -418,6 +428,130 @@ def _boundary_ok(value: str, index: int, end: bool, edges: set[int]) -> bool:
     return value[index - 1] not in _JWT_EDGE
 
 
+def _token_right_ok(value: str, end: int, edges: set[int]) -> bool:
+    return (
+        end == len(value)
+        or end in edges
+        or value[end] not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+    )
+
+
+def _token_spans_at_edges(
+    value: str, spans: list[tuple[int, int, str, int]], edges: set[int]
+) -> None:
+    covered = {start for start, _end, _repl, _secret in spans}
+    for edge in edges:
+        if edge in covered or edge >= len(value):
+            continue
+        head = value[edge : edge + 12]
+        if not (
+            head.startswith(("sk-", "sk_live_", "github_pat_", "AIza", "AKIA", "ASIA"))
+            or (
+                len(head) >= 4
+                and head[:3] in {"ghp", "gho", "ghu", "ghs", "ghr"}
+                and head[3] == "_"
+            )
+            or (len(head) >= 5 and head[:3] == "xox" and head[3] in "baprs" and head[4] == "-")
+        ):
+            continue
+        match = _TOKEN_BODY.match(value, edge)
+        if match is None or not _token_right_ok(value, match.end(), edges):
+            continue
+        spans.append((match.start(), match.end(), _MARKER, match.start()))
+        covered.add(edge)
+
+
+def _suffix_card_spans(
+    value: str, spans: list[tuple[int, int, str, int]], covers: list[tuple[int, int, str, int]]
+) -> None:
+    if not covers:
+        return
+    ordered = sorted(covers, key=lambda span: span[0])
+    length = len(value)
+    i = 0
+    pointer = 0
+    while i < length:
+        if not ("0" <= value[i] <= "9"):
+            i += 1
+            continue
+        starts: list[int] = []
+        ends: list[int] = []
+        seps: list[str] = []
+        glens: list[int] = []
+        while i < length and "0" <= value[i] <= "9":
+            starts.append(i)
+            glen = 0
+            while i < length and "0" <= value[i] <= "9":
+                glen += 1
+                i += 1
+            ends.append(i)
+            glens.append(glen)
+            if i + 1 < length and value[i] in " -" and "0" <= value[i + 1] <= "9":
+                seps.append(value[i])
+                i += 1
+                continue
+            seps.append("")
+            break
+        for group, glen in enumerate(glens):
+            if glen <= 4:
+                continue
+            group_start = starts[group]
+            while pointer < len(ordered) and ordered[pointer][1] <= group_start:
+                pointer += 1
+            if pointer >= len(ordered):
+                return
+            cover = ordered[pointer]
+            if cover[0] >= group_start or cover[1] <= group_start:
+                continue
+            for lead in (4, 8, *range(13, 20)):
+                if glen <= lead:
+                    continue
+                char_start = ends[group] - lead
+                if char_start <= group_start or not (cover[0] <= char_start - 1 < cover[1]):
+                    continue
+                lengths = [lead]
+                look = group + 1
+                sep = seps[group]
+                while sep and look < len(glens) and seps[look - 1] == sep:
+                    nxt = tuple(lengths + [glens[look]])
+                    if nxt not in _LAYOUT_PREFIXES:
+                        break
+                    lengths.append(glens[look])
+                    look += 1
+                for size in range(len(lengths), 0, -1):
+                    if tuple(lengths[:size]) not in _EXACT_LAYOUTS:
+                        continue
+                    end_group = group + size - 1
+                    end_at = ends[group] if size == 1 else ends[end_group]
+                    if size == 1:
+                        end_at = char_start + lead
+                    else:
+                        end_at = ends[group + size - 1]
+                    if end_at != length and _ascii_digit(value[end_at]):
+                        continue
+                    digits = [
+                        ord(value[pos]) - 48
+                        for pos in range(char_start, ends[group])
+                        if "0" <= value[pos] <= "9"
+                    ]
+                    for follow in range(group + 1, group + size):
+                        digits.extend(
+                            ord(value[pos]) - 48 for pos in range(starts[follow], ends[follow])
+                        )
+                    total = 0
+                    alt = False
+                    for number in reversed(digits):
+                        if alt:
+                            number *= 2
+                            if number > 9:
+                                number -= 9
+                        total += number
+                        alt = not alt
+                    if total % 10 == 0:
+                        spans.append((char_start, end_at, _MARKER, char_start))
+                        break
+
+
 def _jwt_spans(value: str, spans: list[tuple[int, int, str, int]], edges: set[int]) -> None:
     covered: set[int] = set()
     for match in _JWT.finditer(value):
@@ -436,6 +570,8 @@ def _jwt_spans(value: str, spans: list[tuple[int, int, str, int]], edges: set[in
 def _redact_text(value: str) -> str:
     spans: list[tuple[int, int, str, int]] = []
     for match in _PRIVATE_KEY.finditer(value):
+        spans.append((match.start(), match.end(), _MARKER, match.start()))
+    for match in _ARMOR.finditer(value):
         spans.append((match.start(), match.end(), _MARKER, match.start()))
     for match in _TOKEN.finditer(value):
         spans.append((match.start(), match.end(), _MARKER, match.start()))
@@ -464,6 +600,8 @@ def _redact_text(value: str) -> str:
     _email_spans(value, spans, [(span[0], span[1]) for span in urls], edges)
     edges = _span_edges(spans)
     _jwt_spans(value, spans, edges)
+    _suffix_card_spans(value, spans, spans)
+    _token_spans_at_edges(value, spans, _span_edges(spans))
     return _apply_spans(value, spans)
 
 

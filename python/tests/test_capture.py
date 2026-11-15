@@ -585,7 +585,9 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
             sample = "".join(alphabet[int(rnd() * len(alphabet))] for _k in range(length))
             if rnd() < 0.3:
                 sample += (" " if rnd() < 0.5 else "-") + "4111111111111111"
-            redacted += redact_capture(sample).count("[REDACTED]")
+            once = redact_capture(sample)
+            self.assertEqual(redact_capture(once), once)
+            redacted += once.count("[REDACTED]")
             baseline += reference(sample)
         self.assertGreaterEqual(redacted, baseline)
         self.assertEqual(redacted, baseline)
@@ -629,6 +631,7 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         scales_text("eyJa.b.c " * 7281)
         scales_text("Basic 4111 " * 5957)
         scales_text("http://u:p@a.co " * 4096)
+        scales_text("https://u:p@h.io/ " * 3640)
 
     def test_detectors_read_the_original_text_only(self):
         from unittest.mock import patch

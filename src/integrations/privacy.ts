@@ -51,6 +51,8 @@ const queryToken = new RegExp(
   "gi",
 );
 const privateKey = /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g;
+const armor = /-----BEGIN [^-]*PRIVATE KEY-----|-----END [^-]*PRIVATE KEY-----/g;
+const tokenBody = /(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})/y;
 const localChar = /[A-Za-z0-9._%+-]/;
 const domainChar = /[A-Za-z0-9.-]/;
 const schemeChar = /[A-Za-z0-9+.-]/;
@@ -404,9 +406,118 @@ function collect(pattern: RegExp, value: string, spans: Span[], repl: (match: Re
   pattern.lastIndex = 0;
 }
 
+function tokenRightOk(value: string, end: number, edges: Set<number>): boolean {
+  return end === value.length || edges.has(end) || !/[A-Za-z0-9_]/.test(value[end]!);
+}
+
+function pushTokensAtEdges(value: string, spans: Span[], edges: Set<number>): void {
+  const covered = new Set(spans.map((span) => span[0]));
+  for (const edge of edges) {
+    if (covered.has(edge) || edge >= value.length) continue;
+    const head = value.slice(edge, edge + 12);
+    const gh = head.length >= 4 && ["ghp", "gho", "ghu", "ghs", "ghr"].includes(head.slice(0, 3)) && head[3] === "_";
+    const xox = head.length >= 5 && head.startsWith("xox") && "baprs".includes(head[3]!) && head[4] === "-";
+    if (!(head.startsWith("sk-") || head.startsWith("sk_live_") || head.startsWith("github_pat_") || head.startsWith("AIza") || head.startsWith("AKIA") || head.startsWith("ASIA") || gh || xox)) continue;
+    tokenBody.lastIndex = edge;
+    const match = tokenBody.exec(value);
+    if (!match || match.index !== edge || !tokenRightOk(value, edge + match[0].length, edges)) continue;
+    spans.push([edge, edge + match[0].length, MARKER, edge]);
+    covered.add(edge);
+  }
+  tokenBody.lastIndex = 0;
+}
+
+function pushSuffixCards(value: string, spans: Span[], covers: Span[]): void {
+  if (covers.length === 0) return;
+  const ordered = covers.slice().sort((a, b) => a[0] - b[0]);
+  const length = value.length;
+  let i = 0;
+  let pointer = 0;
+  const digitAt = (index: number) => {
+    const code = value.charCodeAt(index);
+    return code >= 48 && code <= 57;
+  };
+  while (i < length) {
+    if (!digitAt(i)) {
+      i += 1;
+      continue;
+    }
+    const starts: number[] = [];
+    const ends: number[] = [];
+    const seps: string[] = [];
+    const glens: number[] = [];
+    while (i < length && digitAt(i)) {
+      starts.push(i);
+      let glen = 0;
+      while (i < length && digitAt(i)) {
+        glen += 1;
+        i += 1;
+      }
+      ends.push(i);
+      glens.push(glen);
+      if (i + 1 < length && (value[i] === " " || value[i] === "-") && digitAt(i + 1)) {
+        seps.push(value[i]!);
+        i += 1;
+        continue;
+      }
+      seps.push("");
+      break;
+    }
+    for (let group = 0; group < glens.length; group += 1) {
+      const glen = glens[group]!;
+      if (glen <= 4) continue;
+      const groupStart = starts[group]!;
+      while (pointer < ordered.length && ordered[pointer]![1] <= groupStart) pointer += 1;
+      if (pointer >= ordered.length) return;
+      const cover = ordered[pointer]!;
+      if (cover[0] >= groupStart || cover[1] <= groupStart) continue;
+      for (const lead of [4, 8, 13, 14, 15, 16, 17, 18, 19]) {
+        if (glen <= lead) continue;
+        const charStart = ends[group]! - lead;
+        if (charStart <= groupStart || !(cover[0] <= charStart - 1 && charStart - 1 < cover[1])) continue;
+        const lengths = [lead];
+        let look = group + 1;
+        const sep = seps[group]!;
+        while (sep !== "" && look < glens.length && seps[look - 1] === sep) {
+          const candidate = lengths.concat(glens[look]!).join(",");
+          if (!LAYOUT_PREFIXES.has(candidate)) break;
+          lengths.push(glens[look]!);
+          look += 1;
+        }
+        for (let size = lengths.length; size > 0; size -= 1) {
+          if (!EXACT_LAYOUTS.has(lengths.slice(0, size).join(","))) continue;
+          const endAt = size === 1 ? charStart + lead : ends[group + size - 1]!;
+          if (endAt !== length && digitAt(endAt)) continue;
+          const digits: number[] = [];
+          for (let pos = charStart; pos < ends[group]!; pos += 1) if (digitAt(pos)) digits.push(value.charCodeAt(pos) - 48);
+          for (let follow = group + 1; follow < group + size; follow += 1) {
+            for (let pos = starts[follow]!; pos < ends[follow]!; pos += 1) digits.push(value.charCodeAt(pos) - 48);
+          }
+          let total = 0;
+          let alt = false;
+          for (let index = digits.length - 1; index >= 0; index -= 1) {
+            let number = digits[index]!;
+            if (alt) {
+              number *= 2;
+              if (number > 9) number -= 9;
+            }
+            total += number;
+            alt = !alt;
+          }
+          if (total % 10 === 0) {
+            spans.push([charStart, endAt, MARKER, charStart]);
+            break;
+          }
+        }
+      }
+    }
+  }
+}
+
 function redactText(value: string): string {
   const spans: Span[] = [];
   collect(privateKey, value, spans, () => MARKER, (match) => match.index ?? 0);
+  collect(armor, value, spans, () => MARKER, (match) => match.index ?? 0);
   collect(tokens, value, spans, () => MARKER, (match) => match.index ?? 0);
   collect(awsSecret, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
   collect(bearer, value, spans, () => `Bearer ${MARKER}`, (match) => tokenStart(value, (match.index ?? 0) + match[0].length));
@@ -419,6 +530,8 @@ function redactText(value: string): string {
   collect(queryToken, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
   pushEmails(value, spans, urls.map((span) => [span[0], span[1]]), spanEdges(spans));
   pushJwts(value, spans, spanEdges(spans));
+  pushSuffixCards(value, spans, spans);
+  pushTokensAtEdges(value, spans, spanEdges(spans));
   return applySpans(value, spans);
 }
 

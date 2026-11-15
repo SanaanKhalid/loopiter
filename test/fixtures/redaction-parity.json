@@ -481,6 +481,26 @@
     {
       "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl3782 822463 10005",
       "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.com-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "-----END PRIVATE KEY-----eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111111111111111sk-abcdefghijklmnop",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.comsecret=hunter2",
+      "output": "[REDACTED]=[REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.sig93782 822463 10005",
+      "output": "[REDACTED]"
     }
   ],
   "boundaries": [
