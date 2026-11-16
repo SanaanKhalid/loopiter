@@ -1,0 +1,625 @@
+{
+  "sensitive": {
+    "input": {
+      "authorization": "Bearer fixture-marker-alpha",
+      "messages": [
+        {
+          "content": "password=fixture-marker-beta https://fixture-user:fixture-marker-gamma@example.test sk-fixturekey123456 eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl AKIAFIXTUREEXAMPLE12 sk_live_fixturetoken xoxb-fixture-token AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA token=fixture-marker-zeta access_token=fixture-marker-eta fixture-marker-epsilon@example.test postgres://fixture-user:fixture-marker-lambda@db.internal aws_secret_access_key=fixtureSecretAccessKey0123456789ABCDEFGH \"secretAccessKey\": \"fixtureJsonSecretAccessKey0123456789ABCD\" 4242424242424242 and 4242-4242-4242-4242 and 4242 4242 4242 4242 <fixture-marker-nu@example.test> (fixture-marker-xi@example.test) contact:fixture-marker-omicron@example.test 1234567890123456 -----BEGIN FIXTURE PRIVATE KEY-----\nabc"
+        }
+      ],
+      "apiKey": "fixture-marker-delta",
+      "x-api-key": "fixture-marker-theta",
+      "private_key": "fixture-marker-iota",
+      "token": "fixture-marker-kappa",
+      "clientSecret": "fixture-marker-pi",
+      "session": "fixture-marker-rho",
+      "text": "kept-label"
+    },
+    "output": {
+      "authorization": "[REDACTED]",
+      "messages": [
+        {
+          "content": "password=[REDACTED] https://[REDACTED]@example.test [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] token=[REDACTED] access_token=[REDACTED] [REDACTED] postgres://[REDACTED]@db.internal aws_secret_access_key=[REDACTED] \"secretAccessKey\": \"[REDACTED]\" [REDACTED] and [REDACTED] and [REDACTED] <[REDACTED]> ([REDACTED]) contact:[REDACTED] 1234567890123456 [REDACTED]"
+        }
+      ],
+      "apiKey": "[REDACTED]",
+      "x-api-key": "[REDACTED]",
+      "private_key": "[REDACTED]",
+      "token": "[REDACTED]",
+      "clientSecret": "[REDACTED]",
+      "session": "[REDACTED]",
+      "text": "kept-label"
+    },
+    "absent": [
+      "fixture-marker-alpha",
+      "fixture-marker-beta",
+      "fixture-marker-gamma",
+      "fixture-marker-delta",
+      "fixture-marker-epsilon",
+      "fixture-marker-zeta",
+      "fixture-marker-eta",
+      "fixture-marker-theta",
+      "fixture-marker-iota",
+      "fixture-marker-kappa",
+      "fixture-marker-lambda",
+      "fixture-marker-nu",
+      "fixture-marker-xi",
+      "fixture-marker-omicron",
+      "fixture-marker-pi",
+      "fixture-marker-rho",
+      "eyJzdWIiOiJmaXh0dXJlIn0",
+      "AKIAFIXTUREEXAMPLE12",
+      "sk_live_fixturetoken",
+      "xoxb-fixture-token",
+      "AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "sk-fixturekey123456",
+      "BEGIN FIXTURE PRIVATE KEY",
+      "fixtureSecretAccessKey0123456789ABCDEFGH",
+      "fixtureJsonSecretAccessKey0123456789ABCD",
+      "4242424242424242",
+      "4242-4242-4242-4242",
+      "4242 4242 4242 4242"
+    ],
+    "present": [
+      "kept-label",
+      "1234567890123456"
+    ]
+  },
+  "whitespace": [
+    {
+      "input": " Bearer fixture-marker-alpha",
+      "output": " Bearer [REDACTED]"
+    },
+    {
+      "input": " Basic QUJDREVGR0g",
+      "output": " Basic [REDACTED]"
+    },
+    {
+      "input": " fixture-marker-epsilon@example.test",
+      "output": " [REDACTED]"
+    },
+    {
+      "input": "password=fixture-marker-beta kept-label",
+      "output": "password=[REDACTED] kept-label"
+    },
+    {
+      "input": "https://fixture-user:fixture-marker-gamma@example.test tail",
+      "output": "https://[REDACTED]@example.test tail"
+    },
+    {
+      "input": "Bearer​fixture-marker-alpha",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Bearer᠎fixture-marker-alpha",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Bearerfixture-marker-alpha",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "-----BEGIN FIXTURE PRIVATE KEY-----\nabc\n",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "４２４２４２４２４２４２４２４２",
+      "output": "４２４２４２４２４２４２４２４２"
+    },
+    {
+      "input": "12-4242-4242-4242-4242",
+      "output": "12-[REDACTED]"
+    },
+    {
+      "input": "12 4242 4242 4242 4242",
+      "output": "12 [REDACTED]"
+    },
+    {
+      "input": "password=sec​ret",
+      "output": "password=[REDACTED]"
+    },
+    {
+      "input": "token=sec᠎ret",
+      "output": "token=[REDACTED]"
+    },
+    {
+      "input": "12 4111 1111 1111 1111",
+      "output": "12 [REDACTED]"
+    },
+    {
+      "input": "qty 3 4111-1111-1111-1111",
+      "output": "qty 3 [REDACTED]"
+    },
+    {
+      "input": "call 555 4111111111111111",
+      "output": "call 555 [REDACTED]"
+    },
+    {
+      "input": "password=hunter​2secret",
+      "output": "password=[REDACTED]"
+    },
+    {
+      "input": "token=᠎abcdef",
+      "output": "token=[REDACTED]"
+    },
+    {
+      "input": "4111 1111 1111 1111 123",
+      "output": "[REDACTED] 123"
+    },
+    {
+      "input": "Qty 2 4111 1111 1111 1111",
+      "output": "Qty 2 [REDACTED]"
+    },
+    {
+      "input": "ref 99 3782 822463 10005",
+      "output": "ref 99 [REDACTED]"
+    },
+    {
+      "input": "order 12345 4111111111111111",
+      "output": "order 12345 [REDACTED]"
+    },
+    {
+      "input": "password=4111 1111 1111 1111",
+      "output": "password=[REDACTED]"
+    },
+    {
+      "input": "secret=-----BEGIN FIXTURE PRIVATE KEY-----\nabc",
+      "output": "secret=[REDACTED]"
+    },
+    {
+      "input": "0000 0000 0000 000000",
+      "output": "0000 [REDACTED]"
+    },
+    {
+      "input": "4111 1111 1111 1112 001",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "token=abc-----BEGIN RSA PRIVATE KEY-----\nfixture-line-one\nfixture-line-two\n-----END RSA PRIVATE KEY-----",
+      "output": "token=[REDACTED]"
+    },
+    {
+      "input": "password=-----BEGIN RSA PRIVATE KEY-----\nfixture-line-one\nfixture-line-two\n-----END RSA PRIVATE KEY-----",
+      "output": "password=[REDACTED]"
+    },
+    {
+      "input": "Bearer -----BEGIN RSA PRIVATE KEY-----\nfixture-line-one\nfixture-line-two\n-----END RSA PRIVATE KEY-----",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "token=abc​-----BEGIN RSA PRIVATE KEY-----\nfixture-line-one\nfixture-line-two\n-----END RSA PRIVATE KEY-----",
+      "output": "token=[REDACTED]"
+    },
+    {
+      "input": "password=3782 822463 10005",
+      "output": "password=[REDACTED]"
+    },
+    {
+      "input": "Bearer 4111 1111 1111 1111",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Bearer ​4111 1111 1111 1111",
+      "output": "Bearer ​[REDACTED]"
+    },
+    {
+      "input": "token=abc​4111 1111 1111 1111",
+      "output": "token=[REDACTED]"
+    },
+    {
+      "input": "41111111 11111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111 1111 11111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111 111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "41 11 11 11 11 11 11 11",
+      "output": "41 11 11 11 11 11 11 11"
+    },
+    {
+      "input": "4000 0000 00006",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4000 000000 0002",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4000 0000 000002",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4000 0000 0000 006",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4000 0000 0000 0000 006",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "555 1234 5678",
+      "output": "555 1234 5678"
+    },
+    {
+      "input": "2026-11-15",
+      "output": "2026-11-15"
+    },
+    {
+      "input": "order 12345",
+      "output": "order 12345"
+    },
+    {
+      "input": "1234567890123456",
+      "output": "1234567890123456"
+    },
+    {
+      "input": "9000000000001",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "9000000000000000001",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16",
+      "output": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16"
+    },
+    {
+      "input": "555 1234 5678 555 8765 4321",
+      "output": "555 1234 5678 555 8765 4321"
+    },
+    {
+      "input": "192 168 100 200 10 1",
+      "output": "192 168 100 200 10 1"
+    },
+    {
+      "input": "2026 11 15 04 12 33",
+      "output": "2026 11 15 04 12 33"
+    },
+    {
+      "input": "SKU-1234-5678-9012-3",
+      "output": "SKU-1234-5678-9012-3"
+    },
+    {
+      "input": "12345678-1234-1234",
+      "output": "12345678-1234-1234"
+    },
+    {
+      "input": "sk-4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "ghp_4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "AKIA4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "xoxb-4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "AIzaabcdefghijklmnopqrs4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.4111111111111111.c2lnbmF0dXJl",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "Bearer sk-4111111111111111",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic 4111111111111111",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "pay4111111111111111@example.test",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "xoxb-123456789012-4111111111119-abcdefghijklmnopqrstuvwx",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "Bearer abc4111111111111111def",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic abc4111111111111111def==",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "sk-proj-abc4111111111111111xyz",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "ghp_abc4111111111111111xyz",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user4111111111111111@example.com",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "Bearer sk-proj-abcdefghijkl.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic sk-proj-abcdefghijkl.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer sk_live_abcdefghijkl.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic sk_live_abcdefghijkl.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer ghp_abcdefghijkl.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic ghp_abcdefghijkl.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer github_pat_abcdefghijkl.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic github_pat_abcdefghijkl.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer xoxb-abcdefghijkl.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic xoxb-abcdefghijkl.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer AIzaabcdefghijklmnopqrstuvwxyz123456789.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic AIzaabcdefghijklmnopqrstuvwxyz123456789.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer AKIA12345678901234.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic AKIA12345678901234.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl+moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl+moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer secret_access_key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.moresecret",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic secret_access_key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.moresecret",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "user@example.compassword=hunter2",
+      "output": "[REDACTED]=[REDACTED]"
+    },
+    {
+      "input": "Bearer sk-abcdefghijklmnop.SECRETTAIL",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Bearer AKIA12345678901234/SECRETTAIL",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Bearer xoxb-abcdefghijklmnop.SECRETTAIL",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "Basic AKIA12345678901234+tail==",
+      "output": "Basic [REDACTED]"
+    },
+    {
+      "input": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl/tail",
+      "output": "Bearer [REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl3782 822463 10005",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111 1111 1111 1111token=",
+      "output": "[REDACTED]token="
+    },
+    {
+      "input": "user@example.com4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.com-----BEGIN FIXTURE PRIVATE KEY-----\nabc\n-----END FIXTURE PRIVATE KEY-----",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "-----BEGIN FIXTURE PRIVATE KEY-----\nabc\n-----END FIXTURE PRIVATE KEY-----user@example.com",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "-----BEGIN FIXTURE PRIVATE KEY-----\nabc\n-----END FIXTURE PRIVATE KEY-----eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111111111111111eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl3782 822463 10005",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.com-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "-----END PRIVATE KEY-----eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111111111111111sk-abcdefghijklmnop",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.comsecret=hunter2",
+      "output": "[REDACTED]=[REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.sig93782 822463 10005",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.comsk-abcdefghijklmnopqrst",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.comghp_abcd123456789",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "a@b.cdxoxb-1234567890-abcdefghij",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "ask@desk.com",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "AKIAABCDEFGHIJKLMNOP4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "AIzaabcdefghijklmnopqrstuvwxyz12345678Z4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111111111111111Bearer supermandocument",
+      "output": "[REDACTED]Bearer [REDACTED]"
+    },
+    {
+      "input": "4111111111111111Basic dXNlcm5hbWU6cGFz",
+      "output": "[REDACTED]Basic [REDACTED]"
+    },
+    {
+      "input": "sk-abcdefghijklmnopuser@example.com",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.comBearer secretvalue",
+      "output": "[REDACTED] [REDACTED]"
+    },
+    {
+      "input": "a@b.cdBearer abc",
+      "output": "[REDACTED] [REDACTED]"
+    },
+    {
+      "input": "AKIA12345678901234564111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "3782 822463 10005Basic dXNlcjpwYXNz",
+      "output": "[REDACTED]Basic [REDACTED]"
+    },
+    {
+      "input": "3782 822463 10005Bearer secretvalue",
+      "output": "[REDACTED]Bearer [REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJleyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "a@b.cd5",
+      "output": "[REDACTED]5"
+    },
+    {
+      "input": "mail user@example.com9 now",
+      "output": "mail [REDACTED]9 now"
+    },
+    {
+      "input": "user@example.com555-",
+      "output": "[REDACTED]555-"
+    },
+    {
+      "input": "alice@example.com1",
+      "output": "[REDACTED]1"
+    },
+    {
+      "input": "a@b.io9",
+      "output": "[REDACTED]9"
+    },
+    {
+      "input": "contact: alice@example.com2 and bob",
+      "output": "contact: [REDACTED]2 and bob"
+    },
+    {
+      "input": "user@example.comeyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.abcDEF123",
+      "output": "[REDACTED]123"
+    },
+    {
+      "input": "user@example.comsk-abcdefghijklmnop",
+      "output": "[REDACTED]"
+    }
+  ],
+  "boundaries": [
+    {
+      "input": "éBearer fixture-marker-alpha",
+      "output": "éBearer [REDACTED]"
+    },
+    {
+      "input": "日本sk-fixturekey123456",
+      "output": "日本[REDACTED]"
+    },
+    {
+      "input": "ﬁsk-fixturekey123456",
+      "output": "ﬁ[REDACTED]"
+    }
+  ],
+  "credentialRepeat": {
+    "key": "apiKey",
+    "unit": "x",
+    "count": 2000,
+    "maximumBytes": 128
+  },
+  "oversized": {
+    "key": "text",
+    "unit": "x",
+    "count": 1000,
+    "maximumBytes": 128,
+    "bytes": 1011
+  }
+}

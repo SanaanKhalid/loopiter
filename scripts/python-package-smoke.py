@@ -99,6 +99,8 @@ def main():
             assert "loopiter/py.typed" in names
             assert "loopiter/migrations/001-python-store.sql" in names
             assert "loopiter/migrations/002-autonomy.sql" in names
+            assert "loopiter/migrations/003-historical.sql" in names
+            assert "loopiter/migrations/003-historical-down.sql" in names
             assert "loopiter/improvement.py" in names
             assert "loopiter/AGENT_GUIDE.md" in names
             assert "loopiter/onboarding.py" in names
@@ -170,16 +172,20 @@ def main():
                 r"""
 import asyncio, importlib.util
 from loopiter import FeedbackLoop, InMemoryStore
-from loopiter.postgres import migration_sql
+from loopiter.postgres import historical_sql, migration_sql
 from loopiter.testing import run_store_conformance
 from loopiter.onboarding import read_agent_guide, read_reference
 assert importlib.util.find_spec('psycopg') is None
 assert importlib.util.find_spec('openai') is None
 from loopiter.integrations.openai import with_loopiter
 from loopiter.integrations.context import replace_guidance, strip_guidance
-assert callable(with_loopiter)
+from loopiter.integrations.observe import create_observer
+from loopiter.integrations.import_batch import import_batch
+assert callable(with_loopiter) and callable(create_observer) and callable(import_batch)
 assert strip_guidance(replace_guidance('policy', 'guidance')) == 'policy'
 assert 'CREATE TABLE' in migration_sql()
+assert 'NOT VALID' not in migration_sql()
+assert 'NOT VALID' in historical_sql()
 assert 'self-hosted SDK/library' in read_agent_guide()
 assert 'prompt_workflow' in read_reference('workflows')
 import importlib.resources, pathlib, re, sys

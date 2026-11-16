@@ -1,0 +1,102 @@
+[
+  {
+    "input": "a@b.cd",
+    "baseline": "[REDACTED]",
+    "exact": true
+  },
+  {
+    "input": "user@example.com",
+    "baseline": "[REDACTED]",
+    "exact": true
+  },
+  {
+    "input": "a@b.cd5",
+    "baseline": "[REDACTED]5",
+    "exact": true
+  },
+  {
+    "input": "user@example.com2",
+    "baseline": "[REDACTED]2",
+    "exact": true
+  },
+  {
+    "input": "a@b.cdx5",
+    "baseline": "[REDACTED]5",
+    "exact": true
+  },
+  {
+    "input": "a@b.cd10",
+    "baseline": "[REDACTED]10",
+    "exact": true
+  },
+  {
+    "input": "a@b.cd5sk-abcdefghijklmnop",
+    "baseline": "[REDACTED]5sk-abcdefghijklmnop",
+    "exact": true
+  },
+  {
+    "input": "user@example.com0ghp_abcdefghijklmnop",
+    "baseline": "[REDACTED]0ghp_abcdefghijklmnop",
+    "exact": true
+  },
+  {
+    "input": "a@b.cdAKIA1234567890123456",
+    "baseline": "[REDACTED]",
+    "exact": true
+  },
+  {
+    "input": "user@example.comAKIA1234567890123456",
+    "baseline": "[REDACTED]",
+    "exact": true
+  },
+  {
+    "input": "a@b.cdeyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+    "baseline": "[REDACTED]0dXJlIn0.c2lnbmF0dXJl",
+    "exact": true
+  },
+  {
+    "input": "user@example.comeyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+    "baseline": "[REDACTED]0dXJlIn0.c2lnbmF0dXJl",
+    "exact": true
+  },
+  {
+    "input": "4111111111111111a@b.cd9",
+    "baseline": "[REDACTED]9",
+    "exact": true
+  },
+  {
+    "input": "a@b.cd5 ",
+    "baseline": "[REDACTED]5 ",
+    "exact": true
+  },
+  {
+    "input": "AKIA12345678901234564111111111111111",
+    "baseline": "AKIA12345678901234564111111111111111",
+    "exact": false
+  },
+  {
+    "input": "3782 822463 10005Basic dXNlcjpwYXNz",
+    "baseline": "[REDACTED]Basic dXNlcjpwYXNz",
+    "exact": false
+  },
+  {
+    "input": "a@b.cdBearer abc",
+    "baseline": "[REDACTED] abc",
+    "exact": false
+  },
+  {
+    "input": "4111111111111111Bearer secretvalue",
+    "baseline": "[REDACTED]Bearer secretvalue",
+    "exact": false
+  },
+  {
+    "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJleyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+    "baseline": "[REDACTED].eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+    "exact": false
+  },
+  {
+    "input": "4111111111111111sk-abcdefghijklmnop",
+    "baseline": "[REDACTED]",
+    "exact": false
+  }
+]

@@ -1,25 +1,320 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { FeedbackLoop, InMemoryStore, type JsonObject } from "../src/index.js";
-import { createObserver, capturePayload } from "../src/integrations/observe.js";
+import { createObserver, capturePayload, redactCapture } from "../src/integrations/observe.js";
 import { createLoopiterSpanExporter, spanExecutionId, type ReadableSpan } from "../src/integrations/otel.js";
 import { CaptureSession } from "../src/integrations/capture.js";
 
 const setup = () => new FeedbackLoop({ store: new InMemoryStore(), namespace: "observe-tests" });
 const state = (r: {metadata:JsonObject}) => r.metadata.loopiterCapture as JsonObject;
+const parity = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../test/fixtures/redaction-parity.json"), "utf8"));
 
 test("capture redacts before bounding, preserves application values, and explicitly marks incomplete data", () => {
-  const raw = { authorization:"Bearer top-secret", messages:[{content:"password=private https://alice:password@example.test sk-1234567890123456"}], apiKey:"private", text:"safe" };
-  const redacted = capturePayload(raw,{mode:"redacted"});
-  assert.doesNotMatch(JSON.stringify(redacted.value), /top-secret|private|alice|1234567890123456/);
-  assert.equal(raw.apiKey,"private");
-  assert.equal(redacted.complete,false);
-  const long = capturePayload({apiKey:"secret".repeat(2000)},{mode:"redacted",maximumBytes:128});
-  assert.equal(long.truncated,false,"Redaction precedes bounding");
-  assert.deepEqual(capturePayload({text:"x".repeat(1000)},{mode:"redacted",maximumBytes:128}).value,{omitted:true,truncated:true,bytes:1011});
-  assert.deepEqual(capturePayload(raw,{mode:"metadata-only"}).value,{omitted:true});
-  assert.equal(capturePayload(raw,{mode:"full"}).complete,true);
-  assert.throws(()=>capturePayload(raw,{mode:"redacted",maximumBytes:NaN}));
+  const raw = structuredClone(parity.sensitive.input);
+  const redacted = capturePayload(raw, { mode: "redacted" });
+  assert.deepEqual(redacted.value, parity.sensitive.output);
+  assert.equal(raw.apiKey, parity.sensitive.input.apiKey);
+  assert.equal(redacted.complete, false);
+  for (const item of parity.whitespace) assert.equal(redactCapture(item.input), item.output);
+  for (const item of parity.boundaries) assert.equal(redactCapture(item.input), item.output);
+  const repeat = parity.credentialRepeat;
+  const long = capturePayload(
+    { [repeat.key]: repeat.unit.repeat(repeat.count) },
+    { mode: "redacted", maximumBytes: repeat.maximumBytes },
+  );
+  assert.equal(long.truncated, false, "Redaction precedes bounding");
+  const oversized = parity.oversized;
+  assert.deepEqual(
+    capturePayload(
+      { [oversized.key]: oversized.unit.repeat(oversized.count) },
+      { mode: "redacted", maximumBytes: oversized.maximumBytes },
+    ).value,
+    { omitted: true, truncated: true, bytes: oversized.bytes },
+  );
+  assert.deepEqual(capturePayload(raw, { mode: "metadata-only" }).value, { omitted: true });
+  assert.equal(capturePayload(raw, { mode: "full" }).complete, true);
+  assert.throws(() => capturePayload(raw, { mode: "redacted", maximumBytes: Number.NaN }));
+});
+
+test("redaction stays inside a generous time bound and still redacts a normal jwt", () => {
+  assert.equal(redactCapture("eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl"), "[REDACTED]");
+  assert.equal(redactCapture("9000000000001"), "[REDACTED]");
+  assert.equal(redactCapture("9000000000000000001"), "[REDACTED]");
+  assert.equal(redactCapture("1234567890123456"), "1234567890123456");
+  const bulky =
+    "eyJ-".repeat(262144) +
+    "9".repeat(262144) +
+    "http://user:" +
+    "a".repeat(262144) +
+    " secret_access_key=" +
+    "A".repeat(39) +
+    " a@";
+  const started = Date.now();
+  redactCapture(bulky);
+  redactCapture("4 ".repeat(32768));
+  redactCapture("4111-".repeat(8192));
+  assert.ok(Date.now() - started < 2000);
+  const capped = Date.now();
+  const omitted = capturePayload(bulky, { mode: "redacted" });
+  assert.ok(Date.now() - capped < 2000);
+  assert.equal((omitted.value as { omitted?: boolean }).omitted, true);
+});
+
+test("seeded card fuzz does not undercount and long digit runs stay fast", () => {
+  const layouts = [[4, 4, 4, 4, 3], [4, 4, 4, 4], [4, 6, 5], [4, 6, 4], [4, 4, 5], [4, 4, 4, 3], [4, 4, 6], [8, 8], [4, 4, 8], [4, 12]];
+  const exact = new Set(layouts.map((layout) => layout.join(",")));
+  const prefixes = new Set(layouts.flatMap((layout) => layout.map((_, index) => layout.slice(0, index + 1).join(","))));
+  const digit = (value: string, index: number) => {
+    const code = value.charCodeAt(index);
+    return code >= 48 && code <= 57;
+  };
+  const luhn = (digits: number[]) => {
+    let sum = 0;
+    let alt = false;
+    for (let i = digits.length - 1; i >= 0; i -= 1) {
+      let n = digits[i]!;
+      if (alt) {
+        n *= 2;
+        if (n > 9) n -= 9;
+      }
+      sum += n;
+      alt = !alt;
+    }
+    return sum % 10 === 0;
+  };
+  const reference = (value: string) => {
+    let i = 0;
+    let count = 0;
+    while (i < value.length) {
+      if (!digit(value, i)) {
+        i += 1;
+        continue;
+      }
+      const starts: number[] = [];
+      const ends: number[] = [];
+      const seps: string[] = [];
+      const glens: number[] = [];
+      const digits: number[] = [];
+      while (i < value.length && digit(value, i)) {
+        starts.push(i);
+        let glen = 0;
+        while (i < value.length && digit(value, i)) {
+          digits.push(value.charCodeAt(i) - 48);
+          glen += 1;
+          i += 1;
+        }
+        ends.push(i);
+        glens.push(glen);
+        if (i + 1 < value.length && (value[i] === " " || value[i] === "-") && digit(value, i + 1)) {
+          seps.push(value[i]!);
+          i += 1;
+          continue;
+        }
+        seps.push("");
+        break;
+      }
+      const offset = [0];
+      for (const glen of glens) offset.push(offset[offset.length - 1]! + glen);
+      let group = 0;
+      while (group < glens.length) {
+        const startAt = starts[group]!;
+        if (startAt !== 0 && digit(value, startAt - 1)) {
+          group += 1;
+          continue;
+        }
+        const glen = glens[group]!;
+        if (glen >= 13 && glen <= 19 && luhn(digits.slice(offset[group], offset[group + 1]))) {
+          const endAt = ends[group]!;
+          if (endAt === value.length || !digit(value, endAt)) {
+            count += 1;
+            group += 1;
+            continue;
+          }
+        }
+        const sep = seps[group]!;
+        if (sep === "" || (glen !== 4 && glen !== 8)) {
+          group += 1;
+          continue;
+        }
+        const lengths = [glen];
+        let look = group + 1;
+        while (look < glens.length && seps[look - 1] === sep) {
+          const candidate = lengths.concat(glens[look]!).join(",");
+          if (!prefixes.has(candidate)) break;
+          lengths.push(glens[look]!);
+          look += 1;
+        }
+        let matched = 0;
+        for (let size = lengths.length; size > 0; size -= 1) {
+          if (!exact.has(lengths.slice(0, size).join(","))) continue;
+          const endGroup = group + size;
+          const endAt = ends[endGroup - 1]!;
+          if (!luhn(digits.slice(offset[group], offset[endGroup]))) continue;
+          if (endAt !== value.length && digit(value, endAt)) continue;
+          matched = endGroup;
+          break;
+        }
+        if (matched === 0) {
+          group += 1;
+          continue;
+        }
+        count += 1;
+        group = matched;
+      }
+    }
+    return count;
+  };
+  let state = 42;
+  const rnd = () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+  const alphabet = "0123456789 -";
+  let redacted = 0;
+  let baseline = 0;
+  for (let n = 0; n < 200; n += 1) {
+    const length = 24 + Math.floor(rnd() * 40);
+    let sample = "";
+    for (let k = 0; k < length; k += 1) sample += alphabet[Math.floor(rnd() * alphabet.length)];
+    if (rnd() < 0.3) sample += `${rnd() < 0.5 ? " " : "-"}4111111111111111`;
+    const once = String(redactCapture(sample));
+    // This alphabet stays idempotent. A second pass is not guaranteed for arbitrary text.
+    assert.equal(String(redactCapture(once)), once);
+    redacted += (once.match(/\[REDACTED\]/g) ?? []).length;
+    baseline += reference(sample);
+  }
+  assert.ok(redacted >= baseline);
+  assert.equal(redacted, baseline);
+  assert.equal(redacted, 81);
+  const elapsed = (sample: string) => {
+    const started = performance.now();
+    redactCapture(sample);
+    return performance.now() - started;
+  };
+  const scales = (sample: string) => {
+    elapsed(sample);
+    const small = elapsed(sample);
+    const large = elapsed(sample + sample + sample + sample);
+    assert.ok(large < Math.max(small * 6, 150));
+    assert.ok(large < 8000);
+  };
+  scales("1 ".repeat(32768));
+  scales("7 ".repeat(32768));
+  scales("12 ".repeat(21845));
+  scales("4111 ".repeat(13107));
+  scales("4111-".repeat(13107));
+  scales("4 ".repeat(32768));
+  scales("4111111111111111 ".repeat(3855));
+  scales("a@b.cd ".repeat(9362));
+  scales("Bearer 1 ".repeat(7282));
+  scales("sk-abcdefghijklmnop ".repeat(3276));
+  scales("eyJa.b.c ".repeat(7281));
+  scales("Basic 4111 ".repeat(5957));
+  scales("http://u:p@a.co ".repeat(4096));
+  scales("https://u:p@h.io/ ".repeat(3640));
+  scales("4111111111111111sk-abcdefghijklmnop".repeat(1872));
+  scales("4111111111111111eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl".repeat(910));
+  scales("4111111111111111eyJ".repeat(3449));
+  scales("4111111111111111sk-".repeat(3449));
+});
+
+test("glued secret fuzz stays idempotent", () => {
+  const pieces = [
+    "AKIAABCDEFGHIJKLMNOP",
+    "AKIA1234567890123456",
+    "4111111111111111",
+    "3782 822463 10005",
+    "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+    "user@example.com",
+    "a@b.cd",
+    "sk-abcdefghijklmnop",
+    "Bearer secretvalue",
+    "Basic dXNlcjpwYXNz",
+  ];
+  let state = 42;
+  const rnd = () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+  let exceptions = 0;
+  for (let n = 0; n < 200; n += 1) {
+    let sample = "";
+    const parts = 1 + Math.floor(rnd() * 4);
+    for (let part = 0; part < parts; part += 1) sample += pieces[Math.floor(rnd() * pieces.length)]!;
+    const once = String(redactCapture(sample));
+    if (String(redactCapture(once)) !== once) exceptions += 1;
+  }
+  // This glued alphabet is idempotent. Arbitrary text is not.
+  assert.equal(exceptions, 0);
+});
+
+test("glued email secrets stay hidden", () => {
+  const emails = ["user@example.com", "alice@example.com", "a@b.io", "a@b.cd"];
+  const jwt = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.abcDEF123";
+  const sk = "sk-abcdefghijklmnop";
+  const digits = ["9", "555", "1", "2", "0"];
+  const prefixes = ["", "mail ", "contact: "];
+  const suffixes = ["", " now", " and bob"];
+  let state = 42;
+  const nxt = () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state;
+  };
+  for (let n = 0; n < 200; n += 1) {
+    const email = emails[nxt() % emails.length]!;
+    const prefix = prefixes[nxt() % prefixes.length]!;
+    const kind = nxt() % 3;
+    let trailer: string;
+    const secrets = [email];
+    if (kind === 0) trailer = digits[nxt() % digits.length]!;
+    else if (kind === 1) {
+      trailer = jwt;
+      secrets.push("eyJhbGciOiJub25lIn0", "eyJzdWIiOiJ4In0");
+    } else {
+      trailer = sk;
+      secrets.push(sk);
+    }
+    const sample = prefix + email + trailer + suffixes[nxt() % suffixes.length]!;
+    const redacted = String(redactCapture(sample));
+    for (const secret of secrets) assert.equal(redacted.includes(secret), false, secret);
+  }
+});
+
+test("redaction covers the recorded baseline", () => {
+  // Outputs recorded at 070f524. A later pass may cover more, but it must
+  // not show text that revision already replaced.
+  const rows = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../test/fixtures/redaction-baseline.json"), "utf8"),
+  ) as Array<{ input: string; baseline: string; exact: boolean }>;
+  for (const row of rows) {
+    const current = String(redactCapture(row.input));
+    if (row.exact) assert.equal(current, row.baseline);
+    const visible = row.baseline.split("[REDACTED]");
+    for (const piece of current.split("[REDACTED]")) {
+      if (piece) assert.ok(visible.some((part) => part.includes(piece)), row.input);
+    }
+  }
+});
+
+test("detectors read the original text only", () => {
+  const sample = "Bearer sk-abcdefghijklmnop.SECRETTAIL";
+  const seen: string[] = [];
+  const original = RegExp.prototype[Symbol.matchAll];
+  RegExp.prototype[Symbol.matchAll] = function (text: string) {
+    seen.push(String(text));
+    return original.call(this, text);
+  };
+  try {
+    redactCapture(sample);
+  } finally {
+    RegExp.prototype[Symbol.matchAll] = original;
+  }
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every((text) => text === sample));
+  assert.equal(String(redactCapture(sample)), "Bearer [REDACTED]");
 });
 
 test("observer retains lineage, defaults to no content, preserves return identity and never replays a durable ID", async () => {
@@ -253,6 +548,54 @@ test("shutdown ignores a hung record and does not finish after abandon", async (
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(streamWrites, []);
   assert.ok(streaming.stats().backlog >= 0);
+});
+
+test("shutdown counts a running operation and an unconsumed stream once", async () => {
+  const loop = setup();
+  const notes: unknown[] = [];
+  const running = createObserver({
+    loop,
+    onError: (error) => notes.push(error),
+    bounded: { queueLimit: 10, writeTimeoutMs: 100, shutdownTimeoutMs: 40 },
+  });
+  let release: (value: string) => void = () => {};
+  const operation = running.observe(
+    "long",
+    () => new Promise<string>((resolve) => { release = resolve; }),
+    { context: { id: "s1" } },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await running.shutdown(40);
+  assert.equal(running.stats().dropped, 1);
+  assert.equal(running.stats().failed, 0);
+  assert.equal(running.stats().backlog, 0);
+  assert.equal(notes.length, 1);
+  release("done");
+  assert.equal(await operation, "done");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(running.stats().dropped, 1);
+  assert.equal(notes.length, 1);
+  assert.equal(state((await loop.getExecution("s1"))!).status, "pending");
+
+  const streamNotes: unknown[] = [];
+  const streaming = createObserver({
+    loop,
+    onError: (error) => streamNotes.push(error),
+    bounded: { queueLimit: 10, writeTimeoutMs: 100, shutdownTimeoutMs: 40 },
+  });
+  async function* pending() { yield 1; }
+  const wrapped = await streaming.observe("stream", pending, { context: { id: "s3" } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await streaming.shutdown(40);
+  assert.equal(streaming.stats().dropped, 1);
+  assert.equal(streaming.stats().failed, 0);
+  assert.equal(streaming.stats().backlog, 0);
+  assert.equal(streamNotes.length, 1);
+  for await (const _chunk of wrapped) { /* consume after shutdown */ }
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(streaming.stats().dropped, 1);
+  assert.equal(streamNotes.length, 1);
+  assert.equal(state((await loop.getExecution("s3"))!).status, "pending");
 });
 
 test("shutdown drains admitted writes, and an open flush does not free a hung write or a reservation", async () => {

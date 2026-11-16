@@ -1,0 +1,128 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { FeedbackLoop, InMemoryStore, LoopiterError } from "../src/index.js";
+import { importBatch } from "../src/integrations/import-batch.js";
+
+const when = "2026-03-01T15:04:05.000Z";
+
+function record(
+  idempotencyKey: string,
+  stageId: string,
+  prompt: string,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    idempotencyKey,
+    occurredAt: when,
+    status: "success",
+    stageId,
+    versions: { prompt, model: "fixture" },
+    usage: { state: "unknown" },
+    ...extra,
+  };
+}
+
+const ticket = record("ticket-100", "classify", "support-ticket-v1");
+const invoice = record("invoice-200", "billing", "invoice-v1");
+const listing = record("listing-300", "catalog", "product-listing-v1");
+
+function setup() {
+  return new FeedbackLoop({ store: new InMemoryStore(), namespace: "imports" });
+}
+
+test("historical import keeps source time, dedupes, and does not attach a release", async () => {
+  const loop = setup();
+  const first = await importBatch(loop, [ticket, invoice, listing]);
+  assert.deepEqual(first, { accepted: 3, conflicts: 0, rejected: 0 });
+  assert.deepEqual(await importBatch(loop, [ticket, invoice, listing]), first);
+  const historical = (await loop.list("historical")).items;
+  assert.equal(historical.length, 3);
+  assert.deepEqual((await loop.list("executions")).items, []);
+  assert.deepEqual((await loop.list("targets")).items, []);
+  const imported = historical.find((row) => row.id === "ticket-100")!;
+  const original = imported.original as {
+    occurredAt: string;
+    usage: { state: string; tokens?: number };
+    versions: { config?: string };
+    releaseId?: string;
+  };
+  assert.equal(imported.createdAt, when);
+  assert.equal(original.occurredAt, when);
+  assert.equal(original.usage.state, "unknown");
+  assert.equal(original.usage.tokens, undefined);
+  assert.equal(JSON.stringify(original).includes('"tokens"'), false);
+  assert.equal(original.versions.config, undefined);
+  assert.equal(original.releaseId, undefined);
+  const changed = { ...ticket, status: "error" };
+  assert.equal((await importBatch(loop, [changed])).conflicts, 1);
+  assert.equal(
+    (historical.find((row) => row.id === "ticket-100")!.original as { status: string }).status,
+    "success",
+  );
+  const again = (await loop.list("historical")).items.find((row) => row.id === "ticket-100")!;
+  assert.equal((again.original as { status: string }).status, "success");
+  const dropped = await importBatch(loop, [
+    record("ticket-drop", "classify", "support-ticket-v1", { status: "dropped" }),
+    record("invoice-zero", "billing", "invoice-v1", {
+      usage: { state: "unknown", tokens: 0 },
+    }),
+    { ...listing, releaseId: "current" },
+  ]);
+  assert.deepEqual(dropped, { accepted: 1, conflicts: 0, rejected: 2 });
+  const tombstone = (await loop.list("historical")).items.find((row) => row.id === "ticket-drop")!;
+  assert.equal((tombstone.original as { status: string }).status, "dropped");
+  assert.deepEqual((await loop.list("executions")).items, []);
+  const known = await importBatch(loop, [
+    record("invoice-known", "billing", "invoice-v1", { usage: { state: "known", tokens: 4 } }),
+  ]);
+  assert.equal(known.accepted, 1);
+  const shared = await importBatch(loop, [
+    record("ticket-ms", "classify", "support-ticket-v1", { occurredAt: "2026-03-01T15:04:05.123Z" }),
+  ]);
+  assert.equal(shared.accepted, 1);
+  const micros = await importBatch(loop, [
+    record("ticket-us", "classify", "support-ticket-v1", { occurredAt: "2026-03-01T15:04:05.123456Z" }),
+  ]);
+  assert.equal(micros.rejected, 1);
+  const calendar = await importBatch(loop, [
+    record("ticket-day", "classify", "support-ticket-v1", { occurredAt: "2026-02-31T00:00:00Z" }),
+  ]);
+  assert.equal(calendar.rejected, 1);
+  const claimed = await importBatch(loop, [
+    record("ticket-replay", "classify", "support-ticket-v1", {
+      replay: { eligible: true, reason: "imported-for-regression" },
+    }),
+  ]);
+  assert.equal(claimed.rejected, 1);
+  const plain = await importBatch(loop, [record("ticket-plain", "classify", "support-ticket-v1")]);
+  assert.equal(plain.accepted, 1);
+  const stored = (await loop.list("historical")).items.find((row) => row.id === "ticket-plain")!;
+  assert.deepEqual((stored.original as { replay: { eligible: boolean } }).replay, { eligible: false });
+  await assert.rejects(
+    () => importBatch(loop, [record("a", "classify", "v"), record("b", "classify", "v")], { maxRecords: 1 }),
+    (error: unknown) => error instanceof LoopiterError && error.code === "invalid_input",
+  );
+  const emoji = "😀".repeat(24);
+  const characters = await importBatch(loop, [record(emoji, "c", "p")], { maxStringLength: 24 });
+  assert.equal(characters.accepted, 1);
+  const deeper = record("deep-ok", "classify", "support-ticket-v1");
+  const tooDeep = record("deep-bad", "classify", "support-ticket-v1");
+  let nested: unknown = "leaf";
+  for (let i = 0; i < 40; i += 1) nested = { child: nested };
+  (tooDeep as { versions: unknown }).versions = nested;
+  const mixed = await importBatch(loop, [deeper, tooDeep, record("deep-after", "classify", "support-ticket-v1")]);
+  assert.deepEqual(mixed, { accepted: 2, conflicts: 0, rejected: 1 });
+  const ids = (await loop.list("historical")).items.map((row) => row.id);
+  assert.equal(ids.includes("deep-ok"), true);
+  assert.equal(ids.includes("deep-after"), true);
+  assert.equal(ids.includes("deep-bad"), false);
+  const lengthy = await importBatch(
+    loop,
+    [record("ticket-long", "classify", "x".repeat(5000))],
+    { maxStringLength: 64 },
+  );
+  assert.equal(lengthy.rejected, 1);
+  assert.equal((await loop.list("historical")).items.some((row) => row.id === "ticket-long"), false);
+  const billed = (await loop.list("historical")).items.find((row) => row.id === "invoice-known")!;
+  assert.equal((billed.original as { usage: { tokens: number } }).usage.tokens, 4);
+});

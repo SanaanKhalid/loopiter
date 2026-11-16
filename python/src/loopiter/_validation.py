@@ -16,7 +16,7 @@ TARGET_KINDS = (
 ).split()
 RISKS = "low medium high critical".split()
 STATUSES = "proposed evaluated approved deployed rejected superseded rolled_back historical".split()
-COLLECTIONS = "executions signals candidates targets attempts events runs operations budgets observations coordination".split()
+COLLECTIONS = "executions signals candidates targets attempts events historical runs operations budgets observations coordination".split()
 EXECUTION_FIELDS = (
     "id kind episode_id parent_execution_id entity_id input output artifacts metadata "
     "started_at completed_at"

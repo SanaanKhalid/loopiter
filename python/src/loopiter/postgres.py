@@ -12,18 +12,37 @@ if TYPE_CHECKING:
     from psycopg_pool import AsyncConnectionPool
 
 
-def migration_sql() -> str:
-    """Return versioned SQL for the application's migration process; execute explicitly."""
+def _migration_text(*names: str) -> str:
     return "\n".join(
         files("loopiter").joinpath("migrations/" + name).read_text(encoding="utf-8")
-        for name in ("001-python-store.sql", "002-autonomy.sql")
+        for name in names
     )
+
+
+def migration_sql() -> str:
+    """Return versioned SQL for the application's migration process; execute explicitly.
+
+    Constructors never execute this text. Historical collection support is optional and
+    is not included here; call historical_sql() for that step.
+    """
+    return _migration_text("001-python-store.sql", "002-autonomy.sql")
+
+
+def historical_sql() -> str:
+    """Return 003-historical.sql. Not part of migration_sql(); never run on construction."""
+    return _migration_text("003-historical.sql")
+
+
+def historical_down_sql() -> str:
+    """Return 003-historical-down.sql. Not part of migration_sql(); never run on construction."""
+    return _migration_text("003-historical-down.sql")
 
 
 class PostgresTransaction:
     def __init__(self, namespace, connection):
         self.namespace, self.connection, self.active = namespace, connection, True
         self.owner = asyncio.current_task()
+        self._historical_ready = None
 
     def _check(self, kind):
         if not self.active or asyncio.current_task() is not self.owner:
@@ -73,6 +92,18 @@ class PostgresTransaction:
             result["next_cursor"] = result["items"][-1]["id"]
         return result
 
+    async def _allows_historical(self) -> bool:
+        if self._historical_ready is not None:
+            return self._historical_ready
+        rows = await self._query(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conrelid = %s::regclass AND conname = %s",
+            ("loopiter_python_records", "loopiter_python_records_collection_check"),
+        )
+        definition = rows[0][0] if rows else ""
+        self._historical_ready = "historical" in (definition or "")
+        return self._historical_ready
+
     async def insert(self, collection, record):
         from psycopg.types.json import Jsonb
 
@@ -80,6 +111,12 @@ class PostgresTransaction:
         v.stored(collection, record, self.namespace)
         if record["revision"] != 1:
             v.fail("conflict", "Insert requires revision 1.")
+        if collection == "historical" and not await self._allows_historical():
+            v.fail(
+                "migration_required",
+                "The historical collection requires explicit SQL migration 003-historical.sql. "
+                "Construction never runs it.",
+            )
         rows = await self._query(
             "INSERT INTO loopiter_python_records(namespace,collection,id,revision,event_time,body) "
             "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id",
@@ -101,7 +138,7 @@ class PostgresTransaction:
         self._check(collection)
         v.stored(collection, record, self.namespace)
         v.integer(expected_revision, "expected_revision")
-        if collection in ("signals", "events", "observations"):
+        if collection in ("signals", "events", "historical", "observations"):
             v.fail("immutable_record", "Collection is insert-only.")
         if record["revision"] != expected_revision + 1:
             v.fail("conflict", "Replacement revision must increment by one.")
@@ -161,7 +198,9 @@ class PostgresStore:
                     schema = await tx._query(
                         "SELECT max(version) FROM loopiter_python_schema_migrations", ()
                     )
-                    if not schema or schema[0][0] != 2:
+                    schema_version = int(schema[0][0]) if schema and schema[0][0] is not None else 0
+                    # Version 2 remains valid. Historical writes check the collection constraint.
+                    if schema_version < 2:
                         v.fail(
                             "migration_required",
                             "Store v2 requires explicit SQL migration 002-autonomy.sql. Stop old writers and back up first.",

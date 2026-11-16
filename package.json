@@ -55,6 +55,10 @@
       "types": "./dist/src/integrations/observe.d.ts",
       "import": "./dist/src/integrations/observe.js"
     },
+    "./integrations/import-batch": {
+      "types": "./dist/src/integrations/import-batch.d.ts",
+      "import": "./dist/src/integrations/import-batch.js"
+    },
     "./integrations/otel": {
       "types": "./dist/src/integrations/otel.d.ts",
       "import": "./dist/src/integrations/otel.js"

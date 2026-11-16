@@ -1,10 +1,13 @@
 import asyncio
+import json
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from loopiter import FeedbackLoop, InMemoryStore, LoopiterError
 from loopiter.integrations.context import replace_guidance, strip_guidance
+from loopiter.integrations.observe import create_observer
 from loopiter.integrations.openai import with_loopiter
 
 RESULT = {
@@ -13,6 +16,11 @@ RESULT = {
     "usage": {"total_tokens": 3},
 }
 PARAMS = {"model": "fixture", "messages": [{"role": "user", "content": "hello"}]}
+PARITY = json.loads(
+    (Path(__file__).resolve().parents[2] / "test/fixtures/redaction-parity.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 
 class Stream:
@@ -47,6 +55,94 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def rows(self, loop):
         return (await loop.list("executions"))["items"]
+
+    async def test_bounded_client_does_not_block_the_provider(self):
+        loop = FeedbackLoop(store=InMemoryStore(), namespace="bounded-openai")
+        gate = asyncio.Event()
+        original = loop.record_execution
+
+        async def slow(**kwargs):
+            await gate.wait()
+            return await original(**kwargs)
+
+        loop.record_execution = slow
+        client = create_observer(loop, bounded={"queue_limit": 4, "write_timeout_ms": 1_000})
+        called = asyncio.Event()
+
+        async def generate(**_params):
+            called.set()
+            return RESULT
+
+        loop_client, create, _base, _wrapped = self.setup_capture()
+        del loop_client
+        create.side_effect = generate
+        wrapped = with_loopiter(
+            _base,
+            loop=loop,
+            context=lambda _request: {"artifacts": {"prompt": "v1"}},
+            capture=client,
+        )
+        running = asyncio.create_task(wrapped.chat.completions.create(**PARAMS))
+        await asyncio.wait_for(called.wait(), 1)
+        self.assertFalse(gate.is_set())
+        gate.set()
+        self.assertIs(await running, RESULT)
+        await client.shutdown(1_000)
+        rows = (await loop.list("executions"))["items"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["metadata"]["loopiter_capture"]["status"], "completed")
+        self.assertEqual(client.stats()["dropped"], 0)
+        self.assertEqual(client.stats()["failed"], 0)
+
+    async def test_capture_policy_is_applied_to_provider_rows(self):
+        content = PARITY["sensitive"]["input"]["messages"][0]["content"]
+        secret_params = {
+            "model": "fixture",
+            "messages": [{"role": "user", "content": content}],
+        }
+        for mode in ("redacted", "metadata-only"):
+            loop = FeedbackLoop(store=InMemoryStore(), namespace=f"policy-{mode}")
+            client = create_observer(loop, failure_mode="closed", capture={"mode": mode})
+            create = AsyncMock(return_value=RESULT)
+            base = SimpleNamespace(
+                chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+                responses=SimpleNamespace(create=AsyncMock(return_value={"status": "incomplete"})),
+            )
+            wrapped = with_loopiter(
+                base,
+                loop=loop,
+                context=lambda _request: {
+                    "artifacts": {"prompt": "v1"},
+                    "metadata": {"note": PARITY["sensitive"]["input"]["authorization"]},
+                },
+                capture=client,
+            )
+            await wrapped.chat.completions.create(**secret_params)
+            row = (await loop.list("executions"))["items"][0]
+            encoded = json.dumps(row)
+            for marker in PARITY["sensitive"]["absent"]:
+                self.assertNotIn(marker, encoded)
+            source = Stream(
+                [
+                    {
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": content},
+                                "finish_reason": "stop",
+                            }
+                        ]
+                    }
+                ]
+            )
+            create.return_value = source
+            stream = await wrapped.chat.completions.create(**secret_params, stream=True)
+            async for _event in stream:
+                pass
+            streamed = (await loop.list("executions"))["items"][-1]
+            encoded = json.dumps(streamed)
+            for marker in PARITY["sensitive"]["absent"]:
+                self.assertNotIn(marker, encoded)
 
     async def test_pending_precedes_provider_and_feedback_is_explicit(self):
         loop, create, _base, wrapped = self.setup_capture()
@@ -141,6 +237,76 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(
                 (await self.rows(loop))[0]["metadata"]["loopiter_capture"]["status"], "completed"
             )
+
+    async def test_larger_output_limit_is_stored(self):
+        payload = "x" * 70_000
+        loop, create, _base, wrapped = self.setup_capture(maximum_output_bytes=200_000)
+        create.return_value = {
+            "choices": [{"index": 0, "message": {"content": payload}, "finish_reason": "stop"}]
+        }
+        await wrapped.chat.completions.create(**PARAMS)
+        self.assertIn(payload, json.dumps((await self.rows(loop))[0]["output"]))
+        source = Stream(
+            [{"choices": [{"index": 0, "delta": {"content": payload}, "finish_reason": "stop"}]}]
+        )
+        create.return_value = source
+        async for _event in await wrapped.chat.completions.create(**PARAMS, stream=True):
+            pass
+        streamed = json.dumps((await self.rows(loop))[-1]["output"])
+        self.assertIn(payload, streamed)
+
+    async def test_bounded_client_truncates_a_large_response(self):
+        payload = "x" * 70_000
+        for mode in ("full", "redacted"):
+            for stream in (False, True):
+                _loop, create, base, _wrapped = self.setup_capture()
+                del _loop, _wrapped
+                notes = []
+                loop = FeedbackLoop(store=InMemoryStore(), namespace=f"cap-{mode}-{stream}")
+                client = create_observer(
+                    loop,
+                    bounded={"queue_limit": 4, "write_timeout_ms": 1000},
+                    capture={"mode": mode},
+                    on_error=notes.append,
+                )
+                wrapped = with_loopiter(
+                    base,
+                    loop=loop,
+                    context=lambda _request: {"artifacts": {"prompt": "v1"}},
+                    capture=client,
+                )
+                if stream:
+                    create.return_value = Stream(
+                        [
+                            {
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {"content": payload},
+                                        "finish_reason": "stop",
+                                    }
+                                ]
+                            }
+                        ]
+                    )
+                    seen = []
+                    async for event in await wrapped.chat.completions.create(**PARAMS, stream=True):
+                        seen.append(event)
+                    self.assertIn(payload, json.dumps(seen))
+                else:
+                    create.return_value = {
+                        "choices": [
+                            {"index": 0, "message": {"content": payload}, "finish_reason": "stop"}
+                        ]
+                    }
+                    response = await wrapped.chat.completions.create(**PARAMS)
+                    self.assertIn(payload, json.dumps(response))
+                await client.force_flush(1000)
+                row = (await loop.list("executions"))["items"][0]
+                self.assertTrue(row["metadata"]["loopiter_capture"]["truncated"])
+                self.assertNotIn(payload, json.dumps(row["output"]))
+                self.assertTrue(notes)
+                await client.shutdown(1000)
 
     async def test_failure_and_responses(self):
         loop, create, _base, wrapped = self.setup_capture()
