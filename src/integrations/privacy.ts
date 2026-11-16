@@ -147,7 +147,19 @@ function pushEmails(value: string, spans: Span[], blocked: Array<[number, number
     const prev = left > 0 ? value[left - 1]! : "";
     const boundary = left === 0 || isWs(prev) || prev === "<" || prev === "(" || prev === ":" || edges.has(left);
     let j = at + 1;
-    while (j < value.length && domainChar.test(value[j]!)) j += 1;
+    let lastDot = at;
+    let labelHasStart = false;
+    while (j < value.length && domainChar.test(value[j]!)) {
+      const char = value[j]!;
+      if (char === ".") {
+        lastDot = j;
+        labelHasStart = false;
+      } else {
+        const code = char.charCodeAt(0);
+        if (code === 115 || code === 103 || code === 65 || code === 71 || code === 120) labelHasStart = true;
+      }
+      j += 1;
+    }
     const prefix = emailDomainEnd(value.slice(at + 1, j));
     const end = at + 1 + prefix;
     const next = end < value.length ? value[end]! : "";
@@ -163,9 +175,7 @@ function pushEmails(value: string, spans: Span[], blocked: Array<[number, number
       i = end;
       continue;
     }
-    const dot = value.lastIndexOf(".", end - 1);
-    const labelStart = dot >= at + 1 ? dot + 1 : at + 1;
-    pushTokenInFinalLabel(value, spans, labelStart, end, edges);
+    if (labelHasStart && lastDot < end) pushTokenInFinalLabel(value, spans, lastDot + 1, end, edges);
     spans.push([left, end, MARKER, left]);
     i = end;
   }

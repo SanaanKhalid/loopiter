@@ -161,7 +161,15 @@ def _email_spans(
         prev = value[left - 1] if left > 0 else ""
         boundary = left == 0 or prev in _WS_SET or prev in "<(:" or left in edges
         j = at + 1
+        last_dot = at
+        label_has_start = False
         while j < length and value[j] in _DOMAIN:
+            char = value[j]
+            if char == ".":
+                last_dot = j
+                label_has_start = False
+            elif char in "sgAGx":
+                label_has_start = True
             j += 1
         prefix = _email_domain_end(value[at + 1 : j])
         end = at + 1 + prefix
@@ -176,9 +184,8 @@ def _email_spans(
         if pointer < len(blocked) and blocked[pointer][0] < end and left < blocked[pointer][1]:
             i = end
             continue
-        dot = value.rfind(".", at + 1, end)
-        label_start = dot + 1 if dot >= at + 1 else at + 1
-        _token_in_final_label(value, spans, label_start, end, edges)
+        if label_has_start and last_dot < end:
+            _token_in_final_label(value, spans, last_dot + 1, end, edges)
         spans.append((left, end, "[REDACTED]", left))
         i = end
 
