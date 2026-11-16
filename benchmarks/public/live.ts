@@ -241,54 +241,65 @@ export async function runLiveTask<T extends PublicExample>(
   try {
     for (const seed of options.seeds) {
       if (ledger.stopReason || session.isStopping()) break;
-      const split = limitSplit(
-        buildSeededSplit({
-          pool: loaded.pool,
-          heldOut: loaded.heldOut,
+      try {
+        const split = limitSplit(
+          buildSeededSplit({
+            pool: loaded.pool,
+            heldOut: loaded.heldOut,
+            seed,
+            sizes: task.fullSizes,
+          }),
+          options.rowLimit,
+        );
+        const baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut, {
+          arm: "baseline",
+          split: "held-out",
+          planned: split.heldOut.length,
+        });
+        const oneShot = await runOneShot({ task, split, runner, mode: "improve" });
+        const controller = await runController({
+          task,
+          split,
+          runner,
+          mode: "improve",
+          observation: "honest",
+          minimumImprovement: options.minimumImprovement,
+          batchSize: 1,
+          observeChunk: 2,
+          latencyMs: session.requestTimeoutMs,
+          predictMaxOutputTokens: session.limits.predictMaxOutputTokens,
+          proposeMaxOutputTokens: session.limits.proposeMaxOutputTokens,
+          modelId: options.deployment,
+          scenario: "live",
+          tickLimit: 10_000,
+          timeouts: {
+            callbackTimeoutMs: session.callbackTimeoutMs,
+            tickTimeoutMs: session.tickTimeoutMs,
+          },
+        });
+        perSeed.push({
           seed,
-          sizes: task.fullSizes,
-        }),
-        options.rowLimit,
-      );
-      const baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut, {
-        arm: "baseline",
-        split: "held-out",
-        planned: split.heldOut.length,
-      });
-      const oneShot = await runOneShot({ task, split, runner, mode: "improve" });
-      const controller = await runController({
-        task,
-        split,
-        runner,
-        mode: "improve",
-        observation: "honest",
-        minimumImprovement: options.minimumImprovement,
-        batchSize: 1,
-        observeChunk: 2,
-        latencyMs: session.requestTimeoutMs,
-        predictMaxOutputTokens: session.limits.predictMaxOutputTokens,
-        proposeMaxOutputTokens: session.limits.proposeMaxOutputTokens,
-        modelId: options.deployment,
-        scenario: "live",
-        tickLimit: 10_000,
-        timeouts: {
-          callbackTimeoutMs: session.callbackTimeoutMs,
-          tickTimeoutMs: session.tickTimeoutMs,
-        },
-      });
-      perSeed.push({
-        seed,
-        baseline,
-        oneShot: oneShot.heldOut,
-        controllerServed: controller.heldOut,
-        controllerUngated: controller.ungated,
-        controllerState: controller.state,
-        controllerReason: controller.reason,
-        controllerDetail: controller.detail,
-      });
-      if (ledger.stopReason) {
-        failure = { reason: ledger.stopReason, message: "Spend cap reached." };
-        break;
+          baseline,
+          oneShot: oneShot.heldOut,
+          controllerServed: controller.heldOut,
+          controllerUngated: controller.ungated,
+          controllerState: controller.state,
+          controllerReason: controller.reason,
+          controllerDetail: controller.detail,
+        });
+        if (ledger.stopReason) {
+          failure = { reason: ledger.stopReason, message: "Spend cap reached." };
+          break;
+        }
+      } catch (error) {
+        const reason = perItemReason(error);
+        if (!reason) throw error;
+        failures.noteFailure(
+          { arm: "baseline", split: "held-out", planned: 0 },
+          `seed-${seed}`,
+          reason,
+          failureCategories(error),
+        );
       }
     }
   } catch (error) {
@@ -363,30 +374,46 @@ function liveRunner<T extends PublicExample>(
       const stop = failures.stop();
       if (stop) throw stop;
       const payload = task.proposePayload(request.current, request.rows, request.feedback);
-      const generation = await session.generate(
-        {
-          instructions: PROPOSE_INSTRUCTIONS,
-          input: payload,
-          name: PROPOSE_NAME,
-          schema: task.proposeSchema(),
-        },
-        requestBody({
-          model: session.provider.model,
-          instructions: PROPOSE_INSTRUCTIONS,
-          payload,
-          name: PROPOSE_NAME,
-          schema: task.proposeSchema(),
-          maxOutputTokens: session.limits.proposeMaxOutputTokens,
-          reasoningEffort: session.limits.reasoningEffort,
-        }),
-        session.limits.proposeMaxOutputTokens,
-        context ? context.meter.bind(context) : directMeter,
-        signalOf(context),
-      );
-      const fragment = generation.value.fragment;
-      if (typeof fragment !== "string")
-        throw new LiveGateError("Model proposal is missing the prompt.");
-      return fragment;
+      try {
+        const generation = await session.generate(
+          {
+            instructions: PROPOSE_INSTRUCTIONS,
+            input: payload,
+            name: PROPOSE_NAME,
+            schema: task.proposeSchema(),
+          },
+          requestBody({
+            model: session.provider.model,
+            instructions: PROPOSE_INSTRUCTIONS,
+            payload,
+            name: PROPOSE_NAME,
+            schema: task.proposeSchema(),
+            maxOutputTokens: session.limits.proposeMaxOutputTokens,
+            reasoningEffort: session.limits.reasoningEffort,
+          }),
+          session.limits.proposeMaxOutputTokens,
+          context ? context.meter.bind(context) : directMeter,
+          signalOf(context),
+        );
+        const fragment = generation.value.fragment;
+        if (typeof fragment !== "string")
+          throw new LiveGateError("Model proposal is missing the prompt.");
+        return fragment;
+      } catch (error) {
+        const reason = perItemReason(error);
+        if (!reason) throw error;
+        failures.noteFailure(
+          {
+            arm: context ? "controller" : "one-shot",
+            split: "propose",
+            planned: 0,
+          },
+          request.rows[0]?.id ?? "propose",
+          reason,
+          failureCategories(error),
+        );
+        return request.current;
+      }
     },
   };
 }

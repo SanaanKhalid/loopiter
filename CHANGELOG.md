@@ -8,6 +8,7 @@
 
 ### Minor
 
+- IFBench records a provider policy refusal, including a 400 `cyber_policy` or `content_filter`, as an item failure and continues later seeds. A controller call is recorded the same way. Auth failures, the budget cap, and a malformed request that is not a policy refusal still stop the run.
 - A disabled worker no longer logs the missing-plan fallback warning. `LOOPITER_DISABLE=enable` and `LOOPITER_DISABLE=enabled` still disable, and the worker warns that those words do not turn work on. A `--disable` worker does not observe or roll back a canary that is already running; `pause` keeps observation and recovery, and rollback is an explicit adapter call.
 - `selfImproving: false` / `self_improving=False` pauses every mode, including recommend and experiment. A controller created with `mode: "recommend"` and that flag returns `self_improvement_disabled` and does not propose. `LOOPITER_DISABLE` is read inside `tick()`, not only by the worker command.
 - Node's public `loopiter/onboarding` helpers `autonomousActivationCurrent`, `autonomousActivationPrompt`, `moduleActivationNamespace`, `effectiveBudgetFingerprint`, `activationBudgetCurrent`, `recordAutonomousActivation`, and `clearAutonomousActivation` are deprecated warning no-ops. Activation confirmation is retired. The same Python helpers were not in `__all__` and are removed.
