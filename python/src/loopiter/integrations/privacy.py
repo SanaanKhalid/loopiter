@@ -526,19 +526,25 @@ _TOKEN_LEFT = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 
 
 def _fixed_token_start(value: str, edge: int, edges: set[int]) -> int | None:
-    for prefix, size, alphabet in (
-        ("AKIA", 16, _AKIA_CHARS),
-        ("ASIA", 16, _AKIA_CHARS),
-        ("AIza", 35, _AIZA_CHARS),
-    ):
-        start = edge - len(prefix) - size
-        if start < 0 or not value.startswith(prefix, start):
-            continue
-        if any(char not in alphabet for char in value[start + len(prefix) : edge]):
-            continue
-        if start != 0 and start not in edges and value[start - 1] in _TOKEN_LEFT:
-            continue
-        return start
+    if edge == 0 or value[edge - 1] not in _AIZA_CHARS:
+        return None
+    windows = (("AKIA", 16, _AKIA_CHARS), ("ASIA", 16, _AKIA_CHARS))
+    if value[edge - 1] in _AKIA_CHARS:
+        for prefix, size, alphabet in windows:
+            start = edge - len(prefix) - size
+            if start < 0 or not value.startswith(prefix, start):
+                continue
+            if any(char not in alphabet for char in value[start + len(prefix) : edge]):
+                continue
+            if start != 0 and start not in edges and value[start - 1] in _TOKEN_LEFT:
+                continue
+            return start
+    start = edge - 39
+    if start >= 0 and value.startswith("AIza", start):
+        if all(char in _AIZA_CHARS for char in value[start + 4 : edge]) and (
+            start == 0 or start in edges or value[start - 1] not in _TOKEN_LEFT
+        ):
+            return start
     return None
 
 

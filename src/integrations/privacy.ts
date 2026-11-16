@@ -478,25 +478,33 @@ const AKIA_CHARS = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
 const AIZA_CHARS = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-");
 
 function fixedTokenStart(value: string, edge: number, edges: Set<number>): number | null {
-  const windows: Array<[string, number, Set<string>]> = [
-    ["AKIA", 16, AKIA_CHARS],
-    ["ASIA", 16, AKIA_CHARS],
-    ["AIza", 35, AIZA_CHARS],
-  ];
-  for (const [prefix, size, alphabet] of windows) {
-    const start = edge - prefix.length - size;
-    if (start < 0 || !value.startsWith(prefix, start)) continue;
+  if (edge === 0 || !AIZA_CHARS.has(value[edge - 1]!)) return null;
+  const leftOk = (start: number) =>
+    start === 0 || edges.has(start) || !/[A-Za-z0-9_]/.test(value[start - 1]!);
+  if (AKIA_CHARS.has(value[edge - 1]!)) {
+    for (const prefix of ["AKIA", "ASIA"]) {
+      const start = edge - prefix.length - 16;
+      if (start < 0 || !value.startsWith(prefix, start)) continue;
+      let ok = true;
+      for (let index = start + prefix.length; index < edge; index += 1) {
+        if (!AKIA_CHARS.has(value[index]!)) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok && leftOk(start)) return start;
+    }
+  }
+  const start = edge - 39;
+  if (start >= 0 && value.startsWith("AIza", start)) {
     let ok = true;
-    for (let index = start + prefix.length; index < edge; index += 1) {
-      if (!alphabet.has(value[index]!)) {
+    for (let index = start + 4; index < edge; index += 1) {
+      if (!AIZA_CHARS.has(value[index]!)) {
         ok = false;
         break;
       }
     }
-    if (!ok) continue;
-    const left = start === 0 ? "" : value[start - 1]!;
-    if (start !== 0 && !edges.has(start) && /[A-Za-z0-9_]/.test(left)) continue;
-    return start;
+    if (ok && leftOk(start)) return start;
   }
   return null;
 }
