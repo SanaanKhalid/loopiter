@@ -560,14 +560,25 @@ def _label_at_edge(value: str, edge: int, spans: list[tuple[int, int, str, int]]
     return edge
 
 
-_EDGE_HINT = re.compile(
-    r"sk-|sk_live_|github_pat_|AIza|AKIA|ASIA|gh[pousr]_|xox|earer|asic",
-    re.IGNORECASE,
-)
-
-
 def _edge_tokens_possible(value: str) -> bool:
-    return _EDGE_HINT.search(value) is not None
+    return (
+        "sk-" in value
+        or "sk_live_" in value
+        or "github_pat_" in value
+        or "AIza" in value
+        or "AKIA" in value
+        or "ASIA" in value
+        or "ghp_" in value
+        or "gho_" in value
+        or "ghu_" in value
+        or "ghs_" in value
+        or "ghr_" in value
+        or "xox" in value
+        or "earer" in value
+        or "EARER" in value
+        or "asic" in value
+        or "ASIC" in value
+    )
 
 
 def _token_spans_at_edges(

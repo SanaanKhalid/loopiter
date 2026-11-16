@@ -530,11 +530,25 @@ function labelAtEdge(value: string, edge: number, spans: Span[]): number {
   return edge;
 }
 
-const edgeHint = /sk-|sk_live_|github_pat_|AIza|AKIA|ASIA|gh[pousr]_|xox|earer|asic/i;
-
 function edgeTokensPossible(value: string): boolean {
-  edgeHint.lastIndex = 0;
-  return edgeHint.test(value);
+  return (
+    value.includes("sk-") ||
+    value.includes("sk_live_") ||
+    value.includes("github_pat_") ||
+    value.includes("AIza") ||
+    value.includes("AKIA") ||
+    value.includes("ASIA") ||
+    value.includes("ghp_") ||
+    value.includes("gho_") ||
+    value.includes("ghu_") ||
+    value.includes("ghs_") ||
+    value.includes("ghr_") ||
+    value.includes("xox") ||
+    value.includes("earer") ||
+    value.includes("EARER") ||
+    value.includes("asic") ||
+    value.includes("ASIC")
+  );
 }
 
 function pushTokensAtEdges(value: string, spans: Span[], edges: Set<number>): void {
