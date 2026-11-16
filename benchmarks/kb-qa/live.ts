@@ -973,6 +973,14 @@ export class RateLimitStop extends Error {
   }
 }
 
+/** Network or timeout retries ran out. This stops the run instead of the current seed. */
+export class ExhaustedProviderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExhaustedProviderError";
+  }
+}
+
 /** Sliding 60s window. A request larger than the limit runs only when the window is empty. */
 export class TokenMinuteWindow {
   private stamps: { at: number; tokens: number; id: number }[] = [];
@@ -1273,6 +1281,7 @@ export class LiveSession {
               error.message = message;
               throw error;
             }
+            if (networkClass || httpStatus !== null) throw new ExhaustedProviderError(message);
             throw new Error(message);
           }
           const worst: TokenUse = {

@@ -10,6 +10,7 @@ import {
   LiveLedger,
   LiveSession,
   RateLimitStop,
+  ExhaustedProviderError,
   assertLiveSpendGuards,
   createExitGuard,
   createInterruptHandler,
@@ -471,12 +472,19 @@ function emptyDraft(): RateDraft {
 }
 
 function stopsTheRun(error: unknown): boolean {
-  if (error instanceof ItemFailureStop) return true;
-  if (error instanceof RateLimitStop) return true;
-  if (error instanceof UnsupportedInstructionError) return true;
-  if (error instanceof LoopiterError) return true;
-  if (error instanceof ProviderRequestError) return perItemReason(error) === null;
-  return false;
+  return !isSeedScoped(error);
+}
+
+/** Policy refusals and a throw from harness or controller logic stay on that seed. */
+function isSeedScoped(error: unknown): boolean {
+  if (error instanceof ProviderRequestError) return perItemReason(error) !== null;
+  if (!(error instanceof Error)) return false;
+  if (error instanceof ExhaustedProviderError) return false;
+  if (error instanceof ItemFailureStop) return false;
+  if (error instanceof RateLimitStop) return false;
+  if (error instanceof UnsupportedInstructionError) return false;
+  if (error instanceof LoopiterError) return false;
+  return true;
 }
 
 function seedFailureView(

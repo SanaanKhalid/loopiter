@@ -329,6 +329,20 @@ test("a throw inside one seed is reported and the other seeds finish", async () 
   assertNoLeaks(JSON.stringify(seen.report));
 });
 
+test("exhausted network retries stop the run", async () => {
+  const seen = await runIfbench(2, () => {
+    const error = new Error("socket down") as Error & { code: string };
+    error.code = "ECONNRESET";
+    throw error;
+  });
+  assert.equal(seen.report.stopped?.reason, "provider_error");
+  assert.match(seen.report.stopped?.message ?? "", /socket down/);
+  assert.equal(seen.report.perSeed.length, 0);
+  assert.equal(seen.fetches, 2);
+  assert.equal(seen.report.passed, false);
+  assertNoLeaks(JSON.stringify(seen.report));
+});
+
 test("a seed whose propose calls are all refused is never_proposed", async () => {
   const seen = await runIfbench(2, (call) =>
     call.kind === "propose" ? policyResponse("cyber_policy") : answerResponse("quartz done"),
