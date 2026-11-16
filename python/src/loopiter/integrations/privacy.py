@@ -67,6 +67,9 @@ _TOKEN_BODY = re.compile(
     re.ASCII,
 )
 _JWT_EDGE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
+_JWT_RUN = re.compile(r"[A-Za-z0-9_-]+", re.ASCII)
+_LONG_DIGIT = re.compile(r"\d{5}", re.ASCII)
+_DIGIT_RUN = re.compile(r"\d+", re.ASCII)
 _AWS_SECRET = re.compile(
     rf"(?<![A-Za-z0-9])([\"']?(?:aws[-_]?)?secret[-_]?access[-_]?key[\"']?{_WS}*[=:]{_WS}*[\"']?)"
     r"[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])",
@@ -244,17 +247,15 @@ def _card_spans(value: str, spans: list[tuple[int, int, str, int]]) -> None:
     even: list[int] | None = None
     odd: list[int] | None = None
     i = 0
-    while i < length:
-        if not ("0" <= value[i] <= "9"):
-            i += 1
+    for match in _DIGIT_RUN.finditer(value):
+        if match.start() < i:
             continue
+        i = match.start()
         # An isolated group shorter than 13 digits cannot be a card. Skip it
         # before allocating the run, which is the common case in mixed text.
         run_at = i
-        glen = 0
-        while i < length and "0" <= value[i] <= "9":
-            glen += 1
-            i += 1
+        i = match.end()
+        glen = i - run_at
         if not (
             (i + 1 < length and value[i] in " -" and "0" <= value[i + 1] <= "9") or 13 <= glen <= 19
         ):
@@ -623,22 +624,14 @@ def _suffix_card_spans(
     if not ordered:
         return
     ordered.sort(key=lambda span: span[0])
-    run = 0
-    for char in value:
-        if "0" <= char <= "9":
-            run += 1
-            if run > 4:
-                break
-        else:
-            run = 0
-    else:
+    if _LONG_DIGIT.search(value) is None:
         return
     i = 0
     pointer = 0
-    while i < length:
-        if not ("0" <= value[i] <= "9"):
-            i += 1
+    for match in _DIGIT_RUN.finditer(value):
+        if match.start() < i:
             continue
+        i = match.start()
         starts: list[int] = []
         ends: list[int] = []
         seps: list[str] = []
@@ -716,52 +709,47 @@ def _suffix_card_spans(
 
 
 def _jwt_run_end(value: str, index: int) -> int:
-    length = len(value)
-    while index < length and value[index] in _JWT_EDGE:
-        index += 1
-    return index
+    match = _JWT_RUN.match(value, index)
+    return index if match is None else match.end()
 
 
-def _jwt_simple_end(value: str, start: int) -> int | None:
-    length = len(value)
+def _jwt_dotted(value: str, pos: int) -> int | None:
+    end = _jwt_run_end(value, pos)
+    if end == pos or end >= len(value) or value[end] != ".":
+        return None
+    return end + 1
+
+
+def _jwt_simple_ok(value: str, start: int) -> bool:
     if not value.startswith("eyJ", start):
-        return None
-    pos = start + 3
-    for _segment in range(2):
-        seg = pos
-        while pos < length and value[pos] in _JWT_EDGE:
-            pos += 1
-        if pos == seg or pos >= length or value[pos] != ".":
-            return None
-        pos += 1
-    seg = pos
-    while pos < length and value[pos] in _JWT_EDGE:
-        pos += 1
-    if pos == seg:
-        return None
-    return pos
+        return False
+    pos = _jwt_dotted(value, start + 3)
+    if pos is None:
+        return False
+    pos = _jwt_dotted(value, pos)
+    if pos is None:
+        return False
+    return pos < len(value) and value[pos] in _JWT_EDGE
 
 
 def _jwt_end(value: str, start: int) -> int | None:
-    length = len(value)
     if not value.startswith("eyJ", start):
         return None
-    pos = start + 3
-    for _segment in range(2):
-        seg = pos
-        while pos < length and value[pos] in _JWT_EDGE:
-            pos += 1
-        if pos == seg or pos >= length or value[pos] != ".":
-            return None
-        pos += 1
-    seg = pos
-    while pos < length and value[pos] in _JWT_EDGE:
-        if value.startswith("eyJ", pos) and _jwt_simple_end(value, pos) is not None:
-            break
-        pos += 1
-    if pos == seg:
+    pos = _jwt_dotted(value, start + 3)
+    if pos is None:
         return None
-    return pos
+    pos = _jwt_dotted(value, pos)
+    if pos is None:
+        return None
+    run_end = _jwt_run_end(value, pos)
+    if run_end == pos:
+        return None
+    hit = value.find("eyJ", pos)
+    while 0 <= hit < run_end:
+        if _jwt_simple_ok(value, hit):
+            return None if hit == pos else hit
+        hit = value.find("eyJ", hit + 3)
+    return run_end
 
 
 def _jwt_spans(value: str, spans: list[tuple[int, int, str, int]], edges: set[int]) -> None:

@@ -207,40 +207,44 @@ function spanEdges(spans: Span[]): Set<number> {
   return edges;
 }
 
+const JWT_RUN = /[A-Za-z0-9_-]+/y;
+
 function jwtRunEnd(value: string, index: number): number {
-  while (index < value.length && JWT_EDGE.has(value[index]!)) index += 1;
-  return index;
+  JWT_RUN.lastIndex = index;
+  const match = JWT_RUN.exec(value);
+  if (!match || match.index !== index) return index;
+  return match.index + match[0].length;
 }
 
-function jwtSimpleEnd(value: string, start: number): number | null {
-  if (!value.startsWith("eyJ", start)) return null;
-  let pos = start + 3;
-  for (let segment = 0; segment < 2; segment += 1) {
-    const seg = pos;
-    while (pos < value.length && JWT_EDGE.has(value[pos]!)) pos += 1;
-    if (pos === seg || pos >= value.length || value[pos] !== ".") return null;
-    pos += 1;
-  }
-  const seg = pos;
-  while (pos < value.length && JWT_EDGE.has(value[pos]!)) pos += 1;
-  return pos === seg ? null : pos;
+function jwtDotted(value: string, pos: number): number | null {
+  const end = jwtRunEnd(value, pos);
+  if (end === pos || end >= value.length || value[end] !== ".") return null;
+  return end + 1;
+}
+
+function jwtSimpleOk(value: string, start: number): boolean {
+  if (!value.startsWith("eyJ", start)) return false;
+  const first = jwtDotted(value, start + 3);
+  if (first === null) return false;
+  const second = jwtDotted(value, first);
+  if (second === null) return false;
+  return second < value.length && JWT_EDGE.has(value[second]!);
 }
 
 function jwtEnd(value: string, start: number): number | null {
   if (!value.startsWith("eyJ", start)) return null;
-  let pos = start + 3;
-  for (let segment = 0; segment < 2; segment += 1) {
-    const seg = pos;
-    while (pos < value.length && JWT_EDGE.has(value[pos]!)) pos += 1;
-    if (pos === seg || pos >= value.length || value[pos] !== ".") return null;
-    pos += 1;
+  const first = jwtDotted(value, start + 3);
+  if (first === null) return null;
+  const second = jwtDotted(value, first);
+  if (second === null) return null;
+  const runEnd = jwtRunEnd(value, second);
+  if (runEnd === second) return null;
+  let hit = value.indexOf("eyJ", second);
+  while (hit >= 0 && hit < runEnd) {
+    if (jwtSimpleOk(value, hit)) return hit === second ? null : hit;
+    hit = value.indexOf("eyJ", hit + 3);
   }
-  const seg = pos;
-  while (pos < value.length && JWT_EDGE.has(value[pos]!)) {
-    if (value.startsWith("eyJ", pos) && jwtSimpleEnd(value, pos) !== null) break;
-    pos += 1;
-  }
-  return pos === seg ? null : pos;
+  return runEnd;
 }
 
 function pushJwts(value: string, spans: Span[], edges: Set<number>): void {
