@@ -176,6 +176,9 @@ def _email_spans(
         if pointer < len(blocked) and blocked[pointer][0] < end and left < blocked[pointer][1]:
             i = end
             continue
+        dot = value.rfind(".", at + 1, end)
+        label_start = dot + 1 if dot >= at + 1 else at + 1
+        _token_in_final_label(value, spans, label_start, end, edges)
         spans.append((left, end, "[REDACTED]", left))
         i = end
 
@@ -479,6 +482,32 @@ def _token_right_ok(value: str, end: int, edges: set[int]) -> bool:
     )
 
 
+def _token_head(value: str, index: int) -> bool:
+    head = value[index : index + 12]
+    if head.startswith(("sk-", "sk_live_", "github_pat_", "AIza", "AKIA", "ASIA")):
+        return True
+    if len(head) >= 4 and head[:3] in {"ghp", "gho", "ghu", "ghs", "ghr"} and head[3] == "_":
+        return True
+    return len(head) >= 5 and head[:3] == "xox" and head[3] in "baprs" and head[4] == "-"
+
+
+def _token_in_final_label(
+    value: str,
+    spans: list[tuple[int, int, str, int]],
+    label_start: int,
+    label_end: int,
+    edges: set[int],
+) -> None:
+    pos = label_start
+    while pos < label_end:
+        if value[pos] in "sgAGx" and _token_head(value, pos):
+            match = _TOKEN_BODY.match(value, pos)
+            if match is not None and _token_right_ok(value, match.end(), edges):
+                spans.append((match.start(), match.end(), _MARKER, match.start()))
+                return
+        pos += 1
+
+
 def _token_spans_at_edges(
     value: str, spans: list[tuple[int, int, str, int]], edges: set[int]
 ) -> None:
@@ -487,16 +516,7 @@ def _token_spans_at_edges(
     for edge in edges:
         if edge >= length or edge in covered or value[edge] not in "sgAGx":
             continue
-        head = value[edge : edge + 12]
-        if not (
-            head.startswith(("sk-", "sk_live_", "github_pat_", "AIza", "AKIA", "ASIA"))
-            or (
-                len(head) >= 4
-                and head[:3] in {"ghp", "gho", "ghu", "ghs", "ghr"}
-                and head[3] == "_"
-            )
-            or (len(head) >= 5 and head[:3] == "xox" and head[3] in "baprs" and head[4] == "-")
-        ):
+        if not _token_head(value, edge):
             continue
         match = _TOKEN_BODY.match(value, edge)
         if match is None or not _token_right_ok(value, match.end(), edges):

@@ -501,6 +501,22 @@
     {
       "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.sig93782 822463 10005",
       "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.comsk-abcdefghijklmnopqrst",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.comghp_abcd123456789",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "a@b.cdxoxb-1234567890-abcdefghij",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "ask@desk.com",
+      "output": "[REDACTED]"
     }
   ],
   "boundaries": [

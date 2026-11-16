@@ -163,6 +163,9 @@ function pushEmails(value: string, spans: Span[], blocked: Array<[number, number
       i = end;
       continue;
     }
+    const dot = value.lastIndexOf(".", end - 1);
+    const labelStart = dot >= at + 1 ? dot + 1 : at + 1;
+    pushTokenInFinalLabel(value, spans, labelStart, end, edges);
     spans.push([left, end, MARKER, left]);
     i = end;
   }
@@ -410,16 +413,43 @@ function tokenRightOk(value: string, end: number, edges: Set<number>): boolean {
   return end === value.length || edges.has(end) || !/[A-Za-z0-9_]/.test(value[end]!);
 }
 
+function tokenHead(value: string, index: number): boolean {
+  const head = value.slice(index, index + 12);
+  const gh = head.length >= 4 && ["ghp", "gho", "ghu", "ghs", "ghr"].includes(head.slice(0, 3)) && head[3] === "_";
+  const xox = head.length >= 5 && head.startsWith("xox") && "baprs".includes(head[3]!) && head[4] === "-";
+  return (
+    head.startsWith("sk-") ||
+    head.startsWith("sk_live_") ||
+    head.startsWith("github_pat_") ||
+    head.startsWith("AIza") ||
+    head.startsWith("AKIA") ||
+    head.startsWith("ASIA") ||
+    gh ||
+    xox
+  );
+}
+
+function pushTokenInFinalLabel(value: string, spans: Span[], labelStart: number, labelEnd: number, edges: Set<number>): void {
+  for (let pos = labelStart; pos < labelEnd; pos += 1) {
+    const code = value.charCodeAt(pos);
+    if (code !== 115 && code !== 103 && code !== 65 && code !== 71 && code !== 120) continue;
+    if (!tokenHead(value, pos)) continue;
+    tokenBody.lastIndex = pos;
+    const match = tokenBody.exec(value);
+    tokenBody.lastIndex = 0;
+    if (!match || match.index !== pos || !tokenRightOk(value, pos + match[0].length, edges)) continue;
+    spans.push([pos, pos + match[0].length, MARKER, pos]);
+    return;
+  }
+}
+
 function pushTokensAtEdges(value: string, spans: Span[], edges: Set<number>): void {
   const covered = new Set(spans.map((span) => span[0]));
   for (const edge of edges) {
     if (edge >= value.length || covered.has(edge)) continue;
     const headCode = value.charCodeAt(edge);
     if (headCode !== 115 && headCode !== 103 && headCode !== 65 && headCode !== 120) continue;
-    const head = value.slice(edge, edge + 12);
-    const gh = head.length >= 4 && ["ghp", "gho", "ghu", "ghs", "ghr"].includes(head.slice(0, 3)) && head[3] === "_";
-    const xox = head.length >= 5 && head.startsWith("xox") && "baprs".includes(head[3]!) && head[4] === "-";
-    if (!(head.startsWith("sk-") || head.startsWith("sk_live_") || head.startsWith("github_pat_") || head.startsWith("AIza") || head.startsWith("AKIA") || head.startsWith("ASIA") || gh || xox)) continue;
+    if (!tokenHead(value, edge)) continue;
     tokenBody.lastIndex = edge;
     const match = tokenBody.exec(value);
     if (!match || match.index !== edge || !tokenRightOk(value, edge + match[0].length, edges)) continue;
