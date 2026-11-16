@@ -294,6 +294,7 @@ snapshot in memory; it is not a streaming warehouse engine.
 Python includes capture, updates, structured analysis, manual candidate lifecycle,
 timeouts/cancellation, events, namespace deletion, an in-memory dev store, optional
 PostgreSQL 16/17 adapter, conformance tests and an offline end-to-end example.
+Redacted OpenAI streams are stored as assembled output rather than raw deltas.
 The Node-only legacy controller, JsonFileStore/legacy migration CLI,
 and OpenAI/Azure classification starter remain **Node-only**. Neither SDK automatically
 fine-tunes a model. Application callbacks, database permissions and deployment

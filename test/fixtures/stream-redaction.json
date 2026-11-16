@@ -1,0 +1,1170 @@
+{
+  "text": "sk-streamsecretvalue01\nghp_streamsecretvalue\ngithub_pat_streamsecretvalue\nxoxb-stream-secret\neyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl\nAKIASTREAMSECRETKEY1\naws_secret_access_key=abcdefghijklmnopqrstuvwxyz0123456789ABCD\nBearer stream-bearer-secret\nBasic c3RyZWFtLWJhc2lj\nstream.user@example.com\n-----BEGIN RSA PRIVATE KEY-----\nstream-pem-line\n-----END RSA PRIVATE KEY-----\n4111111111111111\nhttps://example.com/cb?token=streamquerytokenvalue\nhttps://fixture-user:stream-userinfo-secret@example.test/path\npassword=stream-password-value",
+  "secrets": [
+    "sk-streamsecretvalue01",
+    "ghp_streamsecretvalue",
+    "github_pat_streamsecretvalue",
+    "xoxb-stream-secret",
+    "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+    "AKIASTREAMSECRETKEY1",
+    "abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+    "stream-bearer-secret",
+    "c3RyZWFtLWJhc2lj",
+    "stream.user@example.com",
+    "stream-pem-line",
+    "4111111111111111",
+    "streamquerytokenvalue",
+    "stream-userinfo-secret",
+    "stream-password-value"
+  ],
+  "events": [
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "sk-stre"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "amsecre"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "tvalue0"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "1\nghp_s"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "treamse"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "cretval"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "ue\ngith"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "ub_pat_"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "streams"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "ecretva"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "lue\nxox"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "b-strea"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "m-secre"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "t\neyJhb"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "GciOiJu"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "b25lIn0"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": ".eyJzdW"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "IiOiJma"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "Xh0dXJl"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "In0.c2l"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "nbmF0dX"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "Jl\nAKIA"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "STREAMS"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "ECRETKE"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "Y1\naws_"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "secret_"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "access_"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "key=abc"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "defghij"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "klmnopq"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "rstuvwx"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "yz01234"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "56789AB"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "CD\nBear"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "er stre"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "am-bear"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "er-secr"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "et\nBasi"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "c c3RyZ"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "WFtLWJh"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "c2lj\nst"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "ream.us"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "er@exam"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "ple.com"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "\n-----B"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "EGIN RS"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "A PRIVA"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "TE KEY-"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "----\nst"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "ream-pe"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "m-line\n"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "-----EN"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "D RSA P"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "RIVATE "
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "KEY----"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "-\n41111"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "1111111"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "1111\nht"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "tps://e"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "xample."
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "com/cb?"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "token=s"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "treamqu"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "erytoke"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "nvalue\n"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "https:/"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "/fixtur"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "e-user:"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "stream-"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "userinf"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "o-secre"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "t@examp"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "le.test"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "/path\np"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "assword"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "=stream"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "-passwo"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "rd-valu"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "content": "e"
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {},
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  ],
+  "output": {
+    "stream": {
+      "outputs": [
+        {
+          "index": 0,
+          "id": "chat-1",
+          "finishReason": "stop",
+          "content": "[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]\naws_secret_access_key=[REDACTED]\nBearer [REDACTED]\nBasic [REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]\nhttps://example.com/cb?token=[REDACTED]\nhttps://[REDACTED]@example.test/path\npassword=[REDACTED]"
+        }
+      ],
+      "usage": {
+        "total_tokens": 3
+      }
+    }
+  },
+  "toolArguments": "password=stream-password-value 4111111111111111",
+  "toolEvents": [
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "function": {
+                  "arguments": "passwor",
+                  "name": "save"
+                },
+                "id": "call-1"
+              }
+            ]
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "function": {
+                  "arguments": "d=strea"
+                }
+              }
+            ]
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "function": {
+                  "arguments": "m-passw"
+                }
+              }
+            ]
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "function": {
+                  "arguments": "ord-val"
+                }
+              }
+            ]
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "function": {
+                  "arguments": "ue 4111"
+                }
+              }
+            ]
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "function": {
+                  "arguments": "1111111"
+                }
+              }
+            ]
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "function": {
+                  "arguments": "11111"
+                }
+              }
+            ]
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chat-1",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {},
+          "finish_reason": "tool_calls"
+        }
+      ]
+    }
+  ],
+  "toolOutput": {
+    "stream": {
+      "outputs": [
+        {
+          "index": 0,
+          "id": "chat-1",
+          "finishReason": "tool_calls",
+          "content": "",
+          "toolCalls": [
+            {
+              "index": 0,
+              "id": "call-1",
+              "name": "save",
+              "arguments": "password=[REDACTED] [REDACTED]"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

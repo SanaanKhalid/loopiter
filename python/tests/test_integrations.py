@@ -9,6 +9,7 @@ from loopiter import FeedbackLoop, InMemoryStore, LoopiterError
 from loopiter.integrations.context import replace_guidance, strip_guidance
 from loopiter.integrations.observe import create_observer
 from loopiter.integrations.openai import with_loopiter
+from loopiter.integrations.privacy import json_size, redact_capture
 
 RESULT = {
     "id": "chat-1",
@@ -18,6 +19,11 @@ RESULT = {
 PARAMS = {"model": "fixture", "messages": [{"role": "user", "content": "hello"}]}
 PARITY = json.loads(
     (Path(__file__).resolve().parents[2] / "test/fixtures/redaction-parity.json").read_text(
+        encoding="utf-8"
+    )
+)
+STREAM = json.loads(
+    (Path(__file__).resolve().parents[2] / "test/fixtures/stream-redaction.json").read_text(
         encoding="utf-8"
     )
 )
@@ -384,6 +390,84 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         proceed.set()
         await task
         self.assertEqual(create.call_args.kwargs["messages"][0]["content"], "original")
+
+    async def test_redacted_streams_assemble_before_redaction(self):
+        text = STREAM["text"]
+        secrets = STREAM["secrets"]
+        expected = redact_capture(text)
+
+        def chunked(body, size):
+            pieces = [body[index : index + size] for index in range(0, len(body), size)]
+            events = [
+                {
+                    "id": "chat-1",
+                    "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}],
+                }
+                for piece in pieces
+            ]
+            events.append(
+                {"id": "chat-1", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+            )
+            events.append({"id": "chat-1", "choices": [], "usage": {"total_tokens": 3}})
+            return events
+
+        async def drain(events, maximum=65536):
+            loop = FeedbackLoop(store=InMemoryStore(), namespace=f"stream-{maximum}-{len(events)}")
+            notes = []
+            client = create_observer(
+                loop,
+                failure_mode="closed",
+                capture={"mode": "redacted"},
+                on_error=notes.append,
+            )
+            create = AsyncMock(return_value=Stream(events))
+            base = SimpleNamespace(
+                chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+                responses=SimpleNamespace(create=AsyncMock()),
+            )
+            wrapped = with_loopiter(
+                base,
+                loop=loop,
+                context=lambda _request: {"artifacts": {"prompt": "v1"}},
+                capture=client,
+                maximum_output_bytes=maximum,
+            )
+            seen = 0
+            async for _event in await wrapped.chat.completions.create(**PARAMS, stream=True):
+                seen += 1
+            row = (await self.rows(loop))[0]
+            return row, seen, notes
+
+        for size in (1, 7):
+            row, seen, _notes = await drain(chunked(text, size))
+            self.assertEqual(seen, len(chunked(text, size)))
+            encoded = json.dumps(row)
+            for secret in secrets:
+                self.assertNotIn(secret, encoded)
+            self.assertEqual(row["output"]["stream"]["outputs"][0]["content"], expected)
+
+        shared, _seen, _notes = await drain(STREAM["events"])
+        self.assertEqual(shared["output"], STREAM["output"])
+        tool, seen, _notes = await drain(STREAM["toolEvents"])
+        self.assertEqual(seen, len(STREAM["toolEvents"]))
+        self.assertEqual(tool["output"], STREAM["toolOutput"])
+        encoded = json.dumps(tool)
+        self.assertNotIn("stream-password-value", encoded)
+        self.assertNotIn("4111111111111111", encoded)
+        self.assertEqual(
+            tool["output"]["stream"]["outputs"][0]["toolCalls"][0]["arguments"],
+            redact_capture(STREAM["toolArguments"]),
+        )
+
+        events = STREAM["events"]
+        total = sum(json_size(event) for event in events)
+        under, _seen, _notes = await drain(events, total)
+        self.assertEqual(under["output"]["stream"]["outputs"][0]["content"], expected)
+        over, seen, notes = await drain(events, total - 1)
+        self.assertEqual(seen, len(events))
+        self.assertEqual(over["output"], {"omitted": True, "truncated": True})
+        self.assertNotIn(text[:24], json.dumps(over))
+        self.assertEqual(len(notes), 1)
 
 
 if __name__ == "__main__":

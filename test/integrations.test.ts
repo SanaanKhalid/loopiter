@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import OpenAI from "openai";
 import { FeedbackLoop, InMemoryStore } from "../src/index.js";
 import { withLoopiter as wrapOpenAI } from "../src/integrations/openai.js";
 import { withLoopiter as wrapModel } from "../src/integrations/ai-sdk.js";
 import { replaceGuidance, stripGuidance } from "../src/integrations/context.js";
 import type { CaptureOptions } from "../src/integrations/capture.js";
+import { captureJson } from "../src/integrations/capture.js";
+import { redactCapture } from "../src/integrations/observe.js";
 
 function setup(namespace = "capture") {
   const loop = new FeedbackLoop({ store: new InMemoryStore(), namespace });
@@ -451,4 +456,79 @@ test("AI SDK truncation, cancellation and error events preserve failure status",
           : "failed",
     );
   }
+});
+
+test("redacted streams assemble split secrets before storage", async () => {
+  const fixture = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../test/fixtures/stream-redaction.json"), "utf8"),
+  ) as {
+    text: string;
+    secrets: string[];
+    events: Record<string, unknown>[];
+    output: unknown;
+    toolArguments: string;
+    toolEvents: Record<string, unknown>[];
+    toolOutput: unknown;
+  };
+  const expected = redactCapture(fixture.text);
+  const chunks = (body: string, size: number) => {
+    const events: Record<string, unknown>[] = [];
+    for (let index = 0; index < body.length; index += size) {
+      events.push({
+        id: "chat-1",
+        choices: [{ index: 0, delta: { content: body.slice(index, index + size) }, finish_reason: null }],
+      });
+    }
+    events.push({ id: "chat-1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+    events.push({ id: "chat-1", choices: [], usage: { total_tokens: 3 } });
+    return events;
+  };
+  const sse = (events: Record<string, unknown>[]) =>
+    new Response(
+      `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  const drain = async (events: Record<string, unknown>[], maximum = 65536) => {
+    const { loop, options } = setup(`stream-${maximum}-${events.length}`);
+    const notes: unknown[] = [];
+    const wrapped = wrapOpenAI(client(async () => sse(events)), {
+      ...options,
+      capture: { mode: "redacted" },
+      maximumOutputBytes: maximum,
+      onError: (error) => notes.push(error),
+    });
+    const parts = [];
+    for await (const part of await wrapped.chat.completions.create({ ...call, stream: true })) parts.push(part);
+    const row = (await loop.list("executions")).items[0]!;
+    return { row, seen: parts.length, notes };
+  };
+  for (const size of [1, 7]) {
+    const events = chunks(fixture.text, size);
+    const { row, seen } = await drain(events);
+    assert.equal(seen, events.length);
+    const encoded = JSON.stringify(row);
+    for (const secret of fixture.secrets) assert.equal(encoded.includes(secret), false, secret);
+    assert.equal((row.output as { stream: { outputs: { content: string }[] } }).stream.outputs[0]!.content, expected);
+  }
+  const shared = await drain(fixture.events);
+  assert.deepEqual(shared.row.output, fixture.output);
+  const tool = await drain(fixture.toolEvents);
+  assert.equal(tool.seen, fixture.toolEvents.length);
+  assert.deepEqual(tool.row.output, fixture.toolOutput);
+  const encoded = JSON.stringify(tool.row);
+  assert.equal(encoded.includes("stream-password-value"), false);
+  assert.equal(encoded.includes("4111111111111111"), false);
+  assert.equal(
+    (tool.row.output as { stream: { outputs: { toolCalls: { arguments: string }[] }[] } }).stream.outputs[0]!.toolCalls[0]!.arguments,
+    redactCapture(fixture.toolArguments),
+  );
+  const total = fixture.events.reduce((sum, event) => sum + Buffer.byteLength(JSON.stringify(captureJson(event)), "utf8"), 0);
+  const under = await drain(fixture.events, total);
+  assert.equal((under.row.output as { stream: { outputs: { content: string }[] } }).stream.outputs[0]!.content, expected);
+  const over = await drain(fixture.events, total - 1);
+  assert.equal(over.seen, fixture.events.length);
+  assert.deepEqual(over.row.output, { omitted: true, truncated: true });
+  assert.equal(JSON.stringify(over.row).includes(fixture.text.slice(0, 24)), false);
+  assert.equal(over.notes.length, 1);
+  assert.ok(over.notes[0] instanceof RangeError);
 });
