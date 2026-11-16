@@ -565,6 +565,34 @@
     {
       "input": "a@b.cd5",
       "output": "[REDACTED]5"
+    },
+    {
+      "input": "mail user@example.com9 now",
+      "output": "mail [REDACTED]9 now"
+    },
+    {
+      "input": "user@example.com555-",
+      "output": "[REDACTED]555-"
+    },
+    {
+      "input": "alice@example.com1",
+      "output": "[REDACTED]1"
+    },
+    {
+      "input": "a@b.io9",
+      "output": "[REDACTED]9"
+    },
+    {
+      "input": "contact: alice@example.com2 and bob",
+      "output": "contact: [REDACTED]2 and bob"
+    },
+    {
+      "input": "user@example.comeyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.abcDEF123",
+      "output": "[REDACTED]123"
+    },
+    {
+      "input": "user@example.comsk-abcdefghijklmnop",
+      "output": "[REDACTED]"
     }
   ],
   "boundaries": [

@@ -251,6 +251,38 @@ test("glued secret fuzz stays idempotent", () => {
   assert.equal(exceptions, 0);
 });
 
+test("glued email secrets stay hidden", () => {
+  const emails = ["user@example.com", "alice@example.com", "a@b.io", "a@b.cd"];
+  const jwt = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.abcDEF123";
+  const sk = "sk-abcdefghijklmnop";
+  const digits = ["9", "555", "1", "2", "0"];
+  const prefixes = ["", "mail ", "contact: "];
+  const suffixes = ["", " now", " and bob"];
+  let state = 42;
+  const nxt = () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state;
+  };
+  for (let n = 0; n < 200; n += 1) {
+    const email = emails[nxt() % emails.length]!;
+    const prefix = prefixes[nxt() % prefixes.length]!;
+    const kind = nxt() % 3;
+    let trailer: string;
+    const secrets = [email];
+    if (kind === 0) trailer = digits[nxt() % digits.length]!;
+    else if (kind === 1) {
+      trailer = jwt;
+      secrets.push("eyJhbGciOiJub25lIn0", "eyJzdWIiOiJ4In0");
+    } else {
+      trailer = sk;
+      secrets.push(sk);
+    }
+    const sample = prefix + email + trailer + suffixes[nxt() % suffixes.length]!;
+    const redacted = String(redactCapture(sample));
+    for (const secret of secrets) assert.equal(redacted.includes(secret), false, secret);
+  }
+});
+
 test("redaction covers the recorded baseline", () => {
   // Outputs recorded at 070f524. A later pass may cover more, but it must
   // not show text that revision already replaced.

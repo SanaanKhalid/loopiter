@@ -671,6 +671,38 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         # This glued alphabet is idempotent. Arbitrary text is not.
         self.assertEqual(exceptions, 0)
 
+    def test_glued_email_secrets_stay_hidden(self):
+        emails = ("user@example.com", "alice@example.com", "a@b.io", "a@b.cd")
+        jwt = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.abcDEF123"
+        sk = "sk-abcdefghijklmnop"
+        digits = ("9", "555", "1", "2", "0")
+        prefixes = ("", "mail ", "contact: ")
+        suffixes = ("", " now", " and bob")
+        state = 42
+
+        def nxt() -> int:
+            nonlocal state
+            state = (1664525 * state + 1013904223) & 0xFFFFFFFF
+            return state
+
+        for _ in range(200):
+            email = emails[nxt() % len(emails)]
+            prefix = prefixes[nxt() % len(prefixes)]
+            kind = nxt() % 3
+            if kind == 0:
+                trailer = digits[nxt() % len(digits)]
+                secrets = (email,)
+            elif kind == 1:
+                trailer = jwt
+                secrets = (email, "eyJhbGciOiJub25lIn0", "eyJzdWIiOiJ4In0")
+            else:
+                trailer = sk
+                secrets = (email, sk)
+            sample = prefix + email + trailer + suffixes[nxt() % len(suffixes)]
+            redacted = redact_capture(sample)
+            for secret in secrets:
+                self.assertNotIn(secret, redacted)
+
     def test_redaction_covers_the_recorded_baseline(self):
         from pathlib import Path
 
