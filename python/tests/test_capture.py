@@ -632,6 +632,10 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         scales_text("Basic 4111 " * 5957)
         scales_text("http://u:p@a.co " * 4096)
         scales_text("https://u:p@h.io/ " * 3640)
+        scales_text("4111111111111111sk-abcdefghijklmnop" * 1872)
+        scales_text(
+            "4111111111111111eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl" * 910
+        )
 
     def test_detectors_read_the_original_text_only(self):
         from unittest.mock import patch

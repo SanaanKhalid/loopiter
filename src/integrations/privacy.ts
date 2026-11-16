@@ -30,9 +30,14 @@ const credentialKey = new RegExp(
   "i",
 );
 const bearer = new RegExp(`(?<![A-Za-z0-9_])Bearer${WS}+[A-Za-z0-9+/_.=~-]+`, "gi");
+const bearerBody = new RegExp(`Bearer${WS}+[A-Za-z0-9+/_.=~-]+`, "iy");
 const basic = new RegExp(
   `(?<![A-Za-z0-9_])[Bb][Aa][Ss][Ii][Cc]${WS}+(?![a-z]+(?![A-Za-z0-9_/+.=~-]))[A-Za-z0-9+/_.=~-]+`,
   "g",
+);
+const basicBody = new RegExp(
+  `[Bb][Aa][Ss][Ii][Cc]${WS}+(?![a-z]+(?![A-Za-z0-9_/+.=~-]))[A-Za-z0-9+/_.=~-]+`,
+  "y",
 );
 const tokens = /(?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![A-Za-z0-9_])/g;
 const jwt = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])/g;
@@ -199,20 +204,36 @@ function jwtBoundary(value: string, index: number, atEnd: boolean, edges: Set<nu
   return !JWT_EDGE.has(value[index - 1]!);
 }
 
+function jwtRunEnd(value: string, index: number): number {
+  while (index < value.length && JWT_EDGE.has(value[index]!)) index += 1;
+  return index;
+}
+
 function pushJwts(value: string, spans: Span[], edges: Set<number>): void {
   collect(jwt, value, spans, () => MARKER, (match) => match.index ?? 0);
   const covered = new Set(spans.map((span) => span[0]));
-  for (const edge of edges) {
-    if (covered.has(edge) || edge >= value.length || value.charCodeAt(edge) !== 101 || !value.startsWith("eyJ", edge)) continue;
+  const ordered = spans.slice().sort((a, b) => a[0] - b[0]);
+  let pointer = 0;
+  let skipUntil = -1;
+  const sorted = [...edges].filter((edge) => edge < value.length).sort((a, b) => a - b);
+  for (const edge of sorted) {
+    if (edge < skipUntil) continue;
+    while (pointer < ordered.length && ordered[pointer]![1] <= edge) pointer += 1;
+    const cover = ordered[pointer];
+    if (cover && cover[0] < edge && edge < cover[1]) continue;
+    if (covered.has(edge) || value.charCodeAt(edge) !== 101 || !value.startsWith("eyJ", edge)) continue;
     jwtBody.lastIndex = edge;
     const match = jwtBody.exec(value);
-    if (!match || match.index !== edge) continue;
+    jwtBody.lastIndex = 0;
+    if (!match || match.index !== edge || !jwtBoundary(value, edge + match[0].length, true, edges)) {
+      skipUntil = jwtRunEnd(value, edge);
+      continue;
+    }
     const end = edge + match[0].length;
-    if (!jwtBoundary(value, end, true, edges)) continue;
     spans.push([edge, end, MARKER, edge]);
     covered.add(edge);
+    skipUntil = end;
   }
-  jwtBody.lastIndex = 0;
 }
 
 function luhnOk(even: number[], odd: number[], start: number, end: number): boolean {
@@ -453,20 +474,88 @@ function pushTokenInFinalLabel(value: string, spans: Span[], labelStart: number,
   }
 }
 
+const AKIA_CHARS = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+const AIZA_CHARS = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-");
+
+function fixedTokenStart(value: string, edge: number, edges: Set<number>): number | null {
+  const windows: Array<[string, number, Set<string>]> = [
+    ["AKIA", 16, AKIA_CHARS],
+    ["ASIA", 16, AKIA_CHARS],
+    ["AIza", 35, AIZA_CHARS],
+  ];
+  for (const [prefix, size, alphabet] of windows) {
+    const start = edge - prefix.length - size;
+    if (start < 0 || !value.startsWith(prefix, start)) continue;
+    let ok = true;
+    for (let index = start + prefix.length; index < edge; index += 1) {
+      if (!alphabet.has(value[index]!)) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+    const left = start === 0 ? "" : value[start - 1]!;
+    if (start !== 0 && !edges.has(start) && /[A-Za-z0-9_]/.test(left)) continue;
+    return start;
+  }
+  return null;
+}
+
+function labelAtEdge(value: string, edge: number, spans: Span[]): number {
+  bearerBody.lastIndex = edge;
+  const bearerMatch = bearerBody.exec(value);
+  bearerBody.lastIndex = 0;
+  if (bearerMatch && bearerMatch.index === edge) {
+    const end = edge + bearerMatch[0].length;
+    spans.push([edge, end, `Bearer ${MARKER}`, tokenStart(value, end)]);
+    return end;
+  }
+  basicBody.lastIndex = edge;
+  const basicMatch = basicBody.exec(value);
+  basicBody.lastIndex = 0;
+  if (basicMatch && basicMatch.index === edge) {
+    const end = edge + basicMatch[0].length;
+    spans.push([edge, end, `Basic ${MARKER}`, tokenStart(value, end)]);
+    return end;
+  }
+  return edge;
+}
+
 function pushTokensAtEdges(value: string, spans: Span[], edges: Set<number>): void {
   const covered = new Set(spans.map((span) => span[0]));
-  for (const edge of edges) {
-    if (edge >= value.length || covered.has(edge)) continue;
+  const ordered = spans.slice().sort((a, b) => a[0] - b[0]);
+  let pointer = 0;
+  let skipUntil = -1;
+  const sorted = [...edges].filter((edge) => edge < value.length).sort((a, b) => a - b);
+  for (const edge of sorted) {
+    if (edge < skipUntil) continue;
+    while (pointer < ordered.length && ordered[pointer]![1] <= edge) pointer += 1;
+    const cover = ordered[pointer];
+    if (cover && cover[0] < edge && edge < cover[1]) continue;
+    const fixed = fixedTokenStart(value, edge, edges);
+    if (fixed !== null && !covered.has(fixed)) {
+      spans.push([fixed, edge, MARKER, fixed]);
+      covered.add(fixed);
+    }
     const headCode = value.charCodeAt(edge);
-    if (headCode !== 115 && headCode !== 103 && headCode !== 65 && headCode !== 120) continue;
+    if (!covered.has(edge) && (headCode === 66 || headCode === 98)) {
+      const end = labelAtEdge(value, edge, spans);
+      if (end > edge) {
+        covered.add(edge);
+        skipUntil = Math.max(skipUntil, end);
+        continue;
+      }
+    }
+    if (covered.has(edge) || (headCode !== 115 && headCode !== 103 && headCode !== 65 && headCode !== 120)) continue;
     if (!tokenHead(value, edge)) continue;
     tokenBody.lastIndex = edge;
     const match = tokenBody.exec(value);
+    tokenBody.lastIndex = 0;
     if (!match || match.index !== edge || !tokenRightOk(value, edge + match[0].length, edges)) continue;
     spans.push([edge, edge + match[0].length, MARKER, edge]);
     covered.add(edge);
+    skipUntil = Math.max(skipUntil, edge + match[0].length);
   }
-  tokenBody.lastIndex = 0;
 }
 
 function pushSuffixCards(value: string, spans: Span[], covers: Span[]): void {

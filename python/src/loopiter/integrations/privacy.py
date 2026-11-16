@@ -45,8 +45,13 @@ _ARMOR = re.compile(
     re.ASCII,
 )
 _BEARER = re.compile(rf"(?<![A-Za-z0-9_])Bearer{_WS}+[A-Za-z0-9+/_.=~-]+", _FLAGS)
+_BEARER_BODY = re.compile(rf"Bearer{_WS}+[A-Za-z0-9+/_.=~-]+", _FLAGS)
 _BASIC = re.compile(
     rf"(?<![A-Za-z0-9_])[Bb][Aa][Ss][Ii][Cc]{_WS}+(?![a-z]+(?![A-Za-z0-9_/+.=~-]))[A-Za-z0-9+/_.=~-]+",
+    re.ASCII,
+)
+_BASIC_BODY = re.compile(
+    rf"[Bb][Aa][Ss][Ii][Cc]{_WS}+(?![a-z]+(?![A-Za-z0-9_/+.=~-]))[A-Za-z0-9+/_.=~-]+",
     re.ASCII,
 )
 _TOKEN = re.compile(
@@ -515,21 +520,72 @@ def _token_in_final_label(
         pos += 1
 
 
+_AKIA_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+_AIZA_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
+_TOKEN_LEFT = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")
+
+
+def _fixed_token_start(value: str, edge: int, edges: set[int]) -> int | None:
+    for prefix, size, alphabet in (
+        ("AKIA", 16, _AKIA_CHARS),
+        ("ASIA", 16, _AKIA_CHARS),
+        ("AIza", 35, _AIZA_CHARS),
+    ):
+        start = edge - len(prefix) - size
+        if start < 0 or not value.startswith(prefix, start):
+            continue
+        if any(char not in alphabet for char in value[start + len(prefix) : edge]):
+            continue
+        if start != 0 and start not in edges and value[start - 1] in _TOKEN_LEFT:
+            continue
+        return start
+    return None
+
+
+def _label_at_edge(value: str, edge: int, spans: list[tuple[int, int, str, int]]) -> int:
+    bearer = _BEARER_BODY.match(value, edge)
+    if bearer is not None:
+        spans.append((edge, bearer.end(), "Bearer " + _MARKER, _token_start(value, bearer.end())))
+        return bearer.end()
+    basic = _BASIC_BODY.match(value, edge)
+    if basic is not None:
+        spans.append((edge, basic.end(), "Basic " + _MARKER, _token_start(value, basic.end())))
+        return basic.end()
+    return edge
+
+
 def _token_spans_at_edges(
     value: str, spans: list[tuple[int, int, str, int]], edges: set[int]
 ) -> None:
     covered = {start for start, _end, _repl, _secret in spans}
     length = len(value)
-    for edge in edges:
-        if edge >= length or edge in covered or value[edge] not in "sgAGx":
+    ordered = sorted(spans, key=lambda span: span[0])
+    pointer = 0
+    skip_until = -1
+    for edge in sorted(edge for edge in edges if edge < length):
+        if edge < skip_until:
             continue
-        if not _token_head(value, edge):
+        while pointer < len(ordered) and ordered[pointer][1] <= edge:
+            pointer += 1
+        if pointer < len(ordered) and ordered[pointer][0] < edge < ordered[pointer][1]:
+            continue
+        fixed = _fixed_token_start(value, edge, edges)
+        if fixed is not None and fixed not in covered:
+            spans.append((fixed, edge, _MARKER, fixed))
+            covered.add(fixed)
+        if edge not in covered and value[edge] in "Bb":
+            skip_until = max(skip_until, _label_at_edge(value, edge, spans))
+            if skip_until > edge:
+                covered.add(edge)
+                continue
+        if edge in covered or value[edge] not in "sgAGx" or not _token_head(value, edge):
             continue
         match = _TOKEN_BODY.match(value, edge)
         if match is None or not _token_right_ok(value, match.end(), edges):
             continue
         spans.append((match.start(), match.end(), _MARKER, match.start()))
         covered.add(edge)
+        skip_until = max(skip_until, match.end())
 
 
 def _suffix_card_spans(
@@ -639,25 +695,39 @@ def _suffix_card_spans(
                         break
 
 
+def _jwt_run_end(value: str, index: int) -> int:
+    length = len(value)
+    while index < length and value[index] in _JWT_EDGE:
+        index += 1
+    return index
+
+
 def _jwt_spans(value: str, spans: list[tuple[int, int, str, int]], edges: set[int]) -> None:
     covered: set[int] = set()
     for match in _JWT.finditer(value):
         spans.append((match.start(), match.end(), _MARKER, match.start()))
         covered.add(match.start())
     length = len(value)
-    for edge in edges:
-        if (
-            edge >= length
-            or edge in covered
-            or value[edge] != "e"
-            or not value.startswith("eyJ", edge)
-        ):
+    ordered = sorted(spans, key=lambda span: span[0])
+    pointer = 0
+    skip_until = -1
+    for edge in sorted(edge for edge in edges if edge < length):
+        if edge < skip_until:
+            continue
+        while pointer < len(ordered) and ordered[pointer][1] <= edge:
+            pointer += 1
+        if pointer < len(ordered) and ordered[pointer][0] < edge < ordered[pointer][1]:
+            continue
+        if edge in covered or value[edge] != "e" or not value.startswith("eyJ", edge):
             continue
         match = _JWT_BODY.match(value, edge)
         if match is None or not _boundary_ok(value, match.end(), True, edges):
+            # One scan per [A-Za-z0-9_-] run, whether the body matched or not.
+            skip_until = _jwt_run_end(value, edge)
             continue
         spans.append((match.start(), match.end(), _MARKER, match.start()))
         covered.add(edge)
+        skip_until = match.end()
 
 
 def _redact_text(value: str) -> str:

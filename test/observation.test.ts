@@ -214,6 +214,8 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
   scales("Basic 4111 ".repeat(5957));
   scales("http://u:p@a.co ".repeat(4096));
   scales("https://u:p@h.io/ ".repeat(3640));
+  scales("4111111111111111sk-abcdefghijklmnop".repeat(1872));
+  scales("4111111111111111eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl".repeat(910));
 });
 
 test("detectors read the original text only", () => {

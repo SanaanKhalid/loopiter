@@ -517,6 +517,22 @@
     {
       "input": "ask@desk.com",
       "output": "[REDACTED]"
+    },
+    {
+      "input": "AKIAABCDEFGHIJKLMNOP4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "AIzaabcdefghijklmnopqrstuvwxyz12345678Z4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "4111111111111111Bearer supermandocument",
+      "output": "[REDACTED]Bearer [REDACTED]"
+    },
+    {
+      "input": "4111111111111111Basic dXNlcm5hbWU6cGFz",
+      "output": "[REDACTED]Basic [REDACTED]"
     }
   ],
   "boundaries": [
