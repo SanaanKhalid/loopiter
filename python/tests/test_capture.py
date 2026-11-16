@@ -586,6 +586,7 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
             if rnd() < 0.3:
                 sample += (" " if rnd() < 0.5 else "-") + "4111111111111111"
             once = redact_capture(sample)
+            # This alphabet stays idempotent. A second pass is not guaranteed for arbitrary text.
             self.assertEqual(redact_capture(once), once)
             redacted += once.count("[REDACTED]")
             baseline += reference(sample)

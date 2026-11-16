@@ -161,7 +161,16 @@ function pushEmails(value: string, spans: Span[], blocked: Array<[number, number
         labelHasStart = false;
       } else {
         const code = char.charCodeAt(0);
-        if (code === 115 || code === 103 || code === 65 || code === 71 || code === 120) labelHasStart = true;
+        if (
+          code === 115 ||
+          code === 103 ||
+          code === 65 ||
+          code === 71 ||
+          code === 120 ||
+          code === 66 ||
+          code === 98
+        )
+          labelHasStart = true;
       }
       j += 1;
     }
@@ -464,6 +473,7 @@ function tokenHead(value: string, index: number): boolean {
 function pushTokenInFinalLabel(value: string, spans: Span[], labelStart: number, labelEnd: number, edges: Set<number>): void {
   for (let pos = labelStart; pos < labelEnd; pos += 1) {
     const code = value.charCodeAt(pos);
+    if ((code === 66 || code === 98) && labelAtEdge(value, pos, spans) > pos) return;
     if (code !== 115 && code !== 103 && code !== 65 && code !== 71 && code !== 120) continue;
     if (!tokenHead(value, pos)) continue;
     tokenBody.lastIndex = pos;

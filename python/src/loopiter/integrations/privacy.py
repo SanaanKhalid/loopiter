@@ -173,7 +173,7 @@ def _email_spans(
             if char == ".":
                 last_dot = j
                 label_has_start = False
-            elif char in "sgAGx":
+            elif char in "sgAGxBb":
                 label_has_start = True
             j += 1
         prefix = _email_domain_end(value[at + 1 : j])
@@ -512,6 +512,8 @@ def _token_in_final_label(
 ) -> None:
     pos = label_start
     while pos < label_end:
+        if value[pos] in "Bb" and _label_at_edge(value, pos, spans) > pos:
+            return
         if value[pos] in "sgAGx" and _token_head(value, pos):
             match = _TOKEN_BODY.match(value, pos)
             if match is not None and _token_right_ok(value, match.end(), edges):

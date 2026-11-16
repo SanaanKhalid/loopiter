@@ -181,6 +181,7 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
     for (let k = 0; k < length; k += 1) sample += alphabet[Math.floor(rnd() * alphabet.length)];
     if (rnd() < 0.3) sample += `${rnd() < 0.5 ? " " : "-"}4111111111111111`;
     const once = String(redactCapture(sample));
+    // This alphabet stays idempotent. A second pass is not guaranteed for arbitrary text.
     assert.equal(String(redactCapture(once)), once);
     redacted += (once.match(/\[REDACTED\]/g) ?? []).length;
     baseline += reference(sample);

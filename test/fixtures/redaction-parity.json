@@ -533,6 +533,18 @@
     {
       "input": "4111111111111111Basic dXNlcm5hbWU6cGFz",
       "output": "[REDACTED]Basic [REDACTED]"
+    },
+    {
+      "input": "sk-abcdefghijklmnopuser@example.com",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "user@example.comBearer secretvalue",
+      "output": "[REDACTED] [REDACTED]"
+    },
+    {
+      "input": "a@b.cdBearer abc",
+      "output": "[REDACTED] [REDACTED]"
     }
   ],
   "boundaries": [
