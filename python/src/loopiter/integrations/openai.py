@@ -62,6 +62,137 @@ def _apply_policy(value, policy):
     return captured["value"], captured["truncated"]
 
 
+def _record(value):
+    return value if isinstance(value, dict) else None
+
+
+def _assemble_stream(events):
+    outputs = {}
+    usage = None
+
+    def ensure(index):
+        row = outputs.get(index)
+        if row is None:
+            row = {
+                "index": index,
+                "content": "",
+                "refusal": "",
+                "tool_calls": {},
+                "id": None,
+                "finish_reason": None,
+            }
+            outputs[index] = row
+        return row
+
+    def tool(row, index):
+        call = row["tool_calls"].get(index)
+        if call is None:
+            call = {"index": index, "id": None, "name": "", "arguments": ""}
+            row["tool_calls"][index] = call
+        return call
+
+    for event in events:
+        record = _record(event)
+        if record is None:
+            continue
+        if _record(record.get("usage")) is not None:
+            usage = record["usage"]
+        kind = record.get("type") if isinstance(record.get("type"), str) else ""
+        if kind.endswith(".delta") and isinstance(record.get("delta"), str):
+            index = record["output_index"] if isinstance(record.get("output_index"), int) else 0
+            row = ensure(index)
+            if "function_call" in kind or "tool_call" in kind:
+                call = tool(row, 0)
+                call["arguments"] += record["delta"]
+                if isinstance(record.get("item_id"), str) and not call["id"]:
+                    call["id"] = record["item_id"]
+            elif "refusal" in kind:
+                row["refusal"] += record["delta"]
+            else:
+                row["content"] += record["delta"]
+            continue
+        response = _record(record.get("response"))
+        if kind.startswith("response.") and response is not None:
+            if _record(response.get("usage")) is not None:
+                usage = response["usage"]
+            if isinstance(response.get("id"), str) and ensure(0)["id"] is None:
+                ensure(0)["id"] = response["id"]
+        choices = record.get("choices")
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            item = _record(choice)
+            if item is None:
+                continue
+            index = item["index"] if isinstance(item.get("index"), int) else 0
+            row = ensure(index)
+            if isinstance(record.get("id"), str):
+                row["id"] = record["id"]
+            if isinstance(item.get("finish_reason"), str):
+                row["finish_reason"] = item["finish_reason"]
+            delta = _record(item.get("delta"))
+            if delta is None:
+                continue
+            if isinstance(delta.get("content"), str):
+                row["content"] += delta["content"]
+            if isinstance(delta.get("refusal"), str):
+                row["refusal"] += delta["refusal"]
+            legacy = _record(delta.get("function_call"))
+            if legacy is not None and isinstance(legacy.get("arguments"), str):
+                call = tool(row, 0)
+                call["arguments"] += legacy["arguments"]
+                if isinstance(legacy.get("name"), str):
+                    call["name"] += legacy["name"]
+            calls = delta.get("tool_calls")
+            if not isinstance(calls, list):
+                continue
+            for entry in calls:
+                call_record = _record(entry)
+                if call_record is None:
+                    continue
+                call_index = (
+                    call_record["index"] if isinstance(call_record.get("index"), int) else 0
+                )
+                call = tool(row, call_index)
+                if isinstance(call_record.get("id"), str) and not call["id"]:
+                    call["id"] = call_record["id"]
+                function = _record(call_record.get("function"))
+                if function is None:
+                    continue
+                if isinstance(function.get("name"), str):
+                    call["name"] += function["name"]
+                if isinstance(function.get("arguments"), str):
+                    call["arguments"] += function["arguments"]
+    stored_outputs = []
+    for index in sorted(outputs):
+        row = outputs[index]
+        stored = {"index": row["index"]}
+        if row["id"]:
+            stored["id"] = row["id"]
+        if row["finish_reason"]:
+            stored["finishReason"] = row["finish_reason"]
+        stored["content"] = row["content"]
+        if row["refusal"]:
+            stored["refusal"] = row["refusal"]
+        calls = []
+        for call_index in sorted(row["tool_calls"]):
+            call = row["tool_calls"][call_index]
+            stored_call = {"index": call["index"]}
+            if call["id"]:
+                stored_call["id"] = call["id"]
+            if call["name"]:
+                stored_call["name"] = call["name"]
+            stored_call["arguments"] = call["arguments"]
+            calls.append(stored_call)
+        if calls:
+            stored["toolCalls"] = calls
+        stored_outputs.append(stored)
+    stream = {"outputs": stored_outputs}
+    if usage is not None:
+        stream["usage"] = usage
+    return {"stream": stream}
+
+
 class _Capture:
     def __init__(self, owner, execution):
         self.owner, self.execution = owner, execution
@@ -115,7 +246,10 @@ class _Capture:
             if policy and policy.get("mode") == "metadata-only":
                 value = None
             else:
-                value = {"events": self.events} if output is None else _json(output)
+                if output is None and policy and policy.get("mode") == "redacted":
+                    value = _assemble_stream(self.events)
+                else:
+                    value = {"events": self.events} if output is None else _json(output)
             if self.owner.strict_output_bytes and (
                 value is not None
                 and (not policy or policy.get("mode") == "full")

@@ -59,10 +59,10 @@ const options = {
 ```
 
 - `metadata-only` omits input/output bodies. Provider wrappers also omit arbitrary application metadata in this mode. Explicit context IDs should be opaque identifiers.
-- `redacted` removes common structured credential fields, authorization headers, private keys, known token patterns, URL passwords and labeled secrets before size limits. Add a domain-specific `redact` callback for customer-specific PII. Pattern redaction is not a guarantee of anonymization.
+- `redacted` removes common structured credential fields, authorization headers, private keys, known token patterns, URL passwords and labeled secrets before size limits. Add a domain-specific `redact` callback for customer-specific PII. Pattern redaction is not a guarantee of anonymization. In redacted mode, an OpenAI stream is stored after the text is assembled, not as raw deltas. Each choice or output index keeps its content, any refusal, and tool-call arguments, plus finish reason, ids, and usage when those are present. The same byte limit still omits the whole record when the stream is too large.
 - `full` explicitly retains payloads within the configured bounds. The default bound is 64 KB. Optional custom redaction still applies.
 
-Python `with_loopiter` applies the capture client's policy to provider input, output, streamed chunks, and caller metadata. Its default remains full capture.
+Python `with_loopiter` applies the capture client's policy to provider input, output, streamed output, and caller metadata. Its default remains full capture. Redacted streams use the assembled shape above.
 
 Oversized payloads are omitted with `truncated: true`; partial strings are not silently treated as complete answers. Application values are not mutated. `loopiterCapture` includes capture mode and an explicit `replayEligible: false` for these observational paths. A full provider trace still does not prove that tool effects, retrieval state, application code and generation settings can be replayed faithfully. Use the native application integration and approved frozen inputs for autonomous releases.
 

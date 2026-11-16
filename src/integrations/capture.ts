@@ -132,6 +132,119 @@ export async function resolveContext(
   return context;
 }
 
+function recordOf(value: unknown): Record<string, JsonValue> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, JsonValue>;
+}
+
+function streamOutput(index: number) {
+  return {
+    index,
+    content: "",
+    refusal: "",
+    toolCalls: new Map<number, { index: number; id?: string; name?: string; arguments: string }>(),
+    id: undefined as string | undefined,
+    finishReason: undefined as string | undefined,
+  };
+}
+
+/** Redacted streams keep assembled text, not the raw deltas. */
+function assembleStream(events: readonly JsonValue[]): JsonValue {
+  const outputs = new Map<number, ReturnType<typeof streamOutput>>();
+  let usage: JsonValue | undefined;
+  const ensure = (index: number) => {
+    let row = outputs.get(index);
+    if (!row) {
+      row = streamOutput(index);
+      outputs.set(index, row);
+    }
+    return row;
+  };
+  const tool = (row: ReturnType<typeof streamOutput>, index: number) => {
+    let call = row.toolCalls.get(index);
+    if (!call) {
+      call = { index, arguments: "" };
+      row.toolCalls.set(index, call);
+    }
+    return call;
+  };
+  for (const event of events) {
+    const record = recordOf(event);
+    if (!record) continue;
+    if (recordOf(record.usage)) usage = record.usage;
+    const type = typeof record.type === "string" ? record.type : "";
+    if (type.endsWith(".delta") && typeof record.delta === "string") {
+      const index = typeof record.output_index === "number" ? record.output_index : 0;
+      const row = ensure(index);
+      if (type.includes("function_call") || type.includes("tool_call")) {
+        const call = tool(row, 0);
+        call.arguments += record.delta;
+        if (typeof record.item_id === "string" && !call.id) call.id = record.item_id;
+      } else if (type.includes("refusal")) row.refusal += record.delta;
+      else row.content += record.delta;
+      continue;
+    }
+    const response = recordOf(record.response);
+    if (type.startsWith("response.") && response) {
+      if (recordOf(response.usage)) usage = response.usage;
+      if (typeof response.id === "string") ensure(0).id ??= response.id;
+    }
+    if (!Array.isArray(record.choices)) continue;
+    for (const choice of record.choices) {
+      const item = recordOf(choice);
+      if (!item) continue;
+      const index = typeof item.index === "number" ? item.index : 0;
+      const row = ensure(index);
+      if (typeof record.id === "string") row.id = record.id;
+      if (typeof item.finish_reason === "string") row.finishReason = item.finish_reason;
+      const delta = recordOf(item.delta);
+      if (!delta) continue;
+      if (typeof delta.content === "string") row.content += delta.content;
+      if (typeof delta.refusal === "string") row.refusal += delta.refusal;
+      const legacy = recordOf(delta.function_call);
+      if (legacy && typeof legacy.arguments === "string") {
+        const call = tool(row, 0);
+        call.arguments += legacy.arguments;
+        if (typeof legacy.name === "string") call.name = (call.name ?? "") + legacy.name;
+      }
+      if (!Array.isArray(delta.tool_calls)) continue;
+      for (const entry of delta.tool_calls) {
+        const callRecord = recordOf(entry);
+        if (!callRecord) continue;
+        const call = tool(row, typeof callRecord.index === "number" ? callRecord.index : 0);
+        if (typeof callRecord.id === "string" && !call.id) call.id = callRecord.id;
+        const fn = recordOf(callRecord.function);
+        if (!fn) continue;
+        if (typeof fn.name === "string") call.name = (call.name ?? "") + fn.name;
+        if (typeof fn.arguments === "string") call.arguments += fn.arguments;
+      }
+    }
+  }
+  const list = [...outputs.values()]
+    .sort((left, right) => left.index - right.index)
+    .map((row) => {
+      const stored: Record<string, JsonValue> = { index: row.index };
+      if (row.id) stored.id = row.id;
+      if (row.finishReason) stored.finishReason = row.finishReason;
+      stored.content = row.content;
+      if (row.refusal) stored.refusal = row.refusal;
+      const calls = [...row.toolCalls.values()]
+        .sort((left, right) => left.index - right.index)
+        .map((call) => {
+          const storedCall: Record<string, JsonValue> = { index: call.index };
+          if (call.id) storedCall.id = call.id;
+          if (call.name) storedCall.name = call.name;
+          storedCall.arguments = call.arguments;
+          return storedCall;
+        });
+      if (calls.length) stored.toolCalls = calls;
+      return stored;
+    });
+  const stream: Record<string, JsonValue> = { outputs: list };
+  if (usage) stream.usage = usage;
+  return { stream };
+}
+
 export class CaptureSession {
   private finalization: Promise<void> | undefined;
   private bytes = 0;
@@ -193,6 +306,11 @@ export class CaptureSession {
     return session;
   }
 
+  private streamedValue(): JsonValue {
+    if (this.options.capture?.mode === "redacted") return assembleStream(this.events);
+    return { events: this.events };
+  }
+
   append(event: unknown): void {
     if (this.options.capture?.mode === "metadata-only" || this.truncated) return;
     const value = captureJson(event);
@@ -211,7 +329,7 @@ export class CaptureSession {
   async finish(status: CaptureStatus, output?: unknown): Promise<void> {
     if (this.finalization) return this.finalization;
     let value =
-      this.options.capture?.mode === "metadata-only" ? null : output === undefined ? { events: this.events } : captureJson(output);
+      this.options.capture?.mode === "metadata-only" ? null : output === undefined ? this.streamedValue() : captureJson(output);
     if (this.options.capture) {
       const captured = capturePayload(value, this.options.capture);
       this.truncated ||= captured.truncated;

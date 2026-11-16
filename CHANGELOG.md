@@ -8,6 +8,7 @@
 
 ### Minor
 
+- Redacted OpenAI streams are stored after the text is assembled per output, including tool-call arguments and refusal text. Raw deltas are not stored in that mode. A stream over the output byte limit is still omitted whole.
 - Full capture now caps input at 64 KB.
 - With a capture policy, output over the byte limit is stored truncated and the caller still receives the provider response. Without a capture policy, that overflow still fails capture.
 - A disabled worker no longer logs the missing-plan fallback warning. `LOOPITER_DISABLE=enable` and `LOOPITER_DISABLE=enabled` still disable, and the worker warns that those words do not turn work on. A `--disable` worker does not observe or roll back a canary that is already running; `pause` keeps observation and recovery, and rollback is an explicit adapter call.
