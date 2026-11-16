@@ -50,7 +50,8 @@ export interface PredictCall {
     | "production"
     | "held-out"
     | "held-out-served"
-    | "held-out-ungated";
+    | "held-out-ungated"
+    | "propose";
   /** Predictions expected for this arm and split. The fraction valve uses this denominator. */
   planned: number;
 }

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { ProviderRequestError, parseProviderErrorBody } from "../../examples/prompt-improvement/provider.js";
 import { ifbenchTask } from "../ifbench/task.js";
+import type { IfExample } from "../ifbench/fixtures.js";
 import { UnsupportedInstructionError } from "../ifbench/score.js";
 import { hotpotTask } from "../hotpotqa/task.js";
 import { row } from "../hotpotqa/fixtures.js";
@@ -47,6 +48,32 @@ test("provider error parsing keeps only allowlisted fields", () => {
   assert.equal(detail.innerCode, "ResponsibleAIPolicyViolation");
   assert.deepEqual(detail.categories, [{ category: "hate", severity: "high" }]);
   assert.equal(perItemReason(new ProviderRequestError(400, null, null, detail)), "content_filter");
+  assert.equal(
+    perItemReason(
+      new ProviderRequestError(400, null, null, {
+        status: 400,
+        code: "cyber_policy",
+        type: "invalid_request",
+        innerCode: null,
+        categories: [],
+        incompleteReason: null,
+      }),
+    ),
+    "cyber_policy",
+  );
+  assert.equal(
+    perItemReason(
+      new ProviderRequestError(400, null, null, {
+        status: 400,
+        code: "organization_policy_violation",
+        type: "invalid_request_error",
+        innerCode: null,
+        categories: [],
+        incompleteReason: null,
+      }),
+    ),
+    null,
+  );
   assert.equal(
     perItemReason(
       new ProviderRequestError(400, null, null, {
@@ -227,6 +254,132 @@ test("prompt-scoped 400s score 0 and 403 and 404 stop the run", async () => {
     assert.equal(stopped.fetches, 1);
     assertNoLeaks(JSON.stringify(stopped.report));
   }
+});
+
+test("policy refusals stay on the item report and later seeds still run", async () => {
+  for (const code of ["cyber_policy", "content_filter"] as const) {
+    const item = await runIfbench(2, (call) =>
+      call.kind === "predict" && call.predicts === 1 ? policyResponse(code) : answerResponse("quartz done"),
+    );
+    assert.equal(item.report.stopped, null);
+    assert.equal(item.report.perSeed.length, 2);
+    assert.equal(item.report.perSeed.at(-1)?.seed, 2);
+    assert.equal(item.report.itemFailures.some((failure) => failure.reason === code), true);
+    assert.equal(item.report.perSeed.some((row) => row.controllerReason === "callback_failed"), false);
+    assertNoLeaks(JSON.stringify(item.report));
+
+    const controller = await runIfbench(2, (call) =>
+      call.kind === "propose" && call.proposes === 2 ? policyResponse(code) : answerResponse("quartz done"),
+    );
+    assert.equal(controller.report.stopped, null);
+    assert.equal(controller.report.perSeed.length, 2);
+    assert.equal(controller.report.perSeed.at(-1)?.seed, 2);
+    assert.equal(
+      controller.report.itemFailures.some(
+        (failure) => failure.reason === code && failure.arm === "controller" && failure.split === "propose",
+      ),
+      true,
+    );
+    assert.equal(controller.report.perSeed.some((row) => row.controllerReason === "callback_failed"), false);
+    assertNoLeaks(JSON.stringify(controller.report));
+
+    const probe = await runIfbench(2, () => answerResponse("quartz done"));
+    assert.equal(probe.report.perSeed.length, 2);
+    assert.equal(probe.fetches % 2, 0);
+    const lastOfSeed = probe.fetches / 2;
+    const last = await runIfbench(2, (call) =>
+      call.index === lastOfSeed ? policyResponse(code) : answerResponse("quartz done"),
+    );
+    assert.equal(last.report.stopped, null);
+    assert.equal(last.report.perSeed.length, 2);
+    assert.equal(last.report.perSeed.at(-1)?.seed, 2);
+    assert.equal(last.report.itemFailures.some((failure) => failure.reason === code), true);
+    assertNoLeaks(JSON.stringify(last.report));
+  }
+
+  const unauthorized = await runIfbench(2, () =>
+    jsonResponse(401, { error: { message: `${PROMPT} ${KEY}`, type: "invalid_request_error", code: "invalid_api_key" } }),
+  );
+  assert.equal(unauthorized.report.stopped?.reason, "provider_error");
+  assert.match(unauthorized.report.stopped?.message ?? "", /HTTP 401/);
+  assert.equal(unauthorized.report.itemFailures.length, 0);
+  assert.equal(unauthorized.report.perSeed.length, 0);
+  assert.equal(unauthorized.fetches, 1);
+  assertNoLeaks(JSON.stringify(unauthorized.report));
+});
+
+test("a throw inside one seed is reported and the other seeds finish", async () => {
+  const seen = await runIfbench(2, (call) => {
+    if (call.index === 1) throw new Error("provider threw inside the seed");
+    return answerResponse("quartz done");
+  });
+  assert.equal(seen.report.stopped, null);
+  assert.equal(seen.report.perSeed.length, 2);
+  assert.equal(seen.report.perSeed[0]?.seed, 1);
+  assert.equal(seen.report.perSeed[0]?.status, "failed");
+  assert.equal(seen.report.perSeed[0]?.failure?.arm, "baseline");
+  assert.equal(seen.report.perSeed[0]?.failure?.code, "seed_failed");
+  assert.match(seen.report.perSeed[0]?.failure?.message ?? "", /provider threw inside the seed/);
+  assert.equal(seen.report.seedFailures[0]?.seed, 1);
+  assert.equal(seen.report.seedFailures[0]?.arm, "baseline");
+  assert.equal(seen.report.seedFailures[0]?.code, "seed_failed");
+  assert.equal(seen.report.perSeed[1]?.status, "complete");
+  assert.ok((seen.report.perSeed[1]?.baseline.trials ?? 0) > 0);
+  assert.equal(seen.report.passed, false);
+  assertNoLeaks(JSON.stringify(seen.report));
+});
+
+test("exhausted network retries stop the run", async () => {
+  const seen = await runIfbench(2, () => {
+    const error = new Error("socket down") as Error & { code: string };
+    error.code = "ECONNRESET";
+    throw error;
+  });
+  assert.equal(seen.report.stopped?.reason, "provider_error");
+  assert.match(seen.report.stopped?.message ?? "", /socket down/);
+  assert.equal(seen.report.perSeed.length, 0);
+  assert.equal(seen.fetches, 2);
+  assert.equal(seen.report.passed, false);
+  assertNoLeaks(JSON.stringify(seen.report));
+});
+
+test("a seed whose propose calls are all refused is never_proposed", async () => {
+  const seen = await runIfbench(2, (call) =>
+    call.kind === "propose" ? policyResponse("cyber_policy") : answerResponse("quartz done"),
+  );
+  assert.equal(seen.report.stopped, null);
+  assert.equal(seen.report.perSeed.length, 2);
+  assert.ok(seen.report.proposeRefusals.calls > 0);
+  assert.equal(seen.report.proposeRefusals.refused, seen.report.proposeRefusals.calls);
+  for (const row of seen.report.perSeed) {
+    assert.equal(row.status, "never_proposed");
+    assert.equal(row.controllerReason, "never_proposed");
+    assert.ok(row.proposeCalls > 0);
+    assert.equal(row.proposeRefusals, row.proposeCalls);
+  }
+  assert.equal(
+    seen.report.proposeRefusals.refused,
+    seen.report.perSeed.reduce((sum, row) => sum + row.proposeRefusals, 0),
+  );
+  assertNoLeaks(JSON.stringify(seen.report));
+});
+
+test("an unlisted invalid_request policy code stops the run", async () => {
+  const seen = await runScript(4, () =>
+    jsonResponse(400, {
+      error: {
+        message: `${PROMPT} ${KEY}`,
+        type: "invalid_request_error",
+        code: "organization_policy_violation",
+      },
+    }),
+  );
+  assert.equal(seen.report.stopped?.reason, "provider_error");
+  assert.match(seen.report.stopped?.message ?? "", /organization_policy_violation/);
+  assert.equal(seen.report.itemFailures.length, 0);
+  assert.equal(seen.report.perSeed.length, 0);
+  assert.equal(seen.fetches, 1);
+  assertNoLeaks(JSON.stringify(seen.report));
 });
 
 test("auth, systemic 400, repeated 5xx, and 429 stop the run", async () => {
@@ -468,6 +621,103 @@ async function runScript(
 
 function assertNoLeaks(text: string): void {
   for (const leak of LEAKS) assert.equal(text.includes(leak), false, leak);
+}
+
+interface ScriptCall {
+  index: number;
+  predicts: number;
+  proposes: number;
+  kind: "predict" | "propose";
+}
+
+async function runIfbench(
+  seeds: number,
+  onCall: (call: ScriptCall) => Response,
+): Promise<{ report: Awaited<ReturnType<typeof runLiveTask>>; fetches: number }> {
+  const directory = await mkdtemp(join(tmpdir(), "ifbench-policy-"));
+  let fetches = 0;
+  let predicts = 0;
+  let proposes = 0;
+  const sizes = { optimization: 6, validation: 6, audit: 6, production: 6, heldOut: 6 };
+  const pool = Array.from({ length: 24 }, (_, index) => ifRow(`pool-${index}`));
+  const heldOut = Array.from({ length: sizes.heldOut }, (_, index) => ifRow(`held-${index}`));
+  try {
+    const report = await runLiveTask(
+      {
+        ...ifbenchTask,
+        fullSizes: sizes,
+        scoreMany: async (items) => items.map(() => ifbenchTask.emptyScore()),
+      },
+      {
+        seeds: Array.from({ length: seeds }, (_, index) => index + 1),
+        smoke: true,
+        deployment: "loopiter-gpt-5-6",
+        apiVersion: "v1",
+        endpoint: "https://example.openai.azure.com/",
+        apiKey: KEY,
+        prices: { inputUsdPerMillion: 1, outputUsdPerMillion: 2, cachedInputUsdPerMillion: 0 },
+        totalCapUsd: 50,
+        warnUsd: 40,
+        invocationCapUsd: 50,
+        stopAtWarn: false,
+        ledgerPath: join(directory, "ledger.json"),
+        limits: resolveLimits({}, ifbenchTask),
+        minimumImprovement: 0,
+        maxTokensPerMinute: 0,
+        maxRetryWaitMs: 1_000,
+        max429Retries: 0,
+        requestTimeoutMs: 5_000,
+        maxTotalWaitMs: 5_000,
+        stallTimeoutMs: 600_000,
+        fetch: async (_url, init) => {
+          fetches += 1;
+          const raw = typeof init?.body === "string" ? init.body : "";
+          const parsed = raw
+            ? (JSON.parse(raw) as { text?: { format?: { name?: string } } })
+            : {};
+          const kind = parsed.text?.format?.name === PROPOSE_NAME ? "propose" : "predict";
+          if (kind === "propose") proposes += 1;
+          else predicts += 1;
+          const scripted = onCall({ index: fetches, predicts, proposes, kind });
+          if (kind === "propose" && scripted.status === 200)
+            return answerResponse(ifbenchTask.baselinePrompt, "fragment");
+          return scripted;
+        },
+      },
+      { pool, heldOut },
+    );
+    return { report, fetches };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+function ifRow(id: string): IfExample {
+  return {
+    id,
+    baselinePass: false,
+    prompt: `Fixture ${id}`,
+    instructionIdList: ["keywords:existence"],
+    kwargs: [{ keywords: ["quartz"] }],
+  };
+}
+
+function policyResponse(code: "cyber_policy" | "content_filter"): Response {
+  return jsonResponse(400, {
+    error: {
+      message: `The prompt was ${PROMPT}. key ${KEY}.`,
+      type: code === "cyber_policy" ? "invalid_request" : "invalid_request_error",
+      code,
+      ...(code === "content_filter"
+        ? {
+            innererror: {
+              code: "ResponsibleAIPolicyViolation",
+              content_filter_result: { hate: { filtered: true, severity: "high" } },
+            },
+          }
+        : {}),
+    },
+  });
 }
 
 function contentFilterResponse(): Response {

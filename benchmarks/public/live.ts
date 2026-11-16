@@ -2,13 +2,15 @@
  * Opt-in Azure path. Live calls require --live and LOOPITER_BENCH_ALLOW_LIVE=1.
  * The spend ledger, pacer, retries, stall watchdog, and redaction are the kb-qa session.
  */
-import { failureDetailText, type CallbackContext } from "../../src/index.js";
+import { failureDetailText, LoopiterError, type CallbackContext } from "../../src/index.js";
+import { ProviderRequestError } from "../../examples/prompt-improvement/provider.js";
 import {
   LIVE_ENV,
   LiveGateError,
   LiveLedger,
   LiveSession,
   RateLimitStop,
+  ExhaustedProviderError,
   assertLiveSpendGuards,
   createExitGuard,
   createInterruptHandler,
@@ -102,6 +104,17 @@ export interface PublicLiveReport {
     controllerState: string;
     controllerReason: string;
     controllerDetail: string | null;
+    proposeCalls: number;
+    proposeRefusals: number;
+    status: "complete" | "never_proposed" | "failed";
+    failure: { arm: "baseline" | "one-shot" | "controller"; code: string; message: string } | null;
+  }[];
+  proposeRefusals: { calls: number; refused: number };
+  seedFailures: {
+    seed: number;
+    arm: "baseline" | "one-shot" | "controller";
+    code: string;
+    message: string;
   }[];
   stopped: { reason: string; message: string } | null;
   itemFailures: ItemFailure[];
@@ -200,7 +213,8 @@ export async function runLiveTask<T extends PublicExample>(
   });
   const secrets = redactionSecrets(options.apiKey, options.endpoint);
   const failures = new ItemFailureTracker();
-  const runner = liveRunner(task, session, failures);
+  const proposeTally = { calls: 0, refused: 0 };
+  const runner = liveRunner(task, session, failures, proposeTally);
   const perSeed: PublicLiveReport["perSeed"] = [];
   const heartbeat = startProgressTicker(120_000, () => session.emitProgress());
   const guard = createExitGuard(forceExit);
@@ -241,54 +255,88 @@ export async function runLiveTask<T extends PublicExample>(
   try {
     for (const seed of options.seeds) {
       if (ledger.stopReason || session.isStopping()) break;
-      const split = limitSplit(
-        buildSeededSplit({
-          pool: loaded.pool,
-          heldOut: loaded.heldOut,
+      const callsAt = proposeTally.calls;
+      const refusedAt = proposeTally.refused;
+      let phase: "baseline" | "one-shot" | "controller" = "baseline";
+      let baseline: RateDraft | undefined;
+      let oneShot: Awaited<ReturnType<typeof runOneShot>> | undefined;
+      let controller: Awaited<ReturnType<typeof runController>> | undefined;
+      try {
+        const split = limitSplit(
+          buildSeededSplit({
+            pool: loaded.pool,
+            heldOut: loaded.heldOut,
+            seed,
+            sizes: task.fullSizes,
+          }),
+          options.rowLimit,
+        );
+        baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut, {
+          arm: "baseline",
+          split: "held-out",
+          planned: split.heldOut.length,
+        });
+        phase = "one-shot";
+        oneShot = await runOneShot({ task, split, runner, mode: "improve" });
+        phase = "controller";
+        controller = await runController({
+          task,
+          split,
+          runner,
+          mode: "improve",
+          observation: "honest",
+          minimumImprovement: options.minimumImprovement,
+          batchSize: 1,
+          observeChunk: 2,
+          latencyMs: session.requestTimeoutMs,
+          predictMaxOutputTokens: session.limits.predictMaxOutputTokens,
+          proposeMaxOutputTokens: session.limits.proposeMaxOutputTokens,
+          modelId: options.deployment,
+          scenario: "live",
+          tickLimit: 10_000,
+          timeouts: {
+            callbackTimeoutMs: session.callbackTimeoutMs,
+            tickTimeoutMs: session.tickTimeoutMs,
+          },
+        });
+        const proposeCalls = proposeTally.calls - callsAt;
+        const proposeRefusals = proposeTally.refused - refusedAt;
+        const neverProposed = proposeCalls > 0 && proposeRefusals === proposeCalls;
+        perSeed.push({
           seed,
-          sizes: task.fullSizes,
-        }),
-        options.rowLimit,
-      );
-      const baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut, {
-        arm: "baseline",
-        split: "held-out",
-        planned: split.heldOut.length,
-      });
-      const oneShot = await runOneShot({ task, split, runner, mode: "improve" });
-      const controller = await runController({
-        task,
-        split,
-        runner,
-        mode: "improve",
-        observation: "honest",
-        minimumImprovement: options.minimumImprovement,
-        batchSize: 1,
-        observeChunk: 2,
-        latencyMs: session.requestTimeoutMs,
-        predictMaxOutputTokens: session.limits.predictMaxOutputTokens,
-        proposeMaxOutputTokens: session.limits.proposeMaxOutputTokens,
-        modelId: options.deployment,
-        scenario: "live",
-        tickLimit: 10_000,
-        timeouts: {
-          callbackTimeoutMs: session.callbackTimeoutMs,
-          tickTimeoutMs: session.tickTimeoutMs,
-        },
-      });
-      perSeed.push({
-        seed,
-        baseline,
-        oneShot: oneShot.heldOut,
-        controllerServed: controller.heldOut,
-        controllerUngated: controller.ungated,
-        controllerState: controller.state,
-        controllerReason: controller.reason,
-        controllerDetail: controller.detail,
-      });
-      if (ledger.stopReason) {
-        failure = { reason: ledger.stopReason, message: "Spend cap reached." };
-        break;
+          baseline,
+          oneShot: oneShot.heldOut,
+          controllerServed: controller.heldOut,
+          controllerUngated: controller.ungated,
+          controllerState: controller.state,
+          controllerReason: neverProposed ? "never_proposed" : controller.reason,
+          controllerDetail: controller.detail,
+          proposeCalls,
+          proposeRefusals,
+          status: neverProposed ? "never_proposed" : "complete",
+          failure: null,
+        });
+        if (ledger.stopReason) {
+          failure = { reason: ledger.stopReason, message: "Spend cap reached." };
+          break;
+        }
+      } catch (error) {
+        if (stopsTheRun(error)) throw error;
+        const recorded = seedFailureView(error, secrets);
+        perSeed.push({
+          seed,
+          baseline: baseline ?? emptyDraft(),
+          oneShot: oneShot?.heldOut ?? emptyDraft(),
+          controllerServed: controller?.heldOut ?? emptyDraft(),
+          controllerUngated: controller?.ungated ?? null,
+          controllerState: "failed",
+          controllerReason: recorded.code,
+          controllerDetail: recorded.message,
+          proposeCalls: proposeTally.calls - callsAt,
+          proposeRefusals: proposeTally.refused - refusedAt,
+          status: "failed",
+          failure: { arm: phase, code: recorded.code, message: recorded.message },
+        });
       }
     }
   } catch (error) {
@@ -301,7 +349,7 @@ export async function runLiveTask<T extends PublicExample>(
       process.off("SIGTERM", onInterrupt);
     }
   }
-  const report = buildReport(task, options, ledger, perSeed, failure, failures);
+  const report = buildReport(task, options, ledger, perSeed, failure, failures, proposeTally);
   if (options.apiKey.length >= 4 && JSON.stringify(report).includes(options.apiKey))
     throw new LiveGateError("Refusing to write a report that contains a credential.");
   return report;
@@ -311,6 +359,7 @@ function liveRunner<T extends PublicExample>(
   task: BenchmarkTask<T>,
   session: LiveSession,
   failures: ItemFailureTracker,
+  proposeTally: { calls: number; refused: number },
 ): ModelRunner<T> {
   const callOf = (call: PredictCall | undefined): PredictCall =>
     call ?? { arm: "baseline", split: "held-out", planned: 0 };
@@ -363,32 +412,93 @@ function liveRunner<T extends PublicExample>(
       const stop = failures.stop();
       if (stop) throw stop;
       const payload = task.proposePayload(request.current, request.rows, request.feedback);
-      const generation = await session.generate(
-        {
-          instructions: PROPOSE_INSTRUCTIONS,
-          input: payload,
-          name: PROPOSE_NAME,
-          schema: task.proposeSchema(),
-        },
-        requestBody({
-          model: session.provider.model,
-          instructions: PROPOSE_INSTRUCTIONS,
-          payload,
-          name: PROPOSE_NAME,
-          schema: task.proposeSchema(),
-          maxOutputTokens: session.limits.proposeMaxOutputTokens,
-          reasoningEffort: session.limits.reasoningEffort,
-        }),
-        session.limits.proposeMaxOutputTokens,
-        context ? context.meter.bind(context) : directMeter,
-        signalOf(context),
-      );
-      const fragment = generation.value.fragment;
-      if (typeof fragment !== "string")
-        throw new LiveGateError("Model proposal is missing the prompt.");
-      return fragment;
+      try {
+        const generation = await session.generate(
+          {
+            instructions: PROPOSE_INSTRUCTIONS,
+            input: payload,
+            name: PROPOSE_NAME,
+            schema: task.proposeSchema(),
+          },
+          requestBody({
+            model: session.provider.model,
+            instructions: PROPOSE_INSTRUCTIONS,
+            payload,
+            name: PROPOSE_NAME,
+            schema: task.proposeSchema(),
+            maxOutputTokens: session.limits.proposeMaxOutputTokens,
+            reasoningEffort: session.limits.reasoningEffort,
+          }),
+          session.limits.proposeMaxOutputTokens,
+          context ? context.meter.bind(context) : directMeter,
+          signalOf(context),
+        );
+        const fragment = generation.value.fragment;
+        if (typeof fragment !== "string")
+          throw new LiveGateError("Model proposal is missing the prompt.");
+        proposeTally.calls += 1;
+        return fragment;
+      } catch (error) {
+        const reason = perItemReason(error);
+        if (!reason) throw error;
+        proposeTally.calls += 1;
+        proposeTally.refused += 1;
+        failures.noteFailure(
+          {
+            arm: context ? "controller" : "one-shot",
+            split: "propose",
+            planned: 0,
+          },
+          request.rows[0]?.id ?? "propose",
+          reason,
+          failureCategories(error),
+        );
+        return request.current;
+      }
     },
   };
+}
+
+function emptyDraft(): RateDraft {
+  return {
+    successes: 0,
+    trials: 0,
+    rate: 0,
+    loose: null,
+    f1: null,
+    instructionStrict: null,
+    instructionLoose: null,
+  };
+}
+
+function stopsTheRun(error: unknown): boolean {
+  return !isSeedScoped(error);
+}
+
+/** Policy refusals and a throw from harness or controller logic stay on that seed. */
+function isSeedScoped(error: unknown): boolean {
+  if (error instanceof ProviderRequestError) return perItemReason(error) !== null;
+  if (!(error instanceof Error)) return false;
+  if (error instanceof ExhaustedProviderError) return false;
+  if (error instanceof ItemFailureStop) return false;
+  if (error instanceof RateLimitStop) return false;
+  if (error instanceof UnsupportedInstructionError) return false;
+  if (error instanceof LoopiterError) return false;
+  return true;
+}
+
+function seedFailureView(
+  error: unknown,
+  secrets: readonly string[],
+): { code: string; message: string } {
+  const message = failureDetailText(
+    redactSecrets(error instanceof Error ? error.message : "Seed failed.", secrets),
+  );
+  const listed = perItemReason(error);
+  if (listed) return { code: listed, message };
+  if (error instanceof ProviderRequestError && error.detail.code)
+    return { code: error.detail.code, message };
+  return { code: "seed_failed", message };
 }
 
 function stoppedView(error: unknown, secrets: readonly string[]): { reason: string; message: string } {
@@ -409,8 +519,13 @@ function buildReport<T extends PublicExample>(
   perSeed: PublicLiveReport["perSeed"],
   failure: { reason: string; message: string } | null,
   failures: ItemFailureTracker,
+  proposeTally: { calls: number; refused: number },
 ): PublicLiveReport {
-  const scored = perSeed.length > 0 && failure === null;
+  const counted = perSeed.filter((row) => row.status !== "failed");
+  const scored = counted.length > 0 && failure === null;
+  const seedFailures = perSeed.flatMap((row) =>
+    row.failure ? [{ seed: row.seed, arm: row.failure.arm, code: row.failure.code, message: row.failure.message }] : [],
+  );
   return {
     schemaVersion: 1,
     harness: `loopiter-live-${task.id}`,
@@ -426,17 +541,17 @@ function buildReport<T extends PublicExample>(
     deployment: options.deployment,
     arms: scored
       ? {
-          baseline: { served: viewOf(perSeed.map((row) => row.baseline), 2000, 17), ungated: null },
+          baseline: { served: viewOf(counted.map((row) => row.baseline), 2000, 17), ungated: null },
           oneShot: {
-            served: viewOf(perSeed.map((row) => row.oneShot), 2000, 17),
-            ungated: viewOf(perSeed.map((row) => row.oneShot), 2000, 17),
+            served: viewOf(counted.map((row) => row.oneShot), 2000, 17),
+            ungated: viewOf(counted.map((row) => row.oneShot), 2000, 17),
             gates: "none",
           },
           controller: {
-            served: viewOf(perSeed.map((row) => row.controllerServed), 2000, 17),
-            ungated: perSeed.every((row) => row.controllerUngated)
+            served: viewOf(counted.map((row) => row.controllerServed), 2000, 17),
+            ungated: counted.every((row) => row.controllerUngated)
               ? viewOf(
-                  perSeed.map((row) => row.controllerUngated!),
+                  counted.map((row) => row.controllerUngated!),
                   2000,
                   17,
                 )
@@ -446,6 +561,8 @@ function buildReport<T extends PublicExample>(
         }
       : null,
     perSeed,
+    proposeRefusals: { calls: proposeTally.calls, refused: proposeTally.refused },
+    seedFailures,
     stopped: failure,
     itemFailures: failures.failures,
     itemFailureCounts: failures.countsBySplit(),
@@ -456,7 +573,10 @@ function buildReport<T extends PublicExample>(
       attempts: ledger.attempts,
       rejectedAttempts: ledger.rejectedAttempts,
     },
-    passed: failure === null && perSeed.length === options.seeds.length,
+    passed:
+      failure === null &&
+      perSeed.length === options.seeds.length &&
+      perSeed.every((row) => row.status !== "failed"),
   };
 }
 

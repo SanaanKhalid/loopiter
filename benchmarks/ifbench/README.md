@@ -118,10 +118,19 @@ so a prompt at the character cap can be returned. Override either bound with
 `LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS` or
 `LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS`.
 
-A per-item content filter, a 400 whose code is clearly about that prompt
-(`context_length_exceeded`, `string_above_max_length`, `invalid_prompt`), or an
-incomplete response with no usable text scores 0 for that row and the run
-continues. A truncation (`incomplete:max_output_tokens`) also scores 0, and it
+A per-item content filter, a listed provider policy refusal (`cyber_policy`,
+`content_filter`, or `ResponsibleAIPolicyViolation`), a 400 whose code is
+clearly about that prompt (`context_length_exceeded`,
+`string_above_max_length`, `invalid_prompt`), or an incomplete response with
+no usable text scores 0 for that row and the run continues. The same refusal
+on a controller call, including the last call of a seed, is recorded with its
+code and does not stop later seeds. A throw inside one seed is recorded with
+the seed number, arm, and error, and later seeds still run. Exhausted network
+or timeout retries, a 429 that persists after its retries, a 5xx, an auth
+failure, and the budget cap set `stopped` and end the run. If every propose
+call in a seed is refused, that seed is `never_proposed` rather than no
+improvement, and the report counts those refusals. A truncation
+(`incomplete:max_output_tokens`) also scores 0, and it
 is listed in the same item-failure summary, but it does not count toward the
 content-filter fraction or the five-in-a-row stop. When truncations in one arm
 and split exceed 20% of that split, the run stops with `output_truncated`
