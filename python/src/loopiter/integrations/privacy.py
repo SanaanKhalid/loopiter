@@ -66,11 +66,6 @@ _TOKEN_BODY = re.compile(
     r"AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})",
     re.ASCII,
 )
-_JWT = re.compile(
-    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])",
-    re.ASCII,
-)
-_JWT_BODY = re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", re.ASCII)
 _JWT_EDGE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 _AWS_SECRET = re.compile(
     rf"(?<![A-Za-z0-9])([\"']?(?:aws[-_]?)?secret[-_]?access[-_]?key[\"']?{_WS}*[=:]{_WS}*[\"']?)"
@@ -188,6 +183,10 @@ def _email_spans(
             pointer += 1
         if pointer < len(blocked) and blocked[pointer][0] < end and left < blocked[pointer][1]:
             i = end
+            continue
+        # A digit stuck to the label is not a separate boundary.
+        if end < length and "0" <= value[end] <= "9" and end not in edges:
+            i = at + 1
             continue
         if label_has_start and last_dot < end:
             _token_in_final_label(value, spans, last_dot + 1, end, edges)
@@ -476,16 +475,6 @@ def _span_edges(spans: list[tuple[int, int, str, int]]) -> set[int]:
     return edges
 
 
-def _boundary_ok(value: str, index: int, end: bool, edges: set[int]) -> bool:
-    if end:
-        if index == len(value) or index in edges:
-            return True
-        return value[index] not in _JWT_EDGE
-    if index == 0 or index in edges:
-        return True
-    return value[index - 1] not in _JWT_EDGE
-
-
 def _token_right_ok(value: str, end: int, edges: set[int]) -> bool:
     return (
         end == len(value)
@@ -733,34 +722,121 @@ def _jwt_run_end(value: str, index: int) -> int:
     return index
 
 
+def _jwt_simple_end(value: str, start: int) -> int | None:
+    length = len(value)
+    if not value.startswith("eyJ", start):
+        return None
+    pos = start + 3
+    for _segment in range(2):
+        seg = pos
+        while pos < length and value[pos] in _JWT_EDGE:
+            pos += 1
+        if pos == seg or pos >= length or value[pos] != ".":
+            return None
+        pos += 1
+    seg = pos
+    while pos < length and value[pos] in _JWT_EDGE:
+        pos += 1
+    if pos == seg:
+        return None
+    return pos
+
+
+def _jwt_end(value: str, start: int) -> int | None:
+    length = len(value)
+    if not value.startswith("eyJ", start):
+        return None
+    pos = start + 3
+    for _segment in range(2):
+        seg = pos
+        while pos < length and value[pos] in _JWT_EDGE:
+            pos += 1
+        if pos == seg or pos >= length or value[pos] != ".":
+            return None
+        pos += 1
+    seg = pos
+    while pos < length and value[pos] in _JWT_EDGE:
+        if value.startswith("eyJ", pos) and _jwt_simple_end(value, pos) is not None:
+            break
+        pos += 1
+    if pos == seg:
+        return None
+    return pos
+
+
 def _jwt_spans(value: str, spans: list[tuple[int, int, str, int]], edges: set[int]) -> None:
-    covered: set[int] = set()
-    for match in _JWT.finditer(value):
-        spans.append((match.start(), match.end(), _MARKER, match.start()))
-        covered.add(match.start())
     if "eyJ" not in value:
         return
     length = len(value)
-    ordered = sorted(spans, key=lambda span: span[0])
-    pointer = 0
-    skip_until = -1
-    for edge in sorted(edge for edge in edges if edge < length):
-        if edge < skip_until:
+    boundaries = set(edges)
+    index = 0
+    while index < length:
+        start = value.find("eyJ", index)
+        if start < 0:
+            return
+        if start > 0 and value[start - 1] in _JWT_EDGE and start not in boundaries:
+            index = start + 3
             continue
-        while pointer < len(ordered) and ordered[pointer][1] <= edge:
-            pointer += 1
-        if pointer < len(ordered) and ordered[pointer][0] < edge < ordered[pointer][1]:
+        end = _jwt_end(value, start)
+        if end is None:
+            index = _jwt_run_end(value, start)
             continue
-        if edge in covered or value[edge] != "e" or not value.startswith("eyJ", edge):
+        if (
+            end < length
+            and value[end] in _JWT_EDGE
+            and end not in edges
+            and not value.startswith("eyJ", end)
+        ):
+            index = end
             continue
-        match = _JWT_BODY.match(value, edge)
-        if match is None or not _boundary_ok(value, match.end(), True, edges):
-            # One scan per [A-Za-z0-9_-] run, whether the body matched or not.
-            skip_until = _jwt_run_end(value, edge)
-            continue
-        spans.append((match.start(), match.end(), _MARKER, match.start()))
-        covered.add(edge)
-        skip_until = match.end()
+        spans.append((start, end, _MARKER, start))
+        boundaries.add(end)
+        index = end
+
+
+def _card_from(value: str, start: int) -> int | None:
+    length = len(value)
+    end = start
+    best = None
+    while end < length and "0" <= value[end] <= "9" and end - start < 19:
+        end += 1
+        glen = end - start
+        if (
+            glen >= 13
+            and _luhn_span(value, start, end)
+            and (end == length or not ("0" <= value[end] <= "9"))
+        ):
+            best = end
+    return best
+
+
+def _plant_fixed_tokens(
+    value: str, spans: list[tuple[int, int, str, int]], edges: set[int]
+) -> None:
+    length = len(value)
+    covered = {span[0] for span in spans}
+    specs = (("AKIA", 16, _AKIA_CHARS), ("ASIA", 16, _AKIA_CHARS), ("AIza", 35, _AIZA_CHARS))
+    for prefix, size, alphabet in specs:
+        index = 0
+        while index < length:
+            start = value.find(prefix, index)
+            if start < 0:
+                break
+            end = start + len(prefix) + size
+            index = start + 1
+            if end > length or start in covered:
+                continue
+            if start > 0 and start not in edges and value[start - 1] in _TOKEN_LEFT:
+                continue
+            if any(char not in alphabet for char in value[start + len(prefix) : end]):
+                continue
+            card_end = _card_from(value, end)
+            if card_end is None:
+                continue
+            spans.append((start, end, _MARKER, start))
+            spans.append((end, card_end, _MARKER, end))
+            covered.add(start)
+            covered.add(end)
 
 
 def _redact_text(value: str) -> str:
@@ -792,6 +868,7 @@ def _redact_text(value: str) -> str:
     for match in _QUERY_TOKEN.finditer(value):
         label = match.start() + len(match.group(1))
         spans.append((match.start(), match.end(), match.group(1) + _MARKER, label))
+    _plant_fixed_tokens(value, spans, _span_edges(spans))
     edges = _span_edges(spans)
     _email_spans(value, spans, [(span[0], span[1]) for span in urls], edges)
     edges = _span_edges(spans)

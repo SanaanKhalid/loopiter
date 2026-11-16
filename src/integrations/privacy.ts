@@ -40,8 +40,6 @@ const basicBody = new RegExp(
   "y",
 );
 const tokens = /(?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{12,}|sk_live_[A-Za-z0-9]+|gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|(?:AKIA|ASIA)[0-9A-Z]{16})(?![A-Za-z0-9_])/g;
-const jwt = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])/g;
-const jwtBody = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/y;
 const JWT_EDGE = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-");
 const awsSecret = new RegExp(
   `(?<![A-Za-z0-9])(["']?(?:aws[-_]?)?secret[-_]?access[-_]?key["']?${WS}*[=:]${WS}*["']?)[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])`,
@@ -189,6 +187,11 @@ function pushEmails(value: string, spans: Span[], blocked: Array<[number, number
       i = end;
       continue;
     }
+    // A digit stuck to the label is not a separate boundary.
+    if (end < value.length && value.charCodeAt(end) >= 48 && value.charCodeAt(end) <= 57 && !edges.has(end)) {
+      i = at + 1;
+      continue;
+    }
     if (labelHasStart && lastDot < end) pushTokenInFinalLabel(value, spans, lastDot + 1, end, edges);
     spans.push([left, end, MARKER, left]);
     i = end;
@@ -204,45 +207,65 @@ function spanEdges(spans: Span[]): Set<number> {
   return edges;
 }
 
-function jwtBoundary(value: string, index: number, atEnd: boolean, edges: Set<number>): boolean {
-  if (atEnd) {
-    if (index === value.length || edges.has(index)) return true;
-    return !JWT_EDGE.has(value[index]!);
-  }
-  if (index === 0 || edges.has(index)) return true;
-  return !JWT_EDGE.has(value[index - 1]!);
-}
-
 function jwtRunEnd(value: string, index: number): number {
   while (index < value.length && JWT_EDGE.has(value[index]!)) index += 1;
   return index;
 }
 
+function jwtSimpleEnd(value: string, start: number): number | null {
+  if (!value.startsWith("eyJ", start)) return null;
+  let pos = start + 3;
+  for (let segment = 0; segment < 2; segment += 1) {
+    const seg = pos;
+    while (pos < value.length && JWT_EDGE.has(value[pos]!)) pos += 1;
+    if (pos === seg || pos >= value.length || value[pos] !== ".") return null;
+    pos += 1;
+  }
+  const seg = pos;
+  while (pos < value.length && JWT_EDGE.has(value[pos]!)) pos += 1;
+  return pos === seg ? null : pos;
+}
+
+function jwtEnd(value: string, start: number): number | null {
+  if (!value.startsWith("eyJ", start)) return null;
+  let pos = start + 3;
+  for (let segment = 0; segment < 2; segment += 1) {
+    const seg = pos;
+    while (pos < value.length && JWT_EDGE.has(value[pos]!)) pos += 1;
+    if (pos === seg || pos >= value.length || value[pos] !== ".") return null;
+    pos += 1;
+  }
+  const seg = pos;
+  while (pos < value.length && JWT_EDGE.has(value[pos]!)) {
+    if (value.startsWith("eyJ", pos) && jwtSimpleEnd(value, pos) !== null) break;
+    pos += 1;
+  }
+  return pos === seg ? null : pos;
+}
+
 function pushJwts(value: string, spans: Span[], edges: Set<number>): void {
-  collect(jwt, value, spans, () => MARKER, (match) => match.index ?? 0);
   if (!value.includes("eyJ")) return;
-  const covered = new Set(spans.map((span) => span[0]));
-  const ordered = spans.slice().sort((a, b) => a[0] - b[0]);
-  let pointer = 0;
-  let skipUntil = -1;
-  const sorted = [...edges].filter((edge) => edge < value.length).sort((a, b) => a - b);
-  for (const edge of sorted) {
-    if (edge < skipUntil) continue;
-    while (pointer < ordered.length && ordered[pointer]![1] <= edge) pointer += 1;
-    const cover = ordered[pointer];
-    if (cover && cover[0] < edge && edge < cover[1]) continue;
-    if (covered.has(edge) || value.charCodeAt(edge) !== 101 || !value.startsWith("eyJ", edge)) continue;
-    jwtBody.lastIndex = edge;
-    const match = jwtBody.exec(value);
-    jwtBody.lastIndex = 0;
-    if (!match || match.index !== edge || !jwtBoundary(value, edge + match[0].length, true, edges)) {
-      skipUntil = jwtRunEnd(value, edge);
+  const boundaries = new Set(edges);
+  let index = 0;
+  while (index < value.length) {
+    const start = value.indexOf("eyJ", index);
+    if (start < 0) return;
+    if (start > 0 && JWT_EDGE.has(value[start - 1]!) && !boundaries.has(start)) {
+      index = start + 3;
       continue;
     }
-    const end = edge + match[0].length;
-    spans.push([edge, end, MARKER, edge]);
-    covered.add(edge);
-    skipUntil = end;
+    const end = jwtEnd(value, start);
+    if (end === null) {
+      index = jwtRunEnd(value, start);
+      continue;
+    }
+    if (end < value.length && JWT_EDGE.has(value[end]!) && !edges.has(end) && !value.startsWith("eyJ", end)) {
+      index = end;
+      continue;
+    }
+    spans.push([start, end, MARKER, start]);
+    boundaries.add(end);
+    index = end;
   }
 }
 
@@ -709,6 +732,67 @@ function pushSuffixCards(value: string, spans: Span[], covers: Span[]): void {
   }
 }
 
+function luhnSlice(value: string, start: number, end: number): boolean {
+  let total = 0;
+  let alt = false;
+  for (let index = end - 1; index >= start; index -= 1) {
+    let number = value.charCodeAt(index) - 48;
+    if (alt) {
+      number *= 2;
+      if (number > 9) number -= 9;
+    }
+    total += number;
+    alt = !alt;
+  }
+  return total % 10 === 0;
+}
+
+function cardFrom(value: string, start: number): number | null {
+  let end = start;
+  let best: number | null = null;
+  while (end < value.length && value.charCodeAt(end) >= 48 && value.charCodeAt(end) <= 57 && end - start < 19) {
+    end += 1;
+    const glen = end - start;
+    const boundary = end === value.length || value.charCodeAt(end) < 48 || value.charCodeAt(end) > 57;
+    if (glen >= 13 && boundary && luhnSlice(value, start, end)) best = end;
+  }
+  return best;
+}
+
+function plantFixedTokens(value: string, spans: Span[], edges: Set<number>): void {
+  const covered = new Set(spans.map((span) => span[0]));
+  const specs: Array<[string, number, Set<string>]> = [
+    ["AKIA", 16, AKIA_CHARS],
+    ["ASIA", 16, AKIA_CHARS],
+    ["AIza", 35, AIZA_CHARS],
+  ];
+  for (const [prefix, size, alphabet] of specs) {
+    let index = 0;
+    while (index < value.length) {
+      const start = value.indexOf(prefix, index);
+      if (start < 0) break;
+      const end = start + prefix.length + size;
+      index = start + 1;
+      if (end > value.length || covered.has(start)) continue;
+      if (start > 0 && !edges.has(start) && /[A-Za-z0-9_]/.test(value[start - 1]!)) continue;
+      let ok = true;
+      for (let cursor = start + prefix.length; cursor < end; cursor += 1) {
+        if (!alphabet.has(value[cursor]!)) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+      const cardEnd = cardFrom(value, end);
+      if (cardEnd === null) continue;
+      spans.push([start, end, MARKER, start]);
+      spans.push([end, cardEnd, MARKER, end]);
+      covered.add(start);
+      covered.add(end);
+    }
+  }
+}
+
 function redactText(value: string): string {
   const spans: Span[] = [];
   collect(privateKey, value, spans, () => MARKER, (match) => match.index ?? 0);
@@ -723,6 +807,7 @@ function redactText(value: string): string {
   pushCards(value, spans);
   collect(assigned, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
   collect(queryToken, value, spans, (match) => `${match[1] ?? ""}${MARKER}`, (match) => (match.index ?? 0) + (match[1]?.length ?? 0));
+  plantFixedTokens(value, spans, spanEdges(spans));
   pushEmails(value, spans, urls.map((span) => [span[0], span[1]]), spanEdges(spans));
   pushJwts(value, spans, spanEdges(spans));
   pushSuffixCards(value, spans, spans);

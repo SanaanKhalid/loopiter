@@ -217,6 +217,38 @@ test("seeded card fuzz does not undercount and long digit runs stay fast", () =>
   scales("https://u:p@h.io/ ".repeat(3640));
   scales("4111111111111111sk-abcdefghijklmnop".repeat(1872));
   scales("4111111111111111eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl".repeat(910));
+  scales("4111111111111111eyJ".repeat(3449));
+  scales("4111111111111111sk-".repeat(3449));
+});
+
+test("glued secret fuzz stays idempotent", () => {
+  const pieces = [
+    "AKIAABCDEFGHIJKLMNOP",
+    "AKIA1234567890123456",
+    "4111111111111111",
+    "3782 822463 10005",
+    "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+    "user@example.com",
+    "a@b.cd",
+    "sk-abcdefghijklmnop",
+    "Bearer secretvalue",
+    "Basic dXNlcjpwYXNz",
+  ];
+  let state = 42;
+  const rnd = () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+  let exceptions = 0;
+  for (let n = 0; n < 200; n += 1) {
+    let sample = "";
+    const parts = 1 + Math.floor(rnd() * 4);
+    for (let part = 0; part < parts; part += 1) sample += pieces[Math.floor(rnd() * pieces.length)]!;
+    const once = String(redactCapture(sample));
+    if (String(redactCapture(once)) !== once) exceptions += 1;
+  }
+  // This glued alphabet is idempotent. Arbitrary text is not.
+  assert.equal(exceptions, 0);
 });
 
 test("detectors read the original text only", () => {

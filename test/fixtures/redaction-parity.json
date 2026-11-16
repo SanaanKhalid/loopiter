@@ -545,6 +545,26 @@
     {
       "input": "a@b.cdBearer abc",
       "output": "[REDACTED] [REDACTED]"
+    },
+    {
+      "input": "AKIA12345678901234564111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "3782 822463 10005Basic dXNlcjpwYXNz",
+      "output": "[REDACTED]Basic [REDACTED]"
+    },
+    {
+      "input": "3782 822463 10005Bearer secretvalue",
+      "output": "[REDACTED]Bearer [REDACTED]"
+    },
+    {
+      "input": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJleyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl4111111111111111",
+      "output": "[REDACTED]"
+    },
+    {
+      "input": "a@b.cd5",
+      "output": "a@b.cd5"
     }
   ],
   "boundaries": [

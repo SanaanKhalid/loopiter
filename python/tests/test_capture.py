@@ -637,6 +637,39 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         scales_text(
             "4111111111111111eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl" * 910
         )
+        scales_text("4111111111111111eyJ" * 3449)
+        scales_text("4111111111111111sk-" * 3449)
+
+    def test_glued_secret_fuzz_stays_idempotent(self):
+        pieces = (
+            "AKIAABCDEFGHIJKLMNOP",
+            "AKIA1234567890123456",
+            "4111111111111111",
+            "3782 822463 10005",
+            "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.c2lnbmF0dXJl",
+            "user@example.com",
+            "a@b.cd",
+            "sk-abcdefghijklmnop",
+            "Bearer secretvalue",
+            "Basic dXNlcjpwYXNz",
+        )
+        state = 42
+
+        def rnd():
+            nonlocal state
+            state = (1664525 * state + 1013904223) & 0xFFFFFFFF
+            return state / 4294967296
+
+        exceptions = 0
+        for _ in range(200):
+            sample = "".join(
+                pieces[int(rnd() * len(pieces))] for _part in range(1 + int(rnd() * 4))
+            )
+            once = redact_capture(sample)
+            if redact_capture(once) != once:
+                exceptions += 1
+        # This glued alphabet is idempotent. Arbitrary text is not.
+        self.assertEqual(exceptions, 0)
 
     def test_detectors_read_the_original_text_only(self):
         from unittest.mock import patch
@@ -670,7 +703,6 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         names = (
             "_PRIVATE_KEY",
             "_TOKEN",
-            "_JWT_BODY",
             "_AWS_SECRET",
             "_BEARER",
             "_BASIC",
