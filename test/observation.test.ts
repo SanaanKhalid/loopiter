@@ -251,6 +251,22 @@ test("glued secret fuzz stays idempotent", () => {
   assert.equal(exceptions, 0);
 });
 
+test("redaction covers the recorded baseline", () => {
+  // Outputs recorded at 070f524. A later pass may cover more, but it must
+  // not show text that revision already replaced.
+  const rows = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../test/fixtures/redaction-baseline.json"), "utf8"),
+  ) as Array<{ input: string; baseline: string; exact: boolean }>;
+  for (const row of rows) {
+    const current = String(redactCapture(row.input));
+    if (row.exact) assert.equal(current, row.baseline);
+    const visible = row.baseline.split("[REDACTED]");
+    for (const piece of current.split("[REDACTED]")) {
+      if (piece) assert.ok(visible.some((part) => part.includes(piece)), row.input);
+    }
+  }
+});
+
 test("detectors read the original text only", () => {
   const sample = "Bearer sk-abcdefghijklmnop.SECRETTAIL";
   const seen: string[] = [];

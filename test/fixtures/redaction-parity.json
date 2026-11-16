@@ -564,7 +564,7 @@
     },
     {
       "input": "a@b.cd5",
-      "output": "a@b.cd5"
+      "output": "[REDACTED]5"
     }
   ],
   "boundaries": [

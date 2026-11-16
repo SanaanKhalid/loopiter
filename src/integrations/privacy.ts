@@ -187,11 +187,6 @@ function pushEmails(value: string, spans: Span[], blocked: Array<[number, number
       i = end;
       continue;
     }
-    // A digit stuck to the label is not a separate boundary.
-    if (end < value.length && value.charCodeAt(end) >= 48 && value.charCodeAt(end) <= 57 && !edges.has(end)) {
-      i = at + 1;
-      continue;
-    }
     if (labelHasStart && lastDot < end) pushTokenInFinalLabel(value, spans, lastDot + 1, end, edges);
     spans.push([left, end, MARKER, left]);
     i = end;

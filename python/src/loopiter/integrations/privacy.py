@@ -187,10 +187,6 @@ def _email_spans(
         if pointer < len(blocked) and blocked[pointer][0] < end and left < blocked[pointer][1]:
             i = end
             continue
-        # A digit stuck to the label is not a separate boundary.
-        if end < length and "0" <= value[end] <= "9" and end not in edges:
-            i = at + 1
-            continue
         if label_has_start and last_dot < end:
             _token_in_final_label(value, spans, last_dot + 1, end, edges)
         spans.append((left, end, "[REDACTED]", left))

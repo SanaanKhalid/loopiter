@@ -671,6 +671,25 @@ class CaptureTests(unittest.IsolatedAsyncioTestCase):
         # This glued alphabet is idempotent. Arbitrary text is not.
         self.assertEqual(exceptions, 0)
 
+    def test_redaction_covers_the_recorded_baseline(self):
+        from pathlib import Path
+
+        # Outputs recorded at 070f524. A later pass may cover more, but it must
+        # not show text that revision already replaced.
+        rows = json.loads(
+            (
+                Path(__file__).resolve().parents[2] / "test/fixtures/redaction-baseline.json"
+            ).read_text(encoding="utf-8")
+        )
+        for row in rows:
+            current = redact_capture(row["input"])
+            if row["exact"]:
+                self.assertEqual(current, row["baseline"])
+            visible = row["baseline"].split("[REDACTED]")
+            for piece in current.split("[REDACTED]"):
+                if piece:
+                    self.assertTrue(any(piece in part for part in visible), row["input"])
+
     def test_detectors_read_the_original_text_only(self):
         from unittest.mock import patch
 
