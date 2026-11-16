@@ -151,6 +151,23 @@ Use `task.cancel()` to cancel an SDK operation. Callback cancellation is coopera
 it cannot kill application code or reverse external side effects. Late callback
 results are discarded and uncertain external outcomes must be reconciled.
 
+## Application observation
+
+These imports are separate from `FeedbackLoop`. They write to the loop you pass
+and do not install a tracer or import OpenTelemetry unless noted.
+
+| Python | Node | Contract |
+| --- | --- | --- |
+| `create_observer` | `createObserver` | Async operation wrapper. Default capture mode `metadata-only`. `failure_mode` defaults to open. |
+| `create_loopiter_span_exporter` | `createLoopiterSpanExporter` | Structural span exporter. `export` returns `{"code": 0}` or `{"code": 1, "error": ...}`. |
+| `span_execution_id` | `spanExecutionId` | `otel_` plus SHA-256 of `trace_id:span_id`. |
+| `capture_payload` / `redact_capture` | `capturePayload` / `redactCapture` | `full`, `redacted`, or `metadata-only`. Result keys: `value`, `truncated`, `complete`. |
+| `CaptureSession.begin` | `CaptureSession.begin` | Pending execution, then `append` / `finish`. |
+| `opentelemetry_span_exporter` | — | Lazy OpenTelemetry Python SDK adapter. Requires `loopiter[otel]`. |
+
+`loopiter_capture.replay_eligible` is false on these paths. Capture status is not
+a correctness grade. See the Python quickstart for a runnable observer.
+
 ## Other exports and language boundaries
 
 - `fingerprint(json_value)` computes a stable fingerprint for versioned identities.
