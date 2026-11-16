@@ -560,9 +560,21 @@ def _label_at_edge(value: str, edge: int, spans: list[tuple[int, int, str, int]]
     return edge
 
 
+_EDGE_HINT = re.compile(
+    r"sk-|sk_live_|github_pat_|AIza|AKIA|ASIA|gh[pousr]_|xox|earer|asic",
+    re.IGNORECASE,
+)
+
+
+def _edge_tokens_possible(value: str) -> bool:
+    return _EDGE_HINT.search(value) is not None
+
+
 def _token_spans_at_edges(
     value: str, spans: list[tuple[int, int, str, int]], edges: set[int]
 ) -> None:
+    if not _edge_tokens_possible(value):
+        return
     covered = {start for start, _end, _repl, _secret in spans}
     length = len(value)
     ordered = sorted(spans, key=lambda span: span[0])
@@ -713,6 +725,8 @@ def _jwt_spans(value: str, spans: list[tuple[int, int, str, int]], edges: set[in
     for match in _JWT.finditer(value):
         spans.append((match.start(), match.end(), _MARKER, match.start()))
         covered.add(match.start())
+    if "eyJ" not in value:
+        return
     length = len(value)
     ordered = sorted(spans, key=lambda span: span[0])
     pointer = 0

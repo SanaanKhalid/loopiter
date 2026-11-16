@@ -211,6 +211,7 @@ function jwtRunEnd(value: string, index: number): number {
 
 function pushJwts(value: string, spans: Span[], edges: Set<number>): void {
   collect(jwt, value, spans, () => MARKER, (match) => match.index ?? 0);
+  if (!value.includes("eyJ")) return;
   const covered = new Set(spans.map((span) => span[0]));
   const ordered = spans.slice().sort((a, b) => a[0] - b[0]);
   let pointer = 0;
@@ -529,7 +530,15 @@ function labelAtEdge(value: string, edge: number, spans: Span[]): number {
   return edge;
 }
 
+const edgeHint = /sk-|sk_live_|github_pat_|AIza|AKIA|ASIA|gh[pousr]_|xox|earer|asic/i;
+
+function edgeTokensPossible(value: string): boolean {
+  edgeHint.lastIndex = 0;
+  return edgeHint.test(value);
+}
+
 function pushTokensAtEdges(value: string, spans: Span[], edges: Set<number>): void {
+  if (!edgeTokensPossible(value)) return;
   const covered = new Set(spans.map((span) => span[0]));
   const ordered = spans.slice().sort((a, b) => a[0] - b[0]);
   let pointer = 0;
