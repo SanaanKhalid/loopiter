@@ -16,11 +16,12 @@ export const ITEM_FAILURE_FRACTION = 0.2;
 /** Stop after this many failed predictions in a row, even when each split stays under the fraction. */
 export const ITEM_FAILURE_CONSECUTIVE = 5;
 
+// Explicit provider codes only. content_filter and ResponsibleAIPolicyViolation
+// are the content-filter fixture. cyber_policy is the per-request refusal.
 const POLICY_CODES = new Set([
   "content_filter",
   "cyber_policy",
   "responsibleaipolicyviolation",
-  "content_policy_violation",
 ]);
 
 const PROMPT_SCOPED_CODES = new Set([
@@ -28,8 +29,6 @@ const PROMPT_SCOPED_CODES = new Set([
   "string_above_max_length",
   "invalid_prompt",
 ]);
-
-const INVALID_REQUEST_TYPES = new Set(["invalid_request", "invalid_request_error"]);
 
 export interface ItemFailure {
   rowId: string;
@@ -156,7 +155,7 @@ export function renderItemFailureSummary(failures: readonly ItemFailure[]): stri
 }
 
 function perItemCode(detail: SafeProviderDetail): string | null {
-  const policy = listedCode(detail, POLICY_CODES) ?? shapedPolicyCode(detail);
+  const policy = listedCode(detail, POLICY_CODES);
   if (policy) return policy;
   if (detail.categories.length > 0) return detail.code ?? "content_filter";
   return listedCode(detail, PROMPT_SCOPED_CODES);
@@ -170,15 +169,3 @@ function listedCode(detail: SafeProviderDetail, names: ReadonlySet<string>): str
   return null;
 }
 
-/** A 400 invalid_request whose code names a policy, not a malformed parameter. */
-function shapedPolicyCode(detail: SafeProviderDetail): string | null {
-  const type = detail.type?.toLowerCase() ?? "";
-  if (!INVALID_REQUEST_TYPES.has(type)) return null;
-  for (const token of [detail.code, detail.innerCode]) {
-    if (!token) continue;
-    const lower = token.toLowerCase();
-    if (lower.includes("policy") || lower.includes("content_filter") || lower.includes("moderation"))
-      return token;
-  }
-  return null;
-}

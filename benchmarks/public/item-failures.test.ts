@@ -65,14 +65,14 @@ test("provider error parsing keeps only allowlisted fields", () => {
     perItemReason(
       new ProviderRequestError(400, null, null, {
         status: 400,
-        code: "usage_policy",
+        code: "organization_policy_violation",
         type: "invalid_request_error",
         innerCode: null,
         categories: [],
         incompleteReason: null,
       }),
     ),
-    "usage_policy",
+    null,
   );
   assert.equal(
     perItemReason(
@@ -262,6 +262,7 @@ test("policy refusals stay on the item report and later seeds still run", async 
       call.kind === "predict" && call.predicts === 1 ? policyResponse(code) : answerResponse("quartz done"),
     );
     assert.equal(item.report.stopped, null);
+    assert.equal(item.report.perSeed.length, 2);
     assert.equal(item.report.perSeed.at(-1)?.seed, 2);
     assert.equal(item.report.itemFailures.some((failure) => failure.reason === code), true);
     assert.equal(item.report.perSeed.some((row) => row.controllerReason === "callback_failed"), false);
@@ -290,6 +291,7 @@ test("policy refusals stay on the item report and later seeds still run", async 
       call.index === lastOfSeed ? policyResponse(code) : answerResponse("quartz done"),
     );
     assert.equal(last.report.stopped, null);
+    assert.equal(last.report.perSeed.length, 2);
     assert.equal(last.report.perSeed.at(-1)?.seed, 2);
     assert.equal(last.report.itemFailures.some((failure) => failure.reason === code), true);
     assertNoLeaks(JSON.stringify(last.report));
@@ -304,6 +306,66 @@ test("policy refusals stay on the item report and later seeds still run", async 
   assert.equal(unauthorized.report.perSeed.length, 0);
   assert.equal(unauthorized.fetches, 1);
   assertNoLeaks(JSON.stringify(unauthorized.report));
+});
+
+test("a throw inside one seed is reported and the other seeds finish", async () => {
+  const seen = await runIfbench(2, (call) => {
+    if (call.index === 1) throw new Error("provider threw inside the seed");
+    return answerResponse("quartz done");
+  });
+  assert.equal(seen.report.stopped, null);
+  assert.equal(seen.report.perSeed.length, 2);
+  assert.equal(seen.report.perSeed[0]?.seed, 1);
+  assert.equal(seen.report.perSeed[0]?.status, "failed");
+  assert.equal(seen.report.perSeed[0]?.failure?.arm, "baseline");
+  assert.equal(seen.report.perSeed[0]?.failure?.code, "seed_failed");
+  assert.match(seen.report.perSeed[0]?.failure?.message ?? "", /provider threw inside the seed/);
+  assert.equal(seen.report.seedFailures[0]?.seed, 1);
+  assert.equal(seen.report.seedFailures[0]?.arm, "baseline");
+  assert.equal(seen.report.seedFailures[0]?.code, "seed_failed");
+  assert.equal(seen.report.perSeed[1]?.status, "complete");
+  assert.ok((seen.report.perSeed[1]?.baseline.trials ?? 0) > 0);
+  assert.equal(seen.report.passed, false);
+  assertNoLeaks(JSON.stringify(seen.report));
+});
+
+test("a seed whose propose calls are all refused is never_proposed", async () => {
+  const seen = await runIfbench(2, (call) =>
+    call.kind === "propose" ? policyResponse("cyber_policy") : answerResponse("quartz done"),
+  );
+  assert.equal(seen.report.stopped, null);
+  assert.equal(seen.report.perSeed.length, 2);
+  assert.ok(seen.report.proposeRefusals.calls > 0);
+  assert.equal(seen.report.proposeRefusals.refused, seen.report.proposeRefusals.calls);
+  for (const row of seen.report.perSeed) {
+    assert.equal(row.status, "never_proposed");
+    assert.equal(row.controllerReason, "never_proposed");
+    assert.ok(row.proposeCalls > 0);
+    assert.equal(row.proposeRefusals, row.proposeCalls);
+  }
+  assert.equal(
+    seen.report.proposeRefusals.refused,
+    seen.report.perSeed.reduce((sum, row) => sum + row.proposeRefusals, 0),
+  );
+  assertNoLeaks(JSON.stringify(seen.report));
+});
+
+test("an unlisted invalid_request policy code stops the run", async () => {
+  const seen = await runScript(4, () =>
+    jsonResponse(400, {
+      error: {
+        message: `${PROMPT} ${KEY}`,
+        type: "invalid_request_error",
+        code: "organization_policy_violation",
+      },
+    }),
+  );
+  assert.equal(seen.report.stopped?.reason, "provider_error");
+  assert.match(seen.report.stopped?.message ?? "", /organization_policy_violation/);
+  assert.equal(seen.report.itemFailures.length, 0);
+  assert.equal(seen.report.perSeed.length, 0);
+  assert.equal(seen.fetches, 1);
+  assertNoLeaks(JSON.stringify(seen.report));
 });
 
 test("auth, systemic 400, repeated 5xx, and 429 stop the run", async () => {
