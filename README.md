@@ -9,6 +9,45 @@ live in the separate `loopiter-platform` repository (local sibling `../loopiter-
 Its HTTP client calls the platform; it is distinct from these standalone libraries.
 The marketing website and SDK documentation remain here.
 
+## TypeScript conventions and imports
+
+The TypeScript SDK follows [Mastra's formatting conventions](https://github.com/mastra-ai/mastra/blob/main/.prettierrc):
+two spaces, single quotes, semicolons, trailing commas, a 120-column print width,
+and parentheses only when an arrow parameter needs them. Run `npm run format` to
+format SDK sources, tests, examples and JavaScript maintenance scripts, or
+`npm run format:check` to check them. CI checks formatting and strict types.
+
+Use feature imports for feedback, improvement and stores, and `import type` for
+shared definitions. Existing root imports and integration paths remain supported.
+These paths become available when installing a build containing this change.
+
+```typescript
+import { FeedbackLoop } from 'loopiter/feedback';
+import { InMemoryStore } from 'loopiter/stores';
+import type { FeedbackLoopOptions, RecordExecutionInput } from 'loopiter/types';
+
+const options = {
+  store: new InMemoryStore(),
+  namespace: 'support/development',
+} satisfies FeedbackLoopOptions;
+
+const loop = new FeedbackLoop(options);
+const input = {
+  kind: 'prediction',
+  input: { text: 'Please explain this charge.' },
+} satisfies RecordExecutionInput;
+
+await loop.recordExecution(input);
+await loop.close();
+```
+
+`loopiter/improvement` exports `ImprovementController` and its workflow and policy
+types. Workflow callbacks have reusable `ProposalInput`, `EvaluationInput`,
+`EvaluationBatchInput`, `ObservationInput` and rollout adapter definitions.
+Observation integrations also export named option, input and result types.
+Published packages include TypeScript sources alongside declaration maps so an
+editor can navigate from a declaration to its implementation.
+
 ## Optional framework integrations
 
 Capture serving calls with `loopiter/integrations/openai` (OpenAI Node 6/7),

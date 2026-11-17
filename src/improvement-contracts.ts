@@ -5,31 +5,27 @@ import type {
   JsonValue,
   JsonObject,
   RecordBase,
-} from "./contracts.js";
+} from './contracts.js';
 
-export type ImprovementMode =
-  | "observe"
-  | "recommend"
-  | "experiment"
-  | "autonomous";
+export type ImprovementMode = 'observe' | 'recommend' | 'experiment' | 'autonomous';
 export type RunState =
-  | "waiting_for_evidence"
-  | "proposing"
-  | "evaluating"
-  | "selected"
-  | "deploying"
-  | "observing"
-  | "completed"
-  | "no_improvement"
-  | "paused"
-  | "failed"
-  | "timed_out"
-  | "reconciliation_required"
-  | "rolling_back"
-  | "rolled_back";
+  | 'waiting_for_evidence'
+  | 'proposing'
+  | 'evaluating'
+  | 'selected'
+  | 'deploying'
+  | 'observing'
+  | 'completed'
+  | 'no_improvement'
+  | 'paused'
+  | 'failed'
+  | 'timed_out'
+  | 'reconciliation_required'
+  | 'rolling_back'
+  | 'rolled_back';
 /** Deliberately bounded JSON-schema subset; unknown schema keywords fail closed. */
 export interface ChangeSchema {
-  type: "object" | "string" | "number" | "boolean";
+  type: 'object' | 'string' | 'number' | 'boolean';
   properties?: Record<string, ChangeSchema>;
   required?: string[];
   additionalProperties?: false;
@@ -40,7 +36,7 @@ export interface ChangeSchema {
 }
 export interface MetricGate {
   metric: string;
-  comparator: "gte" | "lte";
+  comparator: 'gte' | 'lte';
   value: number;
 }
 export interface AutonomyPolicy {
@@ -49,7 +45,7 @@ export interface AutonomyPolicy {
   changeSchema: ChangeSchema;
   objective: {
     metric: string;
-    direction: "maximize" | "minimize";
+    direction: 'maximize' | 'minimize';
     minimumImprovement: number;
     range: [number, number];
     alpha: number;
@@ -64,17 +60,17 @@ export interface AutonomyPolicy {
   daily: { modelRequests: number; tokens: number; deployments: number };
   callbackReservation: { modelRequests: number; tokens: number };
   cooldownMs: number;
-  rollout: { mode: "immediate" | "canary" };
+  rollout: { mode: 'immediate' | 'canary' };
   observation: {
     minimumDurationMs: number;
     timeoutMs: number;
     minimumUnits: number;
     guardrails: MetricGate[];
-    onTimeout: "rollback";
-    onFailure: "rollback";
+    onTimeout: 'rollback';
+    onFailure: 'rollback';
   };
-  onInsufficientEvidence: "wait";
-  onUncertainDeployment: "reconcile";
+  onInsufficientEvidence: 'wait';
+  onUncertainDeployment: 'reconcile';
   maximumCandidates?: number;
   maximumProposalCalls?: number;
   /** Stop proposing after this many consecutive failed cycles. Resume is administrative. */
@@ -141,11 +137,48 @@ export interface CallbackContext {
     definitionHash: string;
   }>;
   /** Reserve before *each* provider call; return actual usage when known. */
-  meter<T>(
-    maximumTokens: number,
-    call: () => Promise<{ value: T; tokens: number | null }>,
-  ): Promise<T>;
+  meter<T>(maximumTokens: number, call: () => Promise<{ value: T; tokens: number | null }>): Promise<T>;
 }
+export type ProposalInput = {
+  baseline: ArtifactBaseline;
+  examples: DatasetRow[];
+  ordinal: number;
+  previousOutcomes: { state: string; reason: string }[];
+};
+
+export type EvaluationInput = {
+  baseline: ArtifactBaseline;
+  change: JsonValue;
+  examples: DatasetRow[];
+  partition: 'validation' | 'audit';
+  batchResults?: JsonValue[];
+};
+
+export type EvaluationBatchInput = Omit<EvaluationInput, 'batchResults'> & {
+  offset: number;
+};
+
+export type ObservationInput = {
+  runId: string;
+  artifactVersion: string;
+  baseline: ArtifactBaseline;
+  deployedAt: string;
+};
+
+export type RolloutInspectionInput = {
+  operationId: string;
+  artifactVersion: string;
+};
+
+export type RolloutPromotionInput = RolloutInspectionInput & {
+  baseline: ArtifactBaseline;
+};
+
+export type RolloutAdapter = {
+  promote(input: RolloutPromotionInput, context: CallbackContext): Promise<void>;
+  inspect(input: RolloutInspectionInput, context: CallbackContext): Promise<'promoted' | 'unknown' | 'not_applied'>;
+};
+
 export interface ImprovementWorkflow {
   id: string;
   version: string;
@@ -154,63 +187,17 @@ export interface ImprovementWorkflow {
   policy: AutonomyPolicy;
   dataset(context: CallbackContext): Promise<DatasetSnapshot>;
   artifact(context: CallbackContext): Promise<ArtifactBaseline>;
-  propose(
-    input: {
-      baseline: ArtifactBaseline;
-      examples: DatasetRow[];
-      ordinal: number;
-      previousOutcomes: { state: string; reason: string }[];
-    },
-    context: CallbackContext,
-  ): Promise<JsonValue[]>;
+  propose(input: ProposalInput, context: CallbackContext): Promise<JsonValue[]>;
   /** Optional durable evaluation. One batch is executed per tick; evaluate aggregates batchResults. */
-  evaluateBatch?(
-    input: {
-      baseline: ArtifactBaseline;
-      change: JsonValue;
-      examples: DatasetRow[];
-      partition: "validation" | "audit";
-      offset: number;
-    },
-    context: CallbackContext,
-  ): Promise<JsonValue>;
+  evaluateBatch?(input: EvaluationBatchInput, context: CallbackContext): Promise<JsonValue>;
   evaluationBatchSize?: number;
-  evaluate(
-    input: {
-      baseline: ArtifactBaseline;
-      change: JsonValue;
-      examples: DatasetRow[];
-      partition: "validation" | "audit";
-      batchResults?: JsonValue[];
-    },
-    context: CallbackContext,
-  ): Promise<Comparison>;
+  evaluate(input: EvaluationInput, context: CallbackContext): Promise<Comparison>;
   deployment: DeploymentAdapter;
-  observe(
-    input: {
-      runId: string;
-      artifactVersion: string;
-      baseline: ArtifactBaseline;
-      deployedAt: string;
-    },
-    context: CallbackContext,
-  ): Promise<Observation>;
+  observe(input: ObservationInput, context: CallbackContext): Promise<Observation>;
   /** Canary apply/rollback use deployment; promotion must retain artifact identity. */
-  rollout?: {
-    promote(
-      input: {
-        operationId: string;
-        artifactVersion: string;
-        baseline: ArtifactBaseline;
-      },
-      context: CallbackContext,
-    ): Promise<void>;
-    inspect(
-      input: { operationId: string; artifactVersion: string },
-      context: CallbackContext,
-    ): Promise<"promoted" | "unknown" | "not_applied">;
-  };
+  rollout?: RolloutAdapter;
 }
+
 export interface ImprovementRunData {
   workflowId: string;
   definitionHash: string;
@@ -229,7 +216,7 @@ export interface ImprovementRunData {
   artifactVersion?: string;
   observationConfigurationHash?: string;
   attemptId?: string;
-  operation?: "apply" | "rollback";
+  operation?: 'apply' | 'rollback';
   proposalCalls: number;
   leaseOwner: string | null;
   leaseUntil: string;
@@ -237,7 +224,7 @@ export interface ImprovementRunData {
   lastObservationId?: string;
   pendingPromotion?: boolean;
   previousOutcomes?: { state: string; reason: string }[];
-  configuration?: CallbackContext["configuration"];
+  configuration?: CallbackContext['configuration'];
   operationIds?: string[];
   assignmentHash?: string;
   /** Pre-deployment callback timeouts already spent on this run. */

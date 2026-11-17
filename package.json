@@ -19,6 +19,22 @@
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js"
     },
+    "./feedback": {
+      "types": "./dist/src/feedback.d.ts",
+      "import": "./dist/src/feedback.js"
+    },
+    "./improvement": {
+      "types": "./dist/src/improvement.d.ts",
+      "import": "./dist/src/improvement.js"
+    },
+    "./stores": {
+      "types": "./dist/src/stores/index.d.ts",
+      "import": "./dist/src/stores/index.js"
+    },
+    "./types": {
+      "types": "./dist/src/types.d.ts",
+      "import": "./dist/src/types.js"
+    },
     "./postgres": {
       "types": "./dist/src/postgres.d.ts",
       "import": "./dist/src/postgres.js"
@@ -65,6 +81,7 @@
   },
   "files": [
     "dist/src",
+    "src",
     "dist/examples/autonomous",
     "dist/examples/prompt-improvement",
     "examples/autonomous/*.ts",
@@ -86,6 +103,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && cp python/src/loopiter/failure_detail_rules.json dist/src/failure-detail-rules.json",
+    "format": "prettier --write \"{src,test,examples}/**/*.ts\" \"scripts/*.mjs\" package.json tsconfig.json .prettierrc.json",
+    "format:check": "prettier --check \"{src,test,examples}/**/*.ts\" \"scripts/*.mjs\" package.json tsconfig.json .prettierrc.json",
     "prepack": "npm run build",
     "starter": "npm run build && node dist/examples/prompt-improvement/cli.js",
     "test:postgres": "npm run build && node --test dist/test/postgres.test.js",
@@ -123,6 +142,7 @@
     "ai": "^7.0.145",
     "openai": "^7.39.0",
     "pg": "^8.16.0",
+    "prettier": "3.10.1",
     "typescript": "^5.9.0"
   }
 }

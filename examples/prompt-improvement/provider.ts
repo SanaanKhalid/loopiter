@@ -1,6 +1,6 @@
-import { performance } from "node:perf_hooks";
-import type { JsonObject } from "../../src/index.js";
-import { integer, json, nonempty, object } from "../../src/utils.js";
+import { performance } from 'node:perf_hooks';
+import type { JsonObject } from '../../src/index.js';
+import { integer, json, nonempty, object } from '../../src/utils.js';
 export interface GenerateInput {
   instructions: string;
   input: string;
@@ -22,7 +22,7 @@ export interface Generation {
   latencyMs: number;
 }
 export interface GenerationProvider {
-  readonly mode: "live" | "simulated";
+  readonly mode: 'live' | 'simulated';
   readonly model: string;
   generate(input: GenerateInput): Promise<Generation>;
 }
@@ -69,7 +69,7 @@ export class ProviderRequestError extends Error {
   ) {
     const safe = detail ?? emptyDetail(status);
     super(formatSafeProviderDetail(safe));
-    this.name = "ProviderRequestError";
+    this.name = 'ProviderRequestError';
     this.usage = usage;
     this.retryAfterMs = retryAfterMs;
     this.detail = safe;
@@ -83,7 +83,7 @@ export class IncompleteOutputError extends Error {
     const detail = emptyDetail(200);
     detail.incompleteReason = reason;
     super(formatSafeProviderDetail(detail));
-    this.name = "IncompleteOutputError";
+    this.name = 'IncompleteOutputError';
     this.detail = detail;
   }
 }
@@ -91,7 +91,7 @@ export class IncompleteOutputError extends Error {
 export function formatSafeProviderDetail(detail: SafeProviderDetail): string {
   if (detail.incompleteReason)
     return `OpenAI response was incomplete or malformed (incomplete_details.reason: ${detail.incompleteReason}).`;
-  if (detail.status === 200) return "OpenAI response was incomplete or malformed.";
+  if (detail.status === 200) return 'OpenAI response was incomplete or malformed.';
   const parts = [`HTTP ${detail.status}`];
   if (detail.code) parts.push(`code=${detail.code}`);
   if (detail.type) parts.push(`type=${detail.type}`);
@@ -99,17 +99,17 @@ export function formatSafeProviderDetail(detail: SafeProviderDetail): string {
   if (detail.categories.length) {
     parts.push(
       `categories=${detail.categories
-        .map((item) => (item.severity ? `${item.category}:${item.severity}` : item.category))
-        .join(",")}`,
+        .map(item => (item.severity ? `${item.category}:${item.severity}` : item.category))
+        .join(',')}`,
     );
   }
   if (parts.length === 1) return `OpenAI request failed (${parts[0]}).`;
-  return `OpenAI request failed (${parts.join(", ")}).`;
+  return `OpenAI request failed (${parts.join(', ')}).`;
 }
 
 export function parseProviderErrorBody(status: number, body: unknown): SafeProviderDetail {
   const detail = emptyDetail(status);
-  const error = recordOf(body && typeof body === "object" ? (body as { error?: unknown }).error : null);
+  const error = recordOf(body && typeof body === 'object' ? (body as { error?: unknown }).error : null);
   if (!error) return detail;
   detail.code = safeToken(error.code);
   detail.type = safeToken(error.type);
@@ -153,12 +153,12 @@ function categoriesFrom(error: Record<string, unknown>): ContentFilterCategory[]
 }
 
 function recordOf(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
 }
 
 function safeToken(value: unknown): string | null {
-  return typeof value === "string" && SAFE_TOKEN.test(value) ? value : null;
+  return typeof value === 'string' && SAFE_TOKEN.test(value) ? value : null;
 }
 export function responsesRequestBody(input: {
   model: string;
@@ -178,7 +178,7 @@ export function responsesRequestBody(input: {
     ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
     text: {
       format: {
-        type: "json_schema" as const,
+        type: 'json_schema' as const,
         name: input.name,
         strict: true as const,
         schema: input.schema,
@@ -187,7 +187,7 @@ export function responsesRequestBody(input: {
   };
 }
 class ResponsesProvider implements GenerationProvider {
-  readonly mode = "live" as const;
+  readonly mode = 'live' as const;
   readonly model: string;
   private requests = 0;
   constructor(
@@ -195,55 +195,47 @@ class ResponsesProvider implements GenerationProvider {
     private readonly endpoint: string,
     private readonly authenticate: (signal: AbortSignal) => Promise<Record<string, string>>,
   ) {
-    nonempty(options.model, "model/deployment");
+    nonempty(options.model, 'model/deployment');
     this.model = options.model;
-    integer(options.maximumRequests ?? 80, "maximumRequests");
-    integer(options.maximumOutputTokens ?? 2048, "maximumOutputTokens");
-    integer(options.maximumInputBytes ?? 16384, "maximumInputBytes");
-    integer(options.timeoutMs ?? 60000, "timeoutMs");
+    integer(options.maximumRequests ?? 80, 'maximumRequests');
+    integer(options.maximumOutputTokens ?? 2048, 'maximumOutputTokens');
+    integer(options.maximumInputBytes ?? 16384, 'maximumInputBytes');
+    integer(options.timeoutMs ?? 60000, 'timeoutMs');
   }
   async generate(input: GenerateInput): Promise<Generation> {
     input.signal.throwIfAborted();
     json(input.input, this.options.maximumInputBytes ?? 16384);
-    if (this.requests >= (this.options.maximumRequests ?? 80))
-      throw new Error("Model request budget exhausted.");
+    if (this.requests >= (this.options.maximumRequests ?? 80)) throw new Error('Model request budget exhausted.');
     this.requests++;
     const started = performance.now();
     const cap = this.options.maximumOutputTokens ?? 2048;
     const maxOutput = input.maximumOutputTokens ?? cap;
-    integer(maxOutput, "maximumOutputTokens");
-    if (maxOutput > cap)
-      throw new Error("maximumOutputTokens exceeds the provider cap.");
+    integer(maxOutput, 'maximumOutputTokens');
+    if (maxOutput > cap) throw new Error('maximumOutputTokens exceeds the provider cap.');
     const timeoutMs = this.options.timeoutMs ?? 60000;
-    const signal = AbortSignal.any([
-      input.signal,
-      AbortSignal.timeout(timeoutMs),
-    ]);
+    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(timeoutMs)]);
     const authentication = await this.authenticate(signal);
     signal.throwIfAborted();
-    const response = await (this.options.fetch ?? fetch)(
-      this.endpoint,
-      {
-        method: "POST",
-        headers: {
-          ...authentication,
-          "Content-Type": "application/json",
-        },
-        signal,
-        redirect: "error",
-        body: JSON.stringify(
-          responsesRequestBody({
-            model: this.model,
-            instructions: input.instructions,
-            input: input.input,
-            name: input.name,
-            schema: input.schema,
-            maxOutputTokens: maxOutput,
-            ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
-          }),
-        ),
+    const response = await (this.options.fetch ?? fetch)(this.endpoint, {
+      method: 'POST',
+      headers: {
+        ...authentication,
+        'Content-Type': 'application/json',
       },
-    );
+      signal,
+      redirect: 'error',
+      body: JSON.stringify(
+        responsesRequestBody({
+          model: this.model,
+          instructions: input.instructions,
+          input: input.input,
+          name: input.name,
+          schema: input.schema,
+          maxOutputTokens: maxOutput,
+          ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+        }),
+      ),
+    });
     if (!response.ok) {
       const retryAfterMs = retryAfterMsFrom(response);
       const parsed = await readJsonAllowingFailure(response, signal);
@@ -257,32 +249,30 @@ class ResponsesProvider implements GenerationProvider {
     signal.throwIfAborted();
     const body = await readJsonBody(response, signal);
     signal.throwIfAborted();
-    object(body, "OpenAI response");
-    if (body.status !== "completed" || !Array.isArray(body.output))
+    object(body, 'OpenAI response');
+    if (body.status !== 'completed' || !Array.isArray(body.output))
       throw new IncompleteOutputError(incompleteReason(body));
     const texts: string[] = [];
     for (const item of body.output) {
-      if (!item || item.type !== "message" || !Array.isArray(item.content))
-        continue;
+      if (!item || item.type !== 'message' || !Array.isArray(item.content)) continue;
       for (const part of item.content) {
-        if (part.type === "refusal") throw new IncompleteOutputError("refusal");
-        if (part.type === "output_text" && typeof part.text === "string")
-          texts.push(part.text);
+        if (part.type === 'refusal') throw new IncompleteOutputError('refusal');
+        if (part.type === 'output_text' && typeof part.text === 'string') texts.push(part.text);
       }
     }
-    if (!texts.length) throw new IncompleteOutputError("empty_output");
+    if (!texts.length) throw new IncompleteOutputError('empty_output');
     let value: unknown;
     try {
-      value = JSON.parse(texts.join(""));
+      value = JSON.parse(texts.join(''));
     } catch {
-      throw new IncompleteOutputError("invalid_output");
+      throw new IncompleteOutputError('invalid_output');
     }
     json(value);
-    object(value, "structured output");
+    object(value, 'structured output');
     const usage = readUsage(body);
     return {
       value: value as JsonObject,
-      model: typeof body.model === "string" ? body.model : this.model,
+      model: typeof body.model === 'string' ? body.model : this.model,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       cachedInputTokens: usage.cachedInputTokens,
@@ -293,41 +283,48 @@ class ResponsesProvider implements GenerationProvider {
 
 export class OpenAIProvider extends ResponsesProvider {
   constructor(options: ResponseOptions & { apiKey: string }) {
-    nonempty(options.apiKey, "OPENAI_API_KEY");
-    super(options, "https://api.openai.com/v1/responses", async () => ({
+    nonempty(options.apiKey, 'OPENAI_API_KEY');
+    super(options, 'https://api.openai.com/v1/responses', async () => ({
       Authorization: `Bearer ${options.apiKey}`,
     }));
   }
 }
 
 export class AzureOpenAIProvider extends ResponsesProvider {
-  constructor(options: ResponseOptions & {
-    endpoint: string;
-    apiKey?: string;
-    tokenProvider?: (signal: AbortSignal) => Promise<string>;
-    /** Query value for api-version. Omitted leaves the provider URL unchanged. */
-    apiVersion?: string;
-  }) {
+  constructor(
+    options: ResponseOptions & {
+      endpoint: string;
+      apiKey?: string;
+      tokenProvider?: (signal: AbortSignal) => Promise<string>;
+      /** Query value for api-version. Omitted leaves the provider URL unchanged. */
+      apiVersion?: string;
+    },
+  ) {
     const endpoint = new URL(options.endpoint);
-    if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password ||
-        endpoint.search || endpoint.hash || endpoint.pathname !== "/")
-      throw new Error("Azure endpoint must be an HTTPS resource origin without a path or credentials.");
+    if (
+      endpoint.protocol !== 'https:' ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash ||
+      endpoint.pathname !== '/'
+    )
+      throw new Error('Azure endpoint must be an HTTPS resource origin without a path or credentials.');
     if (Boolean(options.apiKey) === Boolean(options.tokenProvider))
-      throw new Error("Configure exactly one Azure API key or token provider.");
-    if (options.apiKey) nonempty(options.apiKey, "AZURE_OPENAI_API_KEY");
-    const url = new URL("openai/v1/responses", endpoint);
+      throw new Error('Configure exactly one Azure API key or token provider.');
+    if (options.apiKey) nonempty(options.apiKey, 'AZURE_OPENAI_API_KEY');
+    const url = new URL('openai/v1/responses', endpoint);
     if (options.apiVersion !== undefined) {
-      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(options.apiVersion))
-        throw new Error("Invalid Azure API version.");
-      url.searchParams.set("api-version", options.apiVersion);
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(options.apiVersion)) throw new Error('Invalid Azure API version.');
+      url.searchParams.set('api-version', options.apiVersion);
     }
-    super(options, url.href, async (signal) => {
+    super(options, url.href, async signal => {
       if (options.tokenProvider) {
         const token = await options.tokenProvider(signal);
-        nonempty(token, "Azure authentication token");
+        nonempty(token, 'Azure authentication token');
         return { Authorization: `Bearer ${token}` };
       }
-      return { "api-key": options.apiKey! };
+      return { 'api-key': options.apiKey! };
     });
   }
 }
@@ -351,9 +348,9 @@ export function rateLimitDelayMs(input: {
 }
 
 function hintedDelayMs(headers: Headers, now: number): number | null {
-  const millis = delayNumber(headers.get("retry-after-ms"), 1);
+  const millis = delayNumber(headers.get('retry-after-ms'), 1);
   if (millis !== null) return millis;
-  const retryAfter = headers.get("retry-after");
+  const retryAfter = headers.get('retry-after');
   if (retryAfter !== null) {
     const seconds = delayNumber(retryAfter, 1000);
     if (seconds !== null) return seconds;
@@ -362,7 +359,7 @@ function hintedDelayMs(headers: Headers, now: number): number | null {
   }
   let reset: number | null = null;
   headers.forEach((value, name) => {
-    if (!name.toLowerCase().startsWith("x-ratelimit-reset")) return;
+    if (!name.toLowerCase().startsWith('x-ratelimit-reset')) return;
     const wait = delayNumber(value, 1000);
     if (wait === null) return;
     reset = reset === null ? wait : Math.max(reset, wait);
@@ -372,7 +369,7 @@ function hintedDelayMs(headers: Headers, now: number): number | null {
 
 function delayNumber(value: string | null, scale: number): number | null {
   if (value === null) return null;
-  const trimmed = value.trim().replace(/s$/i, "");
+  const trimmed = value.trim().replace(/s$/i, '');
   if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return null;
   const parsed = Number(trimmed);
   if (!Number.isFinite(parsed) || parsed < 0) return null;
@@ -396,33 +393,25 @@ function retryAfterMsFrom(response: Response): number | null {
 
 /** Only a short token is copied. Response bodies and headers stay out of the message. */
 function incompleteReason(body: unknown): string | null {
-  if (!body || typeof body !== "object") return null;
+  if (!body || typeof body !== 'object') return null;
   const details = (body as { incomplete_details?: unknown }).incomplete_details;
-  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
   const reason = (details as { reason?: unknown }).reason;
-  if (typeof reason !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(reason)) return null;
+  if (typeof reason !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(reason)) return null;
   return reason;
 }
 
 function countUsage(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? value
-    : null;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 export function readUsage(body: unknown): ResponseUsage {
-  const usage =
-    body && typeof body === "object"
-      ? (body as { usage?: unknown }).usage
-      : undefined;
-  if (!usage || typeof usage !== "object")
-    return { inputTokens: null, outputTokens: null, cachedInputTokens: null };
+  const usage = body && typeof body === 'object' ? (body as { usage?: unknown }).usage : undefined;
+  if (!usage || typeof usage !== 'object') return { inputTokens: null, outputTokens: null, cachedInputTokens: null };
   const record = usage as Record<string, unknown>;
   const details = record.input_tokens_details;
   const cached =
-    details && typeof details === "object"
-      ? countUsage((details as Record<string, unknown>).cached_tokens)
-      : null;
+    details && typeof details === 'object' ? countUsage((details as Record<string, unknown>).cached_tokens) : null;
   return {
     inputTokens: countUsage(record.input_tokens),
     outputTokens: countUsage(record.output_tokens),
@@ -442,23 +431,22 @@ async function readJsonAllowingFailure(response: Response, signal: AbortSignal):
 }
 
 function readJsonBody(response: Response, signal: AbortSignal): Promise<unknown> {
-  return readResponseText(response, signal).then((text) => (text ? JSON.parse(text) : null));
+  return readResponseText(response, signal).then(text => (text ? JSON.parse(text) : null));
 }
 
 function readResponseText(response: Response, signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const onAbort = () =>
-      reject(signal.reason instanceof Error ? signal.reason : new Error("Cancelled."));
-    signal.addEventListener("abort", onAbort, { once: true });
+    const onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error('Cancelled.'));
+    signal.addEventListener('abort', onAbort, { once: true });
     response.text().then(
-      (text) => {
-        signal.removeEventListener("abort", onAbort);
+      text => {
+        signal.removeEventListener('abort', onAbort);
         if (signal.aborted) onAbort();
         else resolve(text);
       },
       (error: unknown) => {
-        signal.removeEventListener("abort", onAbort);
+        signal.removeEventListener('abort', onAbort);
         reject(error);
       },
     );

@@ -1,13 +1,7 @@
-import { readFileSync } from "node:fs";
-import type { FeedbackLoop } from "./feedback-loop.js";
-import type {
-  ControlRecord,
-  JsonObject,
-  JsonValue,
-  PageOptions,
-  ArtifactBaseline,
-} from "./contracts.js";
-import type { StoreTransaction } from "./store.js";
+import { readFileSync } from 'node:fs';
+import type { FeedbackLoop } from './feedback-loop.js';
+import type { ControlRecord, JsonObject, JsonValue, PageOptions, ArtifactBaseline } from './contracts.js';
+import type { StoreTransaction } from './store.js';
 import type {
   CallbackContext,
   Comparison,
@@ -18,7 +12,7 @@ import type {
   Observation,
   RunState,
   TickResult,
-} from "./improvement-contracts.js";
+} from './improvement-contracts.js';
 import {
   compare,
   minimumCertifiableAuditUnits,
@@ -26,8 +20,8 @@ import {
   prepareDataset,
   validateChange,
   validatePolicy,
-} from "./improvement-evidence.js";
-import { redactCapture } from "./integrations/privacy.js";
+} from './improvement-evidence.js';
+import { redactCapture } from './integrations/privacy.js';
 import {
   cancellable,
   clone,
@@ -40,36 +34,30 @@ import {
   nonempty,
   object,
   timestamp,
-} from "./utils.js";
+} from './utils.js';
 
-const terminal: RunState[] = [
-  "completed",
-  "no_improvement",
-  "failed",
-  "timed_out",
-  "rolled_back",
-];
+const terminal: RunState[] = ['completed', 'no_improvement', 'failed', 'timed_out', 'rolled_back'];
 const states: RunState[] = [
-  "waiting_for_evidence",
-  "proposing",
-  "evaluating",
-  "selected",
-  "deploying",
-  "observing",
-  "completed",
-  "no_improvement",
-  "paused",
-  "failed",
-  "timed_out",
-  "reconciliation_required",
-  "rolling_back",
-  "rolled_back",
+  'waiting_for_evidence',
+  'proposing',
+  'evaluating',
+  'selected',
+  'deploying',
+  'observing',
+  'completed',
+  'no_improvement',
+  'paused',
+  'failed',
+  'timed_out',
+  'reconciliation_required',
+  'rolling_back',
+  'rolled_back',
 ];
 const DEFAULT_STEP_MS = 120_000;
 const DEFAULT_TICK_MS = 600_000;
 const MAX_STEP_MS = 7_200_000;
 const MAX_TICK_MS = 7_260_000;
-const FAILURE_DETAIL_UNAVAILABLE = "[detail unavailable]";
+const FAILURE_DETAIL_UNAVAILABLE = '[detail unavailable]';
 
 interface FailureDetailRuleFile {
   inputMax: number;
@@ -78,23 +66,19 @@ interface FailureDetailRuleFile {
 }
 
 const failureDetailRuleFile = JSON.parse(
-  readFileSync(new URL("./failure-detail-rules.json", import.meta.url), "utf8"),
+  readFileSync(new URL('./failure-detail-rules.json', import.meta.url), 'utf8'),
 ) as FailureDetailRuleFile;
 const failureDetailRules = failureDetailRuleFile.rules.map(
-  (rule) => [new RegExp(rule.pattern, rule.flags), rule.replace] as const,
+  rule => [new RegExp(rule.pattern, rule.flags), rule.replace] as const,
 );
-const failureDetailSpace =
-  /[\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/g;
+const failureDetailSpace = /[\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/g;
 
 /** Sanitize error text, then truncate. */
 export function failureDetailText(text: string): string {
-  const bounded =
-    text.length > failureDetailRuleFile.inputMax
-      ? text.slice(0, failureDetailRuleFile.inputMax)
-      : text;
-  const normalized = bounded.replace(failureDetailSpace, " ");
+  const bounded = text.length > failureDetailRuleFile.inputMax ? text.slice(0, failureDetailRuleFile.inputMax) : text;
+  const normalized = bounded.replace(failureDetailSpace, ' ');
   const captured = redactCapture(normalized);
-  const base = typeof captured === "string" ? captured : normalized;
+  const base = typeof captured === 'string' ? captured : normalized;
   const redacted = failureDetailRules
     .reduce((value, [pattern, replace]) => value.replace(pattern, replace), base)
     .trim();
@@ -115,7 +99,7 @@ function exceptionText(error: unknown): string {
     visit((value as { cause?: unknown }).cause);
   };
   visit(error);
-  return parts.join("\n");
+  return parts.join('\n');
 }
 
 function safeDetail(text: string): string {
@@ -140,28 +124,23 @@ function failureDetailFrom(error: unknown): string | undefined {
 /** First pre-deployment timeout is retried. The next one ends the run as timed_out. */
 const STEP_TIMEOUT_ATTEMPTS = 2;
 const asJson = (x: unknown) => x as JsonObject;
-const plus = (time: string, ms: number) =>
-  new Date(Date.parse(time) + ms).toISOString();
+const plus = (time: string, ms: number) => new Date(Date.parse(time) + ms).toISOString();
 
 /** No background work. One tick advances one durable phase; application owns scheduling. */
-const IMPROVEMENT_DISABLE_OFF = new Set(["0", "false", "no", "off"]);
-const AMBIGUOUS_DISABLE = new Set(["enable", "enabled"]);
+const IMPROVEMENT_DISABLE_OFF = new Set(['0', 'false', 'no', 'off']);
+const AMBIGUOUS_DISABLE = new Set(['enable', 'enabled']);
 
 /** Any non-empty LOOPITER_DISABLE except 0, false, no, or off pauses improvement work. */
-export function improvementWorkDisabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  const raw = (env.LOOPITER_DISABLE ?? "").trim().toLowerCase();
+export function improvementWorkDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.LOOPITER_DISABLE ?? '').trim().toLowerCase();
   if (!raw) return false;
   return !IMPROVEMENT_DISABLE_OFF.has(raw);
 }
 
 let ambiguousDisableWarned = false;
 /** `enable` and `enabled` still disable. Warn once per process so that is not silent. */
-export function warnAmbiguousImprovementDisable(
-  env: NodeJS.ProcessEnv = process.env,
-): void {
-  const shown = (env.LOOPITER_DISABLE ?? "").trim();
+export function warnAmbiguousImprovementDisable(env: NodeJS.ProcessEnv = process.env): void {
+  const shown = (env.LOOPITER_DISABLE ?? '').trim();
   const raw = shown.toLowerCase();
   if (!AMBIGUOUS_DISABLE.has(raw) || ambiguousDisableWarned) return;
   ambiguousDisableWarned = true;
@@ -181,81 +160,43 @@ export class ImprovementController {
     readonly loop: FeedbackLoop,
     options: ImprovementControllerOptions,
   ) {
-    if ("experimentalAutoApply" in options || "autonomy" in options)
-      fail(
-        "migration_required",
-        "Use mode and the explicit selfImproving flag.",
-      );
-    if (
-      options.selfImproving !== undefined &&
-      typeof options.selfImproving !== "boolean"
-    )
-      fail("invalid_input", "selfImproving must be boolean.");
-    if (options.mode === null) fail("invalid_input", "Invalid mode.");
-    const mode = options.mode ?? "autonomous";
+    if ('experimentalAutoApply' in options || 'autonomy' in options)
+      fail('migration_required', 'Use mode and the explicit selfImproving flag.');
+    if (options.selfImproving !== undefined && typeof options.selfImproving !== 'boolean')
+      fail('invalid_input', 'selfImproving must be boolean.');
+    if (options.mode === null) fail('invalid_input', 'Invalid mode.');
+    const mode = options.mode ?? 'autonomous';
     const selfImproving = options.selfImproving ?? true;
-    enumeration(
-      mode,
-      ["observe", "recommend", "experiment", "autonomous"],
-      "mode",
-    );
+    enumeration(mode, ['observe', 'recommend', 'experiment', 'autonomous'], 'mode');
     this.options = { ...options, mode, selfImproving };
-    this.callbackMs =
-      options.stepTimeoutMs ?? options.callbackTimeoutMs ?? DEFAULT_STEP_MS;
-    this.tickMs =
-      options.tickTimeoutMs ?? Math.max(DEFAULT_TICK_MS, this.callbackMs + 1000);
-    integer(this.callbackMs, "stepTimeoutMs");
-    integer(this.tickMs, "tickTimeoutMs");
+    this.callbackMs = options.stepTimeoutMs ?? options.callbackTimeoutMs ?? DEFAULT_STEP_MS;
+    this.tickMs = options.tickTimeoutMs ?? Math.max(DEFAULT_TICK_MS, this.callbackMs + 1000);
+    integer(this.callbackMs, 'stepTimeoutMs');
+    integer(this.tickMs, 'tickTimeoutMs');
     if (this.callbackMs > MAX_STEP_MS || this.tickMs > MAX_TICK_MS)
-      fail("invalid_input", "Step timeout cannot exceed 2 hours.");
-    if (this.tickMs < this.callbackMs)
-      fail("invalid_input", "Tick timeout must cover the step timeout.");
-    if (!Array.isArray(options.workflows) || !options.workflows.length)
-      fail("invalid_input", "Workflows required.");
+      fail('invalid_input', 'Step timeout cannot exceed 2 hours.');
+    if (this.tickMs < this.callbackMs) fail('invalid_input', 'Tick timeout must cover the step timeout.');
+    if (!Array.isArray(options.workflows) || !options.workflows.length) fail('invalid_input', 'Workflows required.');
     for (const raw of options.workflows) {
       const w = { ...raw, policy: clone(raw.policy) };
-      for (const k of [
-        "id",
-        "version",
-        "optimizerVersion",
-        "evaluatorVersion",
-      ] as const)
-        nonempty(w[k], k);
+      for (const k of ['id', 'version', 'optimizerVersion', 'evaluatorVersion'] as const) nonempty(w[k], k);
       validatePolicy(w.policy);
-      if (
-        w.evaluateBatch !== undefined &&
-        typeof w.evaluateBatch !== "function"
-      )
-        fail("invalid_adapter", "Invalid evaluateBatch.");
+      if (w.evaluateBatch !== undefined && typeof w.evaluateBatch !== 'function')
+        fail('invalid_adapter', 'Invalid evaluateBatch.');
       if (w.evaluationBatchSize !== undefined) {
-        integer(w.evaluationBatchSize, "evaluationBatchSize");
-        if (w.evaluationBatchSize > 32)
-          fail("invalid_input", "Maximum batch size is 32.");
+        integer(w.evaluationBatchSize, 'evaluationBatchSize');
+        if (w.evaluationBatchSize > 32) fail('invalid_input', 'Maximum batch size is 32.');
       }
-      for (const k of [
-        "dataset",
-        "artifact",
-        "propose",
-        "evaluate",
-        "observe",
-      ] as const)
-        if (typeof w[k] !== "function")
-          fail("invalid_adapter", `Missing ${k}.`);
-      for (const k of ["apply", "inspect", "rollback"] as const)
-        if (typeof w.deployment?.[k] !== "function")
-          fail("invalid_adapter", `Missing ${k}.`);
+      for (const k of ['dataset', 'artifact', 'propose', 'evaluate', 'observe'] as const)
+        if (typeof w[k] !== 'function') fail('invalid_adapter', `Missing ${k}.`);
+      for (const k of ['apply', 'inspect', 'rollback'] as const)
+        if (typeof w.deployment?.[k] !== 'function') fail('invalid_adapter', `Missing ${k}.`);
       if (
-        w.policy.rollout.mode === "canary" &&
-        (!w.rollout ||
-          typeof w.rollout.promote !== "function" ||
-          typeof w.rollout.inspect !== "function")
+        w.policy.rollout.mode === 'canary' &&
+        (!w.rollout || typeof w.rollout.promote !== 'function' || typeof w.rollout.inspect !== 'function')
       )
-        fail(
-          "invalid_adapter",
-          "Canary requires durable promotion and inspection.",
-        );
-      if (this.workflows.has(w.id))
-        fail("invalid_input", "Duplicate workflow ID.");
+        fail('invalid_adapter', 'Canary requires durable promotion and inspection.');
+      if (this.workflows.has(w.id)) fail('invalid_input', 'Duplicate workflow ID.');
       this.workflows.set(w.id, w);
       this.definitions.set(
         w.id,
@@ -270,23 +211,21 @@ export class ImprovementController {
     }
   }
   private workflow(key: string) {
-    return (
-      this.workflows.get(key) ?? fail("not_found", "Workflow not configured.")
-    );
+    return this.workflows.get(key) ?? fail('not_found', 'Workflow not configured.');
   }
   private targetKey(w: ImprovementWorkflow) {
     return `target:${hash(w.policy.target)}`;
   }
   private async read(
     tx: StoreTransaction,
-    kind: "runs" | "operations" | "budgets" | "coordination" | "observations",
+    kind: 'runs' | 'operations' | 'budgets' | 'coordination' | 'observations',
     key: string,
   ) {
     return this.loop.read(tx, kind, key);
   }
   private async put(
     tx: StoreTransaction,
-    kind: "runs" | "operations" | "budgets" | "coordination" | "observations",
+    kind: 'runs' | 'operations' | 'budgets' | 'coordination' | 'observations',
     key: string,
     data: unknown,
   ) {
@@ -308,24 +247,23 @@ export class ImprovementController {
   }
   private parse(row: ControlRecord): ImprovementRun {
     const d = row.data;
-    enumeration(d.state, states, "stored run state");
-    nonempty(d.workflowId, "workflowId");
-    nonempty(d.definitionHash, "definitionHash");
-    nonempty(d.decisionKey, "decisionKey");
-    timestamp(d.leaseUntil, "leaseUntil");
-    if (d.leaseOwner !== null) nonempty(d.leaseOwner, "leaseOwner");
-    integer(d.proposalCalls, "proposalCalls", 0);
-    if (d.stepTimeouts !== undefined) integer(d.stepTimeouts, "stepTimeouts", 0);
-    if (!Array.isArray(d.candidateIds))
-      fail("integrity_error", "Invalid candidate references.");
-    d.candidateIds.forEach((v) => nonempty(v, "candidateId"));
-    object(d.comparisons, "comparisons");
+    enumeration(d.state, states, 'stored run state');
+    nonempty(d.workflowId, 'workflowId');
+    nonempty(d.definitionHash, 'definitionHash');
+    nonempty(d.decisionKey, 'decisionKey');
+    timestamp(d.leaseUntil, 'leaseUntil');
+    if (d.leaseOwner !== null) nonempty(d.leaseOwner, 'leaseOwner');
+    integer(d.proposalCalls, 'proposalCalls', 0);
+    if (d.stepTimeouts !== undefined) integer(d.stepTimeouts, 'stepTimeouts', 0);
+    if (!Array.isArray(d.candidateIds)) fail('integrity_error', 'Invalid candidate references.');
+    d.candidateIds.forEach(v => nonempty(v, 'candidateId'));
+    object(d.comparisons, 'comparisons');
     this.baseline(d.baseline);
     return row as unknown as ImprovementRun;
   }
   async getRun(key: string): Promise<ImprovementRun | undefined> {
-    return this.loop.store.transaction(this.loop.namespace, async (tx) => {
-      const row = await this.read(tx, "runs", key);
+    return this.loop.store.transaction(this.loop.namespace, async tx => {
+      const row = await this.read(tx, 'runs', key);
       if (!row) return undefined;
       const run = this.parse(row);
       if (
@@ -339,7 +277,7 @@ export class ImprovementController {
           }) ||
         run.id !== `run_${run.data.decisionKey}`
       )
-        fail("integrity_error", "Run evidence/baseline identity was altered.");
+        fail('integrity_error', 'Run evidence/baseline identity was altered.');
       const accounting = {
         modelRequests: 0,
         chargedOrReservedTokens: 0,
@@ -347,42 +285,38 @@ export class ImprovementController {
         outstandingOperations: [] as string[],
       };
       for (const oid of run.data.operationIds ?? []) {
-        const op = await this.read(tx, "operations", oid);
-        if (!op) fail("integrity_error", "Run operation missing.");
+        const op = await this.read(tx, 'operations', oid);
+        if (!op) fail('integrity_error', 'Run operation missing.');
         accounting.modelRequests += Number(op.data.requests ?? 0);
-        accounting.chargedOrReservedTokens += Number(
-          op.data.chargedTokens ?? op.data.tokens ?? 0,
-        );
-        if (op.data.status !== "completed")
-          accounting.outstandingOperations.push(oid);
+        accounting.chargedOrReservedTokens += Number(op.data.chargedTokens ?? op.data.tokens ?? 0);
+        if (op.data.status !== 'completed') accounting.outstandingOperations.push(oid);
       }
-      if (await this.read(tx, "operations", `${key}:deployment_budget`))
-        accounting.deployments = 1;
+      if (await this.read(tx, 'operations', `${key}:deployment_budget`)) accounting.deployments = 1;
       return { ...run, accounting };
     });
   }
   async listRuns(options: PageOptions = {}) {
-    const p = await this.loop.list("runs", options);
-    return { ...p, items: p.items.map((r) => this.parse(r)) };
+    const p = await this.loop.list('runs', options);
+    return { ...p, items: p.items.map(r => this.parse(r)) };
   }
   async pause(key: string, reason: string) {
     this.workflow(key);
-    nonempty(reason, "reason");
-    await this.loop.store.transaction(this.loop.namespace, async (tx) => {
-      const old = await this.read(tx, "coordination", `workflow:${key}`);
-      await this.put(tx, "coordination", `workflow:${key}`, {
+    nonempty(reason, 'reason');
+    await this.loop.store.transaction(this.loop.namespace, async tx => {
+      const old = await this.read(tx, 'coordination', `workflow:${key}`);
+      await this.put(tx, 'coordination', `workflow:${key}`, {
         ...old?.data,
         paused: true,
         reason,
       });
       const now = this.loop.now();
-      await tx.insert("events", {
-        id: id("event"),
+      await tx.insert('events', {
+        id: id('event'),
         namespace: this.loop.namespace,
         revision: 1,
         createdAt: now,
         updatedAt: now,
-        type: "improvement.administrative_pause",
+        type: 'improvement.administrative_pause',
         subjectId: key,
         details: { reason },
       });
@@ -390,44 +324,40 @@ export class ImprovementController {
   }
   async resume(key: string) {
     const w = this.workflow(key);
-    await this.loop.store.transaction(this.loop.namespace, async (tx) => {
-      const old = await this.read(tx, "coordination", `workflow:${key}`);
-      await this.put(tx, "coordination", `workflow:${key}`, {
+    await this.loop.store.transaction(this.loop.namespace, async tx => {
+      const old = await this.read(tx, 'coordination', `workflow:${key}`);
+      await this.put(tx, 'coordination', `workflow:${key}`, {
         ...old?.data,
         paused: false,
-        reason: "explicit_resume",
+        reason: 'explicit_resume',
       });
-      const target = await this.read(tx, "coordination", this.targetKey(w));
+      const target = await this.read(tx, 'coordination', this.targetKey(w));
       if (target && !target.data.activeRun)
-        await this.put(tx, "coordination", this.targetKey(w), {
+        await this.put(tx, 'coordination', this.targetKey(w), {
           ...target.data,
           consecutiveFailures: 0,
           consecutiveTimeouts: 0,
         });
       const now = this.loop.now();
-      await tx.insert("events", {
-        id: id("event"),
+      await tx.insert('events', {
+        id: id('event'),
         namespace: this.loop.namespace,
         revision: 1,
         createdAt: now,
         updatedAt: now,
-        type: "improvement.administrative_resume",
+        type: 'improvement.administrative_resume',
         subjectId: key,
         details: {},
       });
     });
   }
   private async paused(tx: StoreTransaction, w: ImprovementWorkflow) {
-    return (
-      (await this.read(tx, "coordination", `workflow:${w.id}`))?.data.paused ===
-      true
-    );
+    return (await this.read(tx, 'coordination', `workflow:${w.id}`))?.data.paused === true;
   }
   private baseline(raw: unknown): asserts raw is ArtifactBaseline {
-    object(raw, "artifact");
-    if (raw.artifactVersion !== null)
-      nonempty(raw.artifactVersion, "artifactVersion");
-    nonempty(raw.configurationHash, "configurationHash");
+    object(raw, 'artifact');
+    if (raw.artifactVersion !== null) nonempty(raw.artifactVersion, 'artifactVersion');
+    nonempty(raw.configurationHash, 'configurationHash');
   }
   private configuration(w: ImprovementWorkflow) {
     return Object.freeze({
@@ -445,16 +375,12 @@ export class ImprovementController {
     signal: AbortSignal,
   ): Promise<T> {
     return cancellable(
-      async (inner) => {
+      async inner => {
         const value = await fn({
           signal: inner,
-          operationId: id("read"),
+          operationId: id('read'),
           configuration: this.configuration(w),
-          meter: async () =>
-            fail(
-              "invalid_adapter",
-              "Read-only dataset/artifact callbacks cannot call models.",
-            ),
+          meter: async () => fail('invalid_adapter', 'Read-only dataset/artifact callbacks cannot call models.'),
         });
         const clean = await this.loop.prepareControllerPayload(value);
         inner.throwIfAborted();
@@ -468,9 +394,7 @@ export class ImprovementController {
     return `${w.id}:${this.loop.now().slice(0, 10)}`;
   }
   private async budget(w: ImprovementWorkflow) {
-    const r = await this.loop.store.transaction(this.loop.namespace, (tx) =>
-      this.read(tx, "budgets", this.budgetKey(w)),
-    );
+    const r = await this.loop.store.transaction(this.loop.namespace, tx => this.read(tx, 'budgets', this.budgetKey(w)));
     return {
       modelRequests: Number(r?.data.modelRequests ?? 0),
       tokens: Number(r?.data.tokens ?? 0),
@@ -485,70 +409,54 @@ export class ImprovementController {
     deployments = 0,
   ) {
     const key = this.budgetKey(w),
-      old = (await this.read(tx, "budgets", key))?.data ?? {};
+      old = (await this.read(tx, 'budgets', key))?.data ?? {};
     const next = {
       modelRequests: Number(old.modelRequests ?? 0) + requests,
       tokens: Number(old.tokens ?? 0) + tokens,
       deployments: Number(old.deployments ?? 0) + deployments,
     };
-    for (const k of ["modelRequests", "tokens", "deployments"] as const) {
+    for (const k of ['modelRequests', 'tokens', 'deployments'] as const) {
       integer(next[k], k, 0);
-      if (next[k] > w.policy.daily[k])
-        fail("budget_exhausted", `Daily ${k} exhausted.`);
+      if (next[k] > w.policy.daily[k]) fail('budget_exhausted', `Daily ${k} exhausted.`);
     }
-    await this.put(tx, "budgets", key, next);
+    await this.put(tx, 'budgets', key, next);
     return key;
   }
-  private async owned(
-    tx: StoreTransaction,
-    runId: string,
-    owner: string,
-    allowPaused = false,
-  ) {
-    const row = await this.read(tx, "runs", runId);
-    if (!row) fail("not_found", "Run missing.");
+  private async owned(tx: StoreTransaction, runId: string, owner: string, allowPaused = false) {
+    const row = await this.read(tx, 'runs', runId);
+    if (!row) fail('not_found', 'Run missing.');
     const run = this.parse(row),
       w = this.workflow(run.data.workflowId);
     if (run.data.leaseOwner !== owner || run.data.leaseUntil <= this.loop.now())
-      fail("lease_lost", "Run lease lost; late result discarded.");
-    if (!allowPaused && (await this.paused(tx, w)))
-      fail("paused", "Workflow paused.");
+      fail('lease_lost', 'Run lease lost; late result discarded.');
+    if (!allowPaused && (await this.paused(tx, w))) fail('paused', 'Workflow paused.');
     if (!allowPaused && run.data.definitionHash !== this.definitions.get(w.id))
-      fail("policy_changed", "Run configuration changed.");
+      fail('policy_changed', 'Run configuration changed.');
     if (!allowPaused) {
-      const config = (await this.read(tx, "coordination", `workflow:${w.id}`))
-        ?.data;
+      const config = (await this.read(tx, 'coordination', `workflow:${w.id}`))?.data;
       if (
         config?.definitionHash !== this.definitions.get(w.id) ||
         config?.mode !== this.options.mode ||
         config?.selfImproving !== this.options.selfImproving
       )
-        fail(
-          "policy_changed",
-          "A later invocation changed controller authorization.",
-        );
+        fail('policy_changed', 'A later invocation changed controller authorization.');
     }
     return run;
   }
-  private async save(
-    runId: string,
-    owner: string,
-    patch: Partial<ImprovementRunData>,
-    allowPaused = false,
-  ) {
-    return this.loop.store.transaction(this.loop.namespace, async (tx) => {
+  private async save(runId: string, owner: string, patch: Partial<ImprovementRunData>, allowPaused = false) {
+    return this.loop.store.transaction(this.loop.namespace, async tx => {
       const run = await this.owned(tx, runId, owner, allowPaused),
         data = { ...run.data, ...clone(patch) };
       if (
-        !Object.hasOwn(patch, "detail") &&
-        data.state !== "failed" &&
-        data.reason !== "callback_failed" &&
-        data.reason !== "cancelled"
+        !Object.hasOwn(patch, 'detail') &&
+        data.state !== 'failed' &&
+        data.reason !== 'callback_failed' &&
+        data.reason !== 'cancelled'
       )
         delete data.detail;
-      const row = await this.put(tx, "runs", runId, data);
+      const row = await this.put(tx, 'runs', runId, data);
       const event = {
-        id: id("event"),
+        id: id('event'),
         namespace: this.loop.namespace,
         revision: 1,
         createdAt: this.loop.now(),
@@ -557,21 +465,21 @@ export class ImprovementController {
         subjectId: runId,
         details: { reason: data.reason },
       };
-      await tx.insert("events", event);
+      await tx.insert('events', event);
       if (terminal.includes(data.state)) {
         const w = this.workflow(data.workflowId),
           key = this.targetKey(w),
-          lock = await this.read(tx, "coordination", key);
+          lock = await this.read(tx, 'coordination', key);
         if (lock?.data.activeRun === runId) {
-          const timedOut = data.state === "timed_out";
+          const timedOut = data.state === 'timed_out';
           const consecutiveFailures =
-            data.state === "completed"
+            data.state === 'completed'
               ? 0
               : timedOut
                 ? Number(lock.data.consecutiveFailures ?? 0)
                 : Number(lock.data.consecutiveFailures ?? 0) + 1;
           const consecutiveTimeouts =
-            data.state === "completed"
+            data.state === 'completed'
               ? 0
               : timedOut
                 ? Number(lock.data.consecutiveTimeouts ?? 0) + 1
@@ -580,7 +488,7 @@ export class ImprovementController {
             ...((lock.data.previousOutcomes ?? []) as JsonValue[]),
             { state: data.state, reason: data.reason },
           ].slice(-10);
-          await this.put(tx, "coordination", key, {
+          await this.put(tx, 'coordination', key, {
             ...lock.data,
             activeRun: null,
             consecutiveFailures,
@@ -604,44 +512,33 @@ export class ImprovementController {
     const w = this.workflow(run.data.workflowId);
     let operationId = `${run.id}:${kind}`;
     let cached: JsonValue | undefined;
-    await this.loop.store.transaction(this.loop.namespace, async (tx) => {
+    await this.loop.store.transaction(this.loop.namespace, async tx => {
       const current = await this.owned(tx, run.id, owner, allowPaused);
-      let old = await this.read(tx, "operations", operationId);
+      let old = await this.read(tx, 'operations', operationId);
       let attempt = 0;
-      while (old?.data.status === "timed_out") {
+      while (old?.data.status === 'timed_out') {
         attempt += 1;
-        if (attempt > STEP_TIMEOUT_ATTEMPTS)
-          fail(
-            "timeout_retries_exhausted",
-            "Step timeout retries are exhausted.",
-          );
+        if (attempt > STEP_TIMEOUT_ATTEMPTS) fail('timeout_retries_exhausted', 'Step timeout retries are exhausted.');
         operationId = `${run.id}:${kind}:retry:${attempt}`;
-        old = await this.read(tx, "operations", operationId);
+        old = await this.read(tx, 'operations', operationId);
       }
       if (old) {
-        if (old.data.status === "completed") {
-          if (!Object.hasOwn(old.data, "result"))
-            fail(
-              "integrity_error",
-              "Completed callback has no durable result.",
-            );
+        if (old.data.status === 'completed') {
+          if (!Object.hasOwn(old.data, 'result')) fail('integrity_error', 'Completed callback has no durable result.');
           cached = old.data.result;
           return;
         }
-        fail(
-          "ambiguous_callback",
-          "Callback was dispatched previously; not replayed.",
-        );
+        fail('ambiguous_callback', 'Callback was dispatched previously; not replayed.');
       }
-      await this.put(tx, "operations", operationId, {
+      await this.put(tx, 'operations', operationId, {
         runId: run.id,
         kind,
-        status: "pending",
+        status: 'pending',
         requests: 0,
         tokens: 0,
         chargedTokens: 0,
       });
-      await this.put(tx, "runs", run.id, {
+      await this.put(tx, 'runs', run.id, {
         ...current.data,
         operationIds: [...(current.data.operationIds ?? []), operationId],
       });
@@ -649,71 +546,58 @@ export class ImprovementController {
     if (cached !== undefined) return clone(cached) as T;
     try {
       const result = await cancellable(
-        async (inner) => {
+        async inner => {
           const context: CallbackContext = {
             operationId,
             signal: inner,
             configuration: this.configuration(w),
-            meter: async <TValue>(
-              maxTokens: number,
-              call: () => Promise<{ value: TValue; tokens: number | null }>,
-            ) => {
-              integer(maxTokens, "maximum tokens", 0);
+            meter: async <TValue>(maxTokens: number, call: () => Promise<{ value: TValue; tokens: number | null }>) => {
+              integer(maxTokens, 'maximum tokens', 0);
               inner.throwIfAborted();
-              const day = await this.loop.store.transaction(
-                this.loop.namespace,
-                async (tx) => {
-                  await this.owned(tx, run.id, owner, allowPaused);
-                  const op = (await this.read(tx, "operations", operationId))!;
-                  const requests = Number(op.data.requests) + 1,
-                    tokens = Number(op.data.tokens) + maxTokens;
-                  integer(requests, "operation requests");
-                  integer(tokens, "operation tokens", 0);
-                  integer(op.data.chargedTokens, "charged tokens", 0);
-                  if (
-                    requests > w.policy.callbackReservation.modelRequests ||
-                    tokens > w.policy.callbackReservation.tokens
-                  )
-                    fail("budget_exhausted", "Callback budget exhausted.");
-                  const day = await this.reserve(tx, w, 1, maxTokens);
-                  await this.put(tx, "operations", operationId, {
-                    ...op.data,
-                    requests,
-                    tokens,
-                    chargedTokens:
-                      Number(op.data.chargedTokens ?? 0) + maxTokens,
-                  });
-                  return day;
-                },
-              );
+              const day = await this.loop.store.transaction(this.loop.namespace, async tx => {
+                await this.owned(tx, run.id, owner, allowPaused);
+                const op = (await this.read(tx, 'operations', operationId))!;
+                const requests = Number(op.data.requests) + 1,
+                  tokens = Number(op.data.tokens) + maxTokens;
+                integer(requests, 'operation requests');
+                integer(tokens, 'operation tokens', 0);
+                integer(op.data.chargedTokens, 'charged tokens', 0);
+                if (
+                  requests > w.policy.callbackReservation.modelRequests ||
+                  tokens > w.policy.callbackReservation.tokens
+                )
+                  fail('budget_exhausted', 'Callback budget exhausted.');
+                const day = await this.reserve(tx, w, 1, maxTokens);
+                await this.put(tx, 'operations', operationId, {
+                  ...op.data,
+                  requests,
+                  tokens,
+                  chargedTokens: Number(op.data.chargedTokens ?? 0) + maxTokens,
+                });
+                return day;
+              });
               const output = await call();
               inner.throwIfAborted();
               if (output.tokens !== null) {
-                integer(output.tokens, "actual tokens", 0);
-                await this.loop.store.transaction(
-                  this.loop.namespace,
-                  async (tx) => {
-                    await this.owned(tx, run.id, owner, allowPaused);
-                    const b = (await this.read(tx, "budgets", day))!,
-                      op = (await this.read(tx, "operations", operationId))!;
-                    await this.put(tx, "budgets", day, {
-                      ...b.data,
-                      tokens:
-                        Number(b.data.tokens) - (maxTokens - output.tokens!),
-                    });
-                    await this.put(tx, "operations", operationId, {
-                      ...op.data,
-                      chargedTokens:
-                        Number(op.data.chargedTokens) -
-                        (maxTokens - output.tokens!),
-                    });
-                  },
-                );
+                integer(output.tokens, 'actual tokens', 0);
+                await this.loop.store.transaction(this.loop.namespace, async tx => {
+                  await this.owned(tx, run.id, owner, allowPaused);
+                  const b = (await this.read(tx, 'budgets', day))!,
+                    op = (await this.read(tx, 'operations', operationId))!;
+                  await this.put(tx, 'budgets', day, {
+                    ...b.data,
+                    tokens: Number(b.data.tokens) - (maxTokens - output.tokens!),
+                  });
+                  await this.put(tx, 'operations', operationId, {
+                    ...op.data,
+                    chargedTokens: Number(op.data.chargedTokens) - (maxTokens - output.tokens!),
+                  });
+                });
               }
               if (output.tokens !== null && output.tokens > maxTokens)
                 fail(
-                  "budget_contract",
-                  "Provider exceeded reserved maximum; actual usage charged and result rejected.",
+                  'budget_contract',
+                  'Provider exceeded reserved maximum; actual usage charged and result rejected.',
                 );
               return output.value;
             },
@@ -723,12 +607,12 @@ export class ImprovementController {
         signal,
         this.callbackMs,
       );
-      await this.loop.store.transaction(this.loop.namespace, async (tx) => {
+      await this.loop.store.transaction(this.loop.namespace, async tx => {
         await this.owned(tx, run.id, owner, allowPaused);
-        const op = (await this.read(tx, "operations", operationId))!;
-        await this.put(tx, "operations", operationId, {
+        const op = (await this.read(tx, 'operations', operationId))!;
+        await this.put(tx, 'operations', operationId, {
           ...op.data,
-          status: "completed",
+          status: 'completed',
           result: result as JsonValue,
         });
       });
@@ -736,14 +620,14 @@ export class ImprovementController {
     } catch (error) {
       // A timeout closes this attempt so a bounded retry can use a new id.
       // Crash, cancellation and a lost lease stay pending and are never replayed or refunded.
-      if ((error as { code?: unknown }).code === "timeout")
+      if ((error as { code?: unknown }).code === 'timeout')
         await this.loop.store
-          .transaction(this.loop.namespace, async (tx) => {
-            const op = await this.read(tx, "operations", operationId);
-            if (op?.data.status === "pending")
-              await this.put(tx, "operations", operationId, {
+          .transaction(this.loop.namespace, async tx => {
+            const op = await this.read(tx, 'operations', operationId);
+            if (op?.data.status === 'pending')
+              await this.put(tx, 'operations', operationId, {
                 ...op.data,
-                status: "timed_out",
+                status: 'timed_out',
               });
           })
           .catch(() => undefined);
@@ -751,13 +635,12 @@ export class ImprovementController {
     }
   }
   private async noteTimeout(w: ImprovementWorkflow): Promise<number> {
-    return this.loop.store.transaction(this.loop.namespace, async (tx) => {
+    return this.loop.store.transaction(this.loop.namespace, async tx => {
       const key = this.targetKey(w);
-      const lock = await this.read(tx, "coordination", key);
-      const consecutiveTimeouts =
-        Number(lock?.data.consecutiveTimeouts ?? 0) + 1;
-      integer(consecutiveTimeouts, "consecutiveTimeouts", 0);
-      await this.put(tx, "coordination", key, {
+      const lock = await this.read(tx, 'coordination', key);
+      const consecutiveTimeouts = Number(lock?.data.consecutiveTimeouts ?? 0) + 1;
+      integer(consecutiveTimeouts, 'consecutiveTimeouts', 0);
+      await this.put(tx, 'coordination', key, {
         ...lock?.data,
         consecutiveTimeouts,
       });
@@ -766,30 +649,28 @@ export class ImprovementController {
   }
   private undecided(run: ImprovementRun): boolean {
     return (
-      run.data.state === "timed_out" ||
-      (run.data.state === "failed" &&
-        ["cancelled", "timeout", "timed_out"].includes(run.data.reason))
+      run.data.state === 'timed_out' ||
+      (run.data.state === 'failed' && ['cancelled', 'timeout', 'timed_out'].includes(run.data.reason))
     );
   }
   private async retireUndecided(candidateIds: string[], reason: string) {
-    nonempty(reason, "reason");
+    nonempty(reason, 'reason');
     for (const cid of candidateIds) {
       const candidate = await this.loop.getCandidate(cid);
-      if (candidate?.status === "proposed")
-        await this.loop.rejectCandidate(cid, reason);
+      if (candidate?.status === 'proposed') await this.loop.rejectCandidate(cid, reason);
     }
   }
   private async retireStale() {
     let cursor: string | undefined;
     for (let page = 0; page < 20; page++) {
-      const listed = await this.loop.list("candidates", {
+      const listed = await this.loop.list('candidates', {
         limit: 100,
         ...(cursor ? { cursor } : {}),
       });
       for (const candidate of listed.items) {
-        if (candidate.status !== "proposed") continue;
+        if (candidate.status !== 'proposed') continue;
         const runId = candidate.metadata?.runId;
-        if (typeof runId !== "string" || !runId) continue;
+        if (typeof runId !== 'string' || !runId) continue;
         let run: ImprovementRun | undefined;
         try {
           run = await this.getRun(runId);
@@ -804,33 +685,16 @@ export class ImprovementController {
     }
   }
   /** A pure step timeout retries once, then ends as timed_out without a failure strike. */
-  private async recordStepTimeout(
-    rid: string,
-    owner: string,
-  ): Promise<boolean> {
+  private async recordStepTimeout(rid: string, owner: string): Promise<boolean> {
     const current = await this.getRun(rid);
     if (!current || current.data.leaseOwner !== owner) return false;
     const recovery =
       current.data.pendingPromotion ||
-      [
-        "deploying",
-        "rolling_back",
-        "reconciliation_required",
-        "observing",
-      ].includes(current.data.state);
-    if (
-      recovery ||
-      !["proposing", "evaluating", "selected"].includes(current.data.state)
-    )
-      return false;
+      ['deploying', 'rolling_back', 'reconciliation_required', 'observing'].includes(current.data.state);
+    if (recovery || !['proposing', 'evaluating', 'selected'].includes(current.data.state)) return false;
     const attempts = Number(current.data.stepTimeouts ?? 0) + 1;
     if (attempts < STEP_TIMEOUT_ATTEMPTS) {
-      await this.save(
-        rid,
-        owner,
-        { stepTimeouts: attempts, reason: "timed_out" },
-        true,
-      );
+      await this.save(rid, owner, { stepTimeouts: attempts, reason: 'timed_out' }, true);
       return true;
     }
     const saved = await this.save(
@@ -838,32 +702,27 @@ export class ImprovementController {
       owner,
       {
         stepTimeouts: attempts,
-        state: "timed_out",
-        reason: "timed_out",
+        state: 'timed_out',
+        reason: 'timed_out',
       },
       true,
     );
-    await this.retireUndecided(saved.data.candidateIds, "timed_out");
+    await this.retireUndecided(saved.data.candidateIds, 'timed_out');
     return true;
   }
   private async consumeAudit(
     run: ImprovementRun,
     owner: string,
-    rows: ImprovementRun["data"]["dataset"]["audit"] = run.data.dataset.audit,
+    rows: ImprovementRun['data']['dataset']['audit'] = run.data.dataset.audit,
   ) {
-    await this.loop.store.transaction(this.loop.namespace, async (tx) => {
+    await this.loop.store.transaction(this.loop.namespace, async tx => {
       await this.owned(tx, run.id, owner);
       for (const row of rows) {
-        for (const identity of [
-          `id:${row.id}`,
-          `episode:${row.episodeId}`,
-          `entity:${row.entityId}`,
-        ]) {
+        for (const identity of [`id:${row.id}`, `episode:${row.episodeId}`, `entity:${row.entityId}`]) {
           const key = `audit:${hash(identity)}`,
-            prior = await this.read(tx, "coordination", key);
-          if (prior && prior.data.runId !== run.id)
-            fail("audit_consumed", "Fresh audit data required.");
-          if (!prior) await this.put(tx, "coordination", key, { runId: run.id });
+            prior = await this.read(tx, 'coordination', key);
+          if (prior && prior.data.runId !== run.id) fail('audit_consumed', 'Fresh audit data required.');
+          if (!prior) await this.put(tx, 'coordination', key, { runId: run.id });
         }
       }
     });
@@ -875,15 +734,12 @@ export class ImprovementController {
     }
     const w = this.workflow(workflowId),
       mode = this.options.mode!;
-    const signal2 = AbortSignal.any([
-      ...(signal ? [signal] : []),
-      AbortSignal.timeout(this.tickMs),
-    ]);
-    const owner = id("worker");
+    const signal2 = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(this.tickMs)]);
+    const owner = id('worker');
     let run: ImprovementRun | undefined;
     const idle = async (
       reason: string,
-      state: RunState = "waiting_for_evidence",
+      state: RunState = 'waiting_for_evidence',
       next?: string,
     ): Promise<TickResult> => ({
       runId: null,
@@ -893,58 +749,48 @@ export class ImprovementController {
       budget: await this.budget(w),
       ...(next ? { nextEligibleAt: next } : {}),
     });
-    await this.loop.store.transaction(this.loop.namespace, async (tx) => {
-      const old = await this.read(tx, "coordination", `workflow:${w.id}`);
-      await this.put(tx, "coordination", `workflow:${w.id}`, {
+    await this.loop.store.transaction(this.loop.namespace, async tx => {
+      const old = await this.read(tx, 'coordination', `workflow:${w.id}`);
+      await this.put(tx, 'coordination', `workflow:${w.id}`, {
         ...old?.data,
         definitionHash: this.definitions.get(w.id)!,
         mode,
         selfImproving: this.options.selfImproving === true,
       });
     });
-    const lock = await this.loop.store.transaction(
-      this.loop.namespace,
-      async (tx) => ({
-        target: await this.read(tx, "coordination", this.targetKey(w)),
-        paused: await this.paused(tx, w),
-      }),
-    );
+    const lock = await this.loop.store.transaction(this.loop.namespace, async tx => ({
+      target: await this.read(tx, 'coordination', this.targetKey(w)),
+      paused: await this.paused(tx, w),
+    }));
     try {
-      if (lock.target?.data.activeRun)
-        run = await this.getRun(String(lock.target.data.activeRun));
+      if (lock.target?.data.activeRun) run = await this.getRun(String(lock.target.data.activeRun));
       if (!run) {
-        if (lock.paused) return idle("workflow_paused", "paused");
+        if (lock.paused) return idle('workflow_paused', 'paused');
         if (this.options.selfImproving !== true || improvementWorkDisabled())
-          return idle("self_improvement_disabled", "paused");
+          return idle('self_improvement_disabled', 'paused');
         if (
-          mode === "autonomous" &&
+          mode === 'autonomous' &&
           !w.policy.auditMethod &&
-          w.policy.minimumAuditUnits <
-            minimumCertifiableAuditUnits(w.policy.objective)
+          w.policy.minimumAuditUnits < minimumCertifiableAuditUnits(w.policy.objective)
         )
-          return idle("audit_size_cannot_certify", "paused");
+          return idle('audit_size_cannot_certify', 'paused');
         const failureCap = w.policy.maximumConsecutiveFailures ?? 3;
         if (Number(lock.target?.data.consecutiveFailures ?? 0) >= failureCap)
-          return idle("repeated_failures_require_review", "paused");
+          return idle('repeated_failures_require_review', 'paused');
         if (Number(lock.target?.data.consecutiveTimeouts ?? 0) >= failureCap)
-          return idle("repeated_timeouts_require_review", "paused");
+          return idle('repeated_timeouts_require_review', 'paused');
         const next = lock.target?.data.nextEligibleAt;
-        if (typeof next === "string" && next > this.loop.now())
-          return idle("cooldown", "waiting_for_evidence", next);
-        const baseline = await this.plain(w, (c) => w.artifact(c), signal2);
+        if (typeof next === 'string' && next > this.loop.now()) return idle('cooldown', 'waiting_for_evidence', next);
+        const baseline = await this.plain(w, c => w.artifact(c), signal2);
         this.baseline(baseline);
-        const dataset = prepareDataset(
-          await this.plain(w, (c) => w.dataset(c), signal2),
-          w.policy,
-          this.loop.now(),
-        );
-        if (mode === "observe") return idle("observation_only");
+        const dataset = prepareDataset(await this.plain(w, c => w.dataset(c), signal2), w.policy, this.loop.now());
+        if (mode === 'observe') return idle('observation_only');
         if (
           dataset.optimization.length < w.policy.minimumNewUnits ||
           dataset.validation.length < w.policy.minimumValidationUnits ||
           dataset.audit.length < w.policy.minimumAuditUnits
         )
-          return idle("insufficient_evidence");
+          return idle('insufficient_evidence');
         const definitionHash = this.definitions.get(w.id)!,
           decisionKey = hash({
             namespace: this.loop.namespace,
@@ -959,137 +805,91 @@ export class ImprovementController {
           return {
             runId,
             state: existing.data.state,
-            reason: "unchanged_evidence",
+            reason: 'unchanged_evidence',
             candidateIds: existing.data.candidateIds,
             budget: await this.budget(w),
           };
-        run = await this.loop.store.transaction(
-          this.loop.namespace,
-          async (tx) => {
-            const target = await this.read(
-              tx,
-              "coordination",
-              this.targetKey(w),
-            );
-            if (target?.data.activeRun)
-              fail("target_busy", "Target already has an improvement cycle.");
-            if (await this.paused(tx, w)) fail("paused", "Workflow paused.");
-            const used = new Set((target?.data.usedUnits ?? []) as string[]);
-            if (
-              dataset.optimization.filter((r) => !used.has(r.entityId)).length <
-              w.policy.minimumNewUnits
-            )
-              fail("insufficient_new_evidence", "Not enough new entities.");
-            const d: ImprovementRunData = {
-              workflowId,
-              definitionHash,
-              decisionKey,
-              state: "proposing",
-              reason: "eligible_evidence",
-              baseline,
-              dataset,
-              candidateIds: [],
-              comparisons: {},
-              proposalCalls: 0,
-              leaseOwner: null,
-              leaseUntil: this.loop.now(),
-              configuration: this.configuration(w),
-              operationIds: [],
-              previousOutcomes: (target?.data.previousOutcomes ?? []) as {
-                state: string;
-                reason: string;
-              }[],
-            };
-            const r = this.parse(await this.put(tx, "runs", runId, d));
-            await this.put(tx, "coordination", this.targetKey(w), {
-              ...target?.data,
-              activeRun: runId,
-              usedUnits: [
-                ...new Set([
-                  ...used,
-                  ...dataset.optimization.map((r) => r.entityId),
-                ]),
-              ],
-            });
-            return r;
-          },
-        );
+        run = await this.loop.store.transaction(this.loop.namespace, async tx => {
+          const target = await this.read(tx, 'coordination', this.targetKey(w));
+          if (target?.data.activeRun) fail('target_busy', 'Target already has an improvement cycle.');
+          if (await this.paused(tx, w)) fail('paused', 'Workflow paused.');
+          const used = new Set((target?.data.usedUnits ?? []) as string[]);
+          if (dataset.optimization.filter(r => !used.has(r.entityId)).length < w.policy.minimumNewUnits)
+            fail('insufficient_new_evidence', 'Not enough new entities.');
+          const d: ImprovementRunData = {
+            workflowId,
+            definitionHash,
+            decisionKey,
+            state: 'proposing',
+            reason: 'eligible_evidence',
+            baseline,
+            dataset,
+            candidateIds: [],
+            comparisons: {},
+            proposalCalls: 0,
+            leaseOwner: null,
+            leaseUntil: this.loop.now(),
+            configuration: this.configuration(w),
+            operationIds: [],
+            previousOutcomes: (target?.data.previousOutcomes ?? []) as {
+              state: string;
+              reason: string;
+            }[],
+          };
+          const r = this.parse(await this.put(tx, 'runs', runId, d));
+          await this.put(tx, 'coordination', this.targetKey(w), {
+            ...target?.data,
+            activeRun: runId,
+            usedUnits: [...new Set([...used, ...dataset.optimization.map(r => r.entityId)])],
+          });
+          return r;
+        });
       }
     } catch (error) {
       const code = (error as { code?: unknown }).code;
-      const reason =
-        typeof code === "string"
-          ? code
-          : signal2.aborted
-            ? "cancelled"
-            : "callback_failed";
+      const reason = typeof code === 'string' ? code : signal2.aborted ? 'cancelled' : 'callback_failed';
       const detail = failureDetailFrom(error);
-      if (reason === "timeout") {
+      if (reason === 'timeout') {
         const count = await this.noteTimeout(w);
         if (count >= (w.policy.maximumConsecutiveFailures ?? 3))
-          return idle("repeated_timeouts_require_review", "paused");
-        return idle("timed_out");
+          return idle('repeated_timeouts_require_review', 'paused');
+        return idle('timed_out');
       }
       const idleResult = await idle(reason);
       return detail ? { ...idleResult, detail } : idleResult;
     }
     const rid = run.id;
     // A different workflow may own this target; it must be resumed by its own definition.
-    if (run.data.workflowId !== workflowId)
-      return idle("target_owned_by_other_workflow");
+    if (run.data.workflowId !== workflowId) return idle('target_owned_by_other_workflow');
     try {
-      run = await this.loop.store.transaction(
-        this.loop.namespace,
-        async (tx) => {
-          const current = this.parse((await this.read(tx, "runs", rid))!);
-          if (
-            current.data.leaseOwner &&
-            current.data.leaseUntil > this.loop.now()
-          )
-            fail("run_busy", "Another worker owns this run.");
-          return this.parse(
-            await this.put(tx, "runs", rid, {
-              ...current.data,
-              leaseOwner: owner,
-              leaseUntil: plus(
-                this.loop.now(),
-                this.tickMs + this.callbackMs + 60000,
-              ),
-            }),
-          );
-        },
-      );
+      run = await this.loop.store.transaction(this.loop.namespace, async tx => {
+        const current = this.parse((await this.read(tx, 'runs', rid))!);
+        if (current.data.leaseOwner && current.data.leaseUntil > this.loop.now())
+          fail('run_busy', 'Another worker owns this run.');
+        return this.parse(
+          await this.put(tx, 'runs', rid, {
+            ...current.data,
+            leaseOwner: owner,
+            leaseUntil: plus(this.loop.now(), this.tickMs + this.callbackMs + 60000),
+          }),
+        );
+      });
       const d = run.data,
-        recovering = [
-          "deploying",
-          "reconciliation_required",
-          "rolling_back",
-          "observing",
-        ].includes(d.state);
+        recovering = ['deploying', 'reconciliation_required', 'rolling_back', 'observing'].includes(d.state);
       if (recovering && d.selectedId) {
         const candidate = await this.loop.getCandidate(d.selectedId),
           receipt = candidate?.rollbackReceipt;
-        if (candidate?.status === "rolled_back" && receipt) {
-          const actual = await this.plain(w, (c) => w.artifact(c), signal2);
+        if (candidate?.status === 'rolled_back' && receipt) {
+          const actual = await this.plain(w, c => w.artifact(c), signal2);
           this.baseline(actual);
           if (
             actual.artifactVersion !== receipt.artifactVersion ||
             receipt.artifactVersion !== d.baseline.artifactVersion ||
             actual.configurationHash !== d.baseline.configurationHash ||
-            receipt.previousArtifactVersion !==
-              (d.artifactVersion ??
-                candidate.deploymentReceipt?.artifactVersion)
+            receipt.previousArtifactVersion !== (d.artifactVersion ?? candidate.deploymentReceipt?.artifactVersion)
           )
-            fail(
-              "out_of_band_change",
-              "Reviewed rollback does not match actual serving state.",
-            );
-          run = await this.save(
-            rid,
-            owner,
-            { state: "rolled_back", reason: "reviewed_rollback_confirmed" },
-            true,
-          );
+            fail('out_of_band_change', 'Reviewed rollback does not match actual serving state.');
+          run = await this.save(rid, owner, { state: 'rolled_back', reason: 'reviewed_rollback_confirmed' }, true);
           return {
             runId: rid,
             state: run.data.state,
@@ -1100,50 +900,34 @@ export class ImprovementController {
         }
       }
       if (d.definitionHash !== this.definitions.get(workflowId)) {
-        await this.save(
-          rid,
-          owner,
-          { reason: "policy_changed_requires_recovery" },
-          true,
-        );
+        await this.save(rid, owner, { reason: 'policy_changed_requires_recovery' }, true);
         return {
-          ...(await idle("policy_changed_requires_recovery", "paused")),
+          ...(await idle('policy_changed_requires_recovery', 'paused')),
           runId: rid,
           candidateIds: d.candidateIds,
         };
       }
-      if (
-        (lock.paused ||
-          this.options.selfImproving !== true ||
-          improvementWorkDisabled()) &&
-        !recovering
-      ) {
+      if ((lock.paused || this.options.selfImproving !== true || improvementWorkDisabled()) && !recovering) {
         await this.save(
           rid,
           owner,
           {
-            reason: lock.paused
-              ? "workflow_paused"
-              : "self_improvement_disabled",
+            reason: lock.paused ? 'workflow_paused' : 'self_improvement_disabled',
           },
           true,
         );
         return {
-          ...(await idle(
-            lock.paused ? "workflow_paused" : "self_improvement_disabled",
-            "paused",
-          )),
+          ...(await idle(lock.paused ? 'workflow_paused' : 'self_improvement_disabled', 'paused')),
           runId: rid,
           candidateIds: d.candidateIds,
         };
       }
       signal2.throwIfAborted();
       if (
-        d.state === "observing" &&
+        d.state === 'observing' &&
         d.nextEligibleAt &&
         d.nextEligibleAt > this.loop.now() &&
-        Date.parse(this.loop.now()) <
-          Date.parse(d.deployedAt!) + w.policy.observation.timeoutMs
+        Date.parse(this.loop.now()) < Date.parse(d.deployedAt!) + w.policy.observation.timeoutMs
       )
         return {
           runId: rid,
@@ -1153,13 +937,13 @@ export class ImprovementController {
           budget: await this.budget(w),
           nextEligibleAt: d.nextEligibleAt,
         };
-      if (d.state === "proposing") {
+      if (d.state === 'proposing') {
         const ordinal = d.proposalCalls;
         const proposals = await this.operation(
           run,
           owner,
           `propose:${ordinal}`,
-          (c) =>
+          c =>
             w.propose(
               {
                 baseline: clone(d.baseline),
@@ -1171,11 +955,8 @@ export class ImprovementController {
             ),
           signal2,
         );
-        if (
-          !Array.isArray(proposals) ||
-          proposals.length > (w.policy.maximumCandidates ?? 3)
-        )
-          fail("proposal_limit", "Invalid/oversized proposal batch.");
+        if (!Array.isArray(proposals) || proposals.length > (w.policy.maximumCandidates ?? 3))
+          fail('proposal_limit', 'Invalid/oversized proposal batch.');
         const ids = [...d.candidateIds];
         for (const proposal of proposals) {
           validateChange(proposal, w.policy.changeSchema);
@@ -1188,56 +969,40 @@ export class ImprovementController {
               decisionKey: d.decisionKey,
               datasetHash: hash(d.dataset),
             },
-            risk: "low",
+            risk: 'low',
             metadata: { runId: rid, policyVersion: w.policy.version },
           });
           validateChange(candidate.proposedChange, w.policy.changeSchema);
-          if (
-            hash(candidate.baseline) !== hash(d.baseline) ||
-            hash(candidate.target) !== hash(w.policy.target)
-          )
-            fail("integrity_error", "Sanitizer changed candidate identity.");
+          if (hash(candidate.baseline) !== hash(d.baseline) || hash(candidate.target) !== hash(w.policy.target))
+            fail('integrity_error', 'Sanitizer changed candidate identity.');
           if (!ids.includes(candidate.id)) ids.push(candidate.id);
-          if (ids.length > (w.policy.maximumCandidates ?? 3))
-            fail("proposal_limit", "Too many candidates.");
+          if (ids.length > (w.policy.maximumCandidates ?? 3)) fail('proposal_limit', 'Too many candidates.');
         }
         const calls = ordinal + 1,
-          done =
-            ids.length > 0 || calls >= (w.policy.maximumProposalCalls ?? 3);
+          done = ids.length > 0 || calls >= (w.policy.maximumProposalCalls ?? 3);
         run = await this.save(rid, owner, {
           proposalCalls: calls,
           candidateIds: ids,
           state: done
             ? ids.length
-              ? mode === "recommend"
-                ? "completed"
-                : "evaluating"
-              : "no_improvement"
-            : "proposing",
-          reason:
-            mode === "recommend"
-              ? "recommendations_only"
-              : ids.length
-                ? "proposals_ready"
-                : "no_proposal",
+              ? mode === 'recommend'
+                ? 'completed'
+                : 'evaluating'
+              : 'no_improvement'
+            : 'proposing',
+          reason: mode === 'recommend' ? 'recommendations_only' : ids.length ? 'proposals_ready' : 'no_proposal',
         });
-      } else if (d.state === "evaluating") {
+      } else if (d.state === 'evaluating') {
         const comparisons = { ...d.comparisons };
         for (const cid of d.candidateIds) {
           if (comparisons[cid]) continue;
           const candidate = (await this.loop.getCandidate(cid))!;
-          const report = await this.evaluatePartition(
-            run,
-            owner,
-            cid,
-            "validation",
-            signal2,
-          );
+          const report = await this.evaluatePartition(run, owner, cid, 'validation', signal2);
           if (!report)
             return {
               runId: rid,
-              state: "evaluating",
-              reason: "evaluation_batch_saved",
+              state: 'evaluating',
+              reason: 'evaluation_batch_saved',
               candidateIds: d.candidateIds,
               budget: await this.budget(w),
             };
@@ -1245,50 +1010,40 @@ export class ImprovementController {
           comparisons[cid] = report;
           run = await this.save(rid, owner, {
             comparisons,
-            reason: "validation_recorded",
+            reason: 'validation_recorded',
           });
         }
         const ranked = d.candidateIds
-          .filter(
-            (cid) =>
-              compare(comparisons[cid]!, d.dataset.validation, w.policy).passed,
-          )
+          .filter(cid => compare(comparisons[cid]!, d.dataset.validation, w.policy).passed)
           .sort((a, b) => {
             const x = compare(comparisons[a]!, d.dataset.validation, w.policy),
               y = compare(comparisons[b]!, d.dataset.validation, w.policy);
             return (
               y.improvement - x.improvement ||
-              comparisons[a]!.estimatedServingCost -
-                comparisons[b]!.estimatedServingCost ||
+              comparisons[a]!.estimatedServingCost - comparisons[b]!.estimatedServingCost ||
               a.localeCompare(b)
             );
           });
         if (!ranked.length)
           run = await this.save(rid, owner, {
-            state: "no_improvement",
-            reason: "validation_failed",
+            state: 'no_improvement',
+            reason: 'validation_failed',
           });
         else
           run = await this.save(rid, owner, {
             selectedId: ranked[0]!,
-            state: "selected",
-            reason: "winner_selected",
+            state: 'selected',
+            reason: 'winner_selected',
           });
-      } else if (d.state === "selected") {
+      } else if (d.state === 'selected') {
         const cid = d.selectedId!,
           candidate = (await this.loop.getCandidate(cid))!;
-        const audit = await this.evaluatePartition(
-          run,
-          owner,
-          cid,
-          "audit",
-          signal2,
-        );
+        const audit = await this.evaluatePartition(run, owner, cid, 'audit', signal2);
         if (!audit)
           return {
             runId: rid,
-            state: "selected",
-            reason: "audit_batch_saved",
+            state: 'selected',
+            reason: 'audit_batch_saved',
             candidateIds: d.candidateIds,
             budget: await this.budget(w),
           };
@@ -1299,7 +1054,7 @@ export class ImprovementController {
           lowerBound: gates.lower!,
           sampleCount: gates.sampleCount,
         };
-        if (candidate.status === "proposed")
+        if (candidate.status === 'proposed')
           await this.loop.evaluateCandidate(
             cid,
             {
@@ -1313,13 +1068,13 @@ export class ImprovementController {
               metrics: auditMetrics,
               notes: w.policy.auditMethod
                 ? `Trusted application audit: ${w.policy.auditMethod.name}@${w.policy.auditMethod.version}`
-                : "Fixed-sample paired Hoeffding; independent units required.",
+                : 'Fixed-sample paired Hoeffding; independent units required.',
             }),
           );
         const audited = (await this.loop.getCandidate(cid))!;
         const auditEvaluation = audited.evaluations.at(-1);
         if (
-          !["evaluated", "approved"].includes(audited.status) ||
+          !['evaluated', 'approved'].includes(audited.status) ||
           !auditEvaluation ||
           auditEvaluation.evaluator !== workflowId ||
           auditEvaluation.version !== w.evaluatorVersion ||
@@ -1329,8 +1084,8 @@ export class ImprovementController {
           hash(auditEvaluation.metrics) !== hash(auditMetrics)
         )
           fail(
-            "audit_evaluation_conflict",
-            "The current evaluation is not this frozen audit. Human changes are not overwritten.",
+            'audit_evaluation_conflict',
+            'The current evaluation is not this frozen audit. Human changes are not overwritten.',
           );
         run = await this.save(rid, owner, {
           audit,
@@ -1339,123 +1094,99 @@ export class ImprovementController {
         if (!gates.passed)
           run = await this.save(rid, owner, {
             audit,
-            state: "no_improvement",
-            reason: "audit_failed",
+            state: 'no_improvement',
+            reason: 'audit_failed',
           });
-        else if (mode !== "autonomous")
+        else if (mode !== 'autonomous')
           run = await this.save(rid, owner, {
             audit,
-            state: "completed",
-            reason: "experiment_only",
+            state: 'completed',
+            reason: 'experiment_only',
           });
         else {
-          const current = await this.plain(w, (c) => w.artifact(c), signal2);
+          const current = await this.plain(w, c => w.artifact(c), signal2);
           this.baseline(current);
-          if (hash(current) !== hash(d.baseline))
-            fail("stale_baseline", "Serving baseline changed.");
-          await this.loop.store.transaction(this.loop.namespace, async (tx) => {
+          if (hash(current) !== hash(d.baseline)) fail('stale_baseline', 'Serving baseline changed.');
+          await this.loop.store.transaction(this.loop.namespace, async tx => {
             await this.owned(tx, rid, owner);
             const opId = `${rid}:deployment_budget`;
-            if (!(await this.read(tx, "operations", opId))) {
+            if (!(await this.read(tx, 'operations', opId))) {
               await this.reserve(tx, w, 0, 0, 1);
-              await this.put(tx, "operations", opId, {
-                status: "completed",
+              await this.put(tx, 'operations', opId, {
+                status: 'completed',
                 result: true,
               });
             }
           });
           const evaluated = (await this.loop.getCandidate(cid))!;
-          if (evaluated.status === "evaluated")
+          if (evaluated.status === 'evaluated')
             await this.loop.approveCandidate(cid, {
-              actor: "loopiter/autonomous",
+              actor: 'loopiter/autonomous',
               evaluationId: auditEvaluation.id,
               authorization: { runId: rid, leaseOwner: owner },
             });
           run = await this.save(rid, owner, {
             audit,
-            state: "deploying",
-            reason: "audit_passed",
+            state: 'deploying',
+            reason: 'audit_passed',
             attemptId: `${rid}:apply`,
-            operation: "apply",
+            operation: 'apply',
           });
         }
       } else if (
-        (["deploying", "rolling_back", "reconciliation_required"].includes(
-          d.state,
-        ) ||
-          (d.state === "paused" && d.operation === "apply")) &&
+        (['deploying', 'rolling_back', 'reconciliation_required'].includes(d.state) ||
+          (d.state === 'paused' && d.operation === 'apply')) &&
         !d.pendingPromotion
       ) {
         const attemptId = d.attemptId!,
           cid = d.selectedId!;
-        const existing = await this.loop.store.transaction(
-          this.loop.namespace,
-          (tx) => this.loop.read(tx, "attempts", attemptId),
+        const existing = await this.loop.store.transaction(this.loop.namespace, tx =>
+          this.loop.read(tx, 'attempts', attemptId),
         );
         let attempt;
-        if (existing)
-          attempt = await this.loop.reconcileAttempt(
-            attemptId,
-            w.deployment,
-            signal2,
-          );
+        if (existing) attempt = await this.loop.reconcileAttempt(attemptId, w.deployment, signal2);
         else {
           if (
-            d.operation === "apply" &&
-            (this.options.selfImproving !== true ||
-              mode !== "autonomous" ||
-              lock.paused ||
-              improvementWorkDisabled())
+            d.operation === 'apply' &&
+            (this.options.selfImproving !== true || mode !== 'autonomous' || lock.paused || improvementWorkDisabled())
           )
             return {
-              ...(await idle("self_improvement_disabled", "paused")),
+              ...(await idle('self_improvement_disabled', 'paused')),
               runId: rid,
               candidateIds: d.candidateIds,
             };
-          const current = await this.plain(w, (c) => w.artifact(c), signal2);
-          if (d.operation === "apply" && improvementWorkDisabled()) {
-            await this.save(
-              rid,
-              owner,
-              { state: "paused", reason: "self_improvement_disabled" },
-              true,
-            );
+          const current = await this.plain(w, c => w.artifact(c), signal2);
+          if (d.operation === 'apply' && improvementWorkDisabled()) {
+            await this.save(rid, owner, { state: 'paused', reason: 'self_improvement_disabled' }, true);
             return {
-              ...(await idle("self_improvement_disabled", "paused")),
+              ...(await idle('self_improvement_disabled', 'paused')),
               runId: rid,
               candidateIds: d.candidateIds,
             };
           }
           this.baseline(current);
-          if (d.operation === "apply" && hash(current) !== hash(d.baseline))
-            fail("stale_baseline", "Target changed before dispatch.");
+          if (d.operation === 'apply' && hash(current) !== hash(d.baseline))
+            fail('stale_baseline', 'Target changed before dispatch.');
           if (
-            d.operation === "rollback" &&
+            d.operation === 'rollback' &&
             (current.artifactVersion !== d.artifactVersion ||
               current.configurationHash !== d.observationConfigurationHash)
           )
-            fail(
-              "out_of_band_change",
-              "Will not roll back an unrelated configuration.",
-            );
-          if (d.operation === "apply" && d.state === "paused")
-            await this.save(rid, owner, { state: "deploying" }, true);
+            fail('out_of_band_change', 'Will not roll back an unrelated configuration.');
+          if (d.operation === 'apply' && d.state === 'paused')
+            await this.save(rid, owner, { state: 'deploying' }, true);
           // Check durable authorization immediately before the adapter dispatch, after
           // the core has persisted its attempt. Failed authorization is inspect-only.
           const adapter = {
             inspect: w.deployment.inspect.bind(w.deployment),
             rollback: w.deployment.rollback.bind(w.deployment),
-            apply: async (
-              request: import("./contracts.js").DeploymentRequest,
-            ) => {
-              await this.loop.store.transaction(this.loop.namespace, (tx) =>
-                this.owned(tx, rid, owner),
-              );
+            apply: async (request: import('./contracts.js').DeploymentRequest) => {
+              await this.loop.store.transaction(this.loop.namespace, tx => this.owned(tx, rid, owner));
               return w.deployment.apply(request);
             },
           };
           attempt =
-            d.operation === "rollback"
+            d.operation === 'rollback'
               ? await this.loop.rollbackCandidate(cid, {
                   adapter,
                   attemptId,
@@ -1470,50 +1201,34 @@ export class ImprovementController {
                   authorization: { runId: rid, leaseOwner: owner },
                 });
         }
-        if (attempt.status === "pending")
-          run = await this.save(
-            rid,
-            owner,
-            { state: "reconciliation_required", reason: "deployment_unknown" },
-            true,
-          );
-        else if (attempt.status === "not_applied")
+        if (attempt.status === 'pending')
+          run = await this.save(rid, owner, { state: 'reconciliation_required', reason: 'deployment_unknown' }, true);
+        else if (attempt.status === 'not_applied')
           run = await this.save(
             rid,
             owner,
             {
-              state:
-                d.operation === "rollback"
-                  ? "reconciliation_required"
-                  : "failed",
-              reason: "operation_fenced_not_applied",
+              state: d.operation === 'rollback' ? 'reconciliation_required' : 'failed',
+              reason: 'operation_fenced_not_applied',
             },
             true,
           );
-        else if (d.operation === "rollback")
-          run = await this.save(
-            rid,
-            owner,
-            { state: "rolled_back", reason: "previous_version_restored" },
-            true,
-          );
+        else if (d.operation === 'rollback')
+          run = await this.save(rid, owner, { state: 'rolled_back', reason: 'previous_version_restored' }, true);
         else {
-          const actual = await this.plain(w, (c) => w.artifact(c), signal2);
+          const actual = await this.plain(w, c => w.artifact(c), signal2);
           this.baseline(actual);
           if (
             actual.artifactVersion !== attempt.receipt!.artifactVersion ||
             actual.configurationHash !== d.baseline.configurationHash
           )
-            fail(
-              "out_of_band_change",
-              "Applied version or pinned execution context changed.",
-            );
+            fail('out_of_band_change', 'Applied version or pinned execution context changed.');
           run = await this.save(
             rid,
             owner,
             {
-              state: "observing",
-              reason: "deployment_is_not_improvement",
+              state: 'observing',
+              reason: 'deployment_is_not_improvement',
               artifactVersion: attempt.receipt!.artifactVersion!,
               observationConfigurationHash: actual.configurationHash,
               deployedAt: attempt.updatedAt,
@@ -1521,25 +1236,18 @@ export class ImprovementController {
             true,
           );
         }
-      } else if (d.state === "observing" || d.pendingPromotion) {
-        const actual = await this.plain(w, (c) => w.artifact(c), signal2);
+      } else if (d.state === 'observing' || d.pendingPromotion) {
+        const actual = await this.plain(w, c => w.artifact(c), signal2);
         this.baseline(actual);
-        if (
-          actual.artifactVersion !== d.artifactVersion ||
-          actual.configurationHash !== d.observationConfigurationHash
-        )
-          fail(
-            "out_of_band_change",
-            "Serving configuration changed during observation.",
-          );
-        const promotion = await this.loop.store.transaction(
-          this.loop.namespace,
-          (tx) => this.read(tx, "operations", `${rid}:promote`),
+        if (actual.artifactVersion !== d.artifactVersion || actual.configurationHash !== d.observationConfigurationHash)
+          fail('out_of_band_change', 'Serving configuration changed during observation.');
+        const promotion = await this.loop.store.transaction(this.loop.namespace, tx =>
+          this.read(tx, 'operations', `${rid}:promote`),
         );
         if (promotion) {
           const status = await this.plain(
             w,
-            (c) =>
+            c =>
               w.rollout!.inspect(
                 {
                   operationId: `${rid}:promote`,
@@ -1549,31 +1257,27 @@ export class ImprovementController {
               ),
             signal2,
           );
-          enumeration(
-            status,
-            ["promoted", "unknown", "not_applied"],
-            "promotion inspection",
-          );
+          enumeration(status, ['promoted', 'unknown', 'not_applied'], 'promotion inspection');
           run = await this.save(
             rid,
             owner,
-            status === "promoted"
+            status === 'promoted'
               ? {
-                  state: "completed",
-                  reason: "canary_promoted",
+                  state: 'completed',
+                  reason: 'canary_promoted',
                   pendingPromotion: false,
                 }
-              : status === "not_applied"
+              : status === 'not_applied'
                 ? {
-                    state: "rolling_back",
-                    operation: "rollback",
+                    state: 'rolling_back',
+                    operation: 'rollback',
                     attemptId: `${rid}:rollback`,
-                    reason: "promotion_fenced_withdraw",
+                    reason: 'promotion_fenced_withdraw',
                     pendingPromotion: false,
                   }
                 : {
-                    state: "reconciliation_required",
-                    reason: "promotion_requires_reconciliation",
+                    state: 'reconciliation_required',
+                    reason: 'promotion_requires_reconciliation',
                     pendingPromotion: true,
                   },
             true,
@@ -1591,9 +1295,9 @@ export class ImprovementController {
             rid,
             owner,
             {
-              state: "observing",
+              state: 'observing',
               pendingPromotion: false,
-              reason: "promotion_not_dispatched",
+              reason: 'promotion_not_dispatched',
             },
             true,
           );
@@ -1605,18 +1309,15 @@ export class ImprovementController {
             budget: await this.budget(w),
           };
         }
-        if (
-          Date.parse(this.loop.now()) >=
-          Date.parse(d.deployedAt!) + w.policy.observation.timeoutMs
-        ) {
+        if (Date.parse(this.loop.now()) >= Date.parse(d.deployedAt!) + w.policy.observation.timeoutMs) {
           run = await this.save(
             rid,
             owner,
             {
-              state: "rolling_back",
-              operation: "rollback",
+              state: 'rolling_back',
+              operation: 'rollback',
               attemptId: `${rid}:rollback`,
-              reason: "observation_timeout",
+              reason: 'observation_timeout',
             },
             true,
           );
@@ -1625,7 +1326,7 @@ export class ImprovementController {
             run,
             owner,
             `observe:${run.revision}`,
-            (c) =>
+            c =>
               w.observe(
                 {
                   runId: rid,
@@ -1639,59 +1340,37 @@ export class ImprovementController {
             true,
           );
           this.validateObservation(observed, run, w);
-          if (w.policy.rollout.mode === "canary")
-            run = await this.save(
-              rid,
-              owner,
-              { assignmentHash: observed.assignmentHash! },
-              true,
-            );
+          if (w.policy.rollout.mode === 'canary')
+            run = await this.save(rid, owner, { assignmentHash: observed.assignmentHash! }, true);
           const oid = `${rid}:observation:${run.revision}`;
-          await this.loop.store.transaction(this.loop.namespace, async (tx) => {
+          await this.loop.store.transaction(this.loop.namespace, async tx => {
             await this.owned(tx, rid, owner, true);
-            if (!(await this.read(tx, "observations", oid)))
-              await this.put(tx, "observations", oid, observed);
+            if (!(await this.read(tx, 'observations', oid))) await this.put(tx, 'observations', oid, observed);
           });
           const enough =
             observed.complete &&
             observed.unitIds.length >= w.policy.observation.minimumUnits &&
-            Date.parse(observed.endedAt) - Date.parse(d.deployedAt!) >=
-              w.policy.observation.minimumDurationMs;
-          const passed = passesGates(
-            observed.metrics,
-            w.policy.observation.guardrails,
-          );
-          if (
-            !passed &&
-            observed.complete &&
-            observed.unitIds.length >= w.policy.observation.minimumUnits
-          )
+            Date.parse(observed.endedAt) - Date.parse(d.deployedAt!) >= w.policy.observation.minimumDurationMs;
+          const passed = passesGates(observed.metrics, w.policy.observation.guardrails);
+          if (!passed && observed.complete && observed.unitIds.length >= w.policy.observation.minimumUnits)
             run = await this.save(
               rid,
               owner,
               {
-                state: "rolling_back",
-                operation: "rollback",
+                state: 'rolling_back',
+                operation: 'rollback',
                 attemptId: `${rid}:rollback`,
-                reason: "production_guardrail_failed",
+                reason: 'production_guardrail_failed',
                 lastObservationId: oid,
               },
               true,
             );
           else if (enough && passed) {
-            if (w.policy.rollout.mode === "canary") {
-              if (
-                observed.improvementLowerBound! <=
-                w.policy.objective.minimumImprovement
-              ) {
-                await this.save(
-                  rid,
-                  owner,
-                  { reason: "canary_not_superior", lastObservationId: oid },
-                  true,
-                );
+            if (w.policy.rollout.mode === 'canary') {
+              if (observed.improvementLowerBound! <= w.policy.objective.minimumImprovement) {
+                await this.save(rid, owner, { reason: 'canary_not_superior', lastObservationId: oid }, true);
                 return {
-                  ...(await idle("canary_not_superior", "observing")),
+                  ...(await idle('canary_not_superior', 'observing')),
                   runId: rid,
                   candidateIds: d.candidateIds,
                 };
@@ -1699,24 +1378,24 @@ export class ImprovementController {
               if (
                 lock.paused ||
                 this.options.selfImproving !== true ||
-                mode !== "autonomous" ||
+                mode !== 'autonomous' ||
                 improvementWorkDisabled()
               )
                 return {
-                  ...(await idle("promotion_paused", "paused")),
+                  ...(await idle('promotion_paused', 'paused')),
                   runId: rid,
                   candidateIds: d.candidateIds,
                 };
               run = await this.save(rid, owner, {
                 pendingPromotion: true,
-                reason: "promotion_dispatch_pending",
+                reason: 'promotion_dispatch_pending',
                 lastObservationId: oid,
               });
               await this.operation(
                 run,
                 owner,
-                "promote",
-                async (c) => {
+                'promote',
+                async c => {
                   await w.rollout!.promote(
                     {
                       operationId: c.operationId,
@@ -1734,11 +1413,11 @@ export class ImprovementController {
               rid,
               owner,
               {
-                state: "completed",
+                state: 'completed',
                 reason:
-                  w.policy.rollout.mode === "immediate"
-                    ? "offline_pass_and_production_limits_met_not_causal_proof"
-                    : "canary_promoted",
+                  w.policy.rollout.mode === 'immediate'
+                    ? 'offline_pass_and_production_limits_met_not_causal_proof'
+                    : 'canary_promoted',
                 lastObservationId: oid,
               },
               true,
@@ -1748,12 +1427,9 @@ export class ImprovementController {
               rid,
               owner,
               {
-                reason: "waiting_for_mature_outcomes",
+                reason: 'waiting_for_mature_outcomes',
                 lastObservationId: oid,
-                nextEligibleAt: plus(
-                  this.loop.now(),
-                  Math.min(60000, w.policy.observation.timeoutMs),
-                ),
+                nextEligibleAt: plus(this.loop.now(), Math.min(60000, w.policy.observation.timeoutMs)),
               },
               true,
             );
@@ -1761,55 +1437,47 @@ export class ImprovementController {
       }
     } catch (error) {
       const rawCode = (error as { code?: unknown }).code,
-        code =
-          typeof rawCode === "string"
-            ? rawCode
-            : signal2.aborted
-              ? "cancelled"
-              : "callback_failed";
+        code = typeof rawCode === 'string' ? rawCode : signal2.aborted ? 'cancelled' : 'callback_failed';
       const detail = failureDetailFrom(error);
-      if (code === "run_busy")
+      if (code === 'run_busy')
         return {
           ...(await idle(code)),
           runId: rid,
           candidateIds: run?.data.candidateIds ?? [],
           ...(detail ? { detail } : {}),
         };
-      if (code === "timeout" && (await this.recordStepTimeout(rid, owner))) {
+      if (code === 'timeout' && (await this.recordStepTimeout(rid, owner))) {
         // Retry or terminal timed_out. Not a consecutive-failure strike.
-      } else if (code !== "lease_lost") {
+      } else if (code !== 'lease_lost') {
         const current = await this.getRun(rid);
         if (current?.data.leaseOwner === owner) {
           const recovery =
             current.data.pendingPromotion ||
-            ["deploying", "rolling_back", "reconciliation_required"].includes(
-              current.data.state,
-            );
-          const pause = ["paused", "policy_changed"].includes(code);
+            ['deploying', 'rolling_back', 'reconciliation_required'].includes(current.data.state);
+          const pause = ['paused', 'policy_changed'].includes(code);
           // Observation failure must never restart the deployment/observation clock.
           run = await this.save(
             rid,
             owner,
             {
               state: recovery
-                ? "reconciliation_required"
-                : pause || current.data.state === "observing"
+                ? 'reconciliation_required'
+                : pause || current.data.state === 'observing'
                   ? current.data.state
-                  : "failed",
+                  : 'failed',
               reason: code,
               ...(detail ? { detail } : {}),
             },
             true,
           ).catch(() => current);
-          if (run && this.undecided(run))
-            await this.retireUndecided(run.data.candidateIds, run.data.reason);
+          if (run && this.undecided(run)) await this.retireUndecided(run.data.candidateIds, run.data.reason);
         }
       }
     } finally {
-      await this.loop.store.transaction(this.loop.namespace, async (tx) => {
-        const r = await this.read(tx, "runs", rid);
+      await this.loop.store.transaction(this.loop.namespace, async tx => {
+        const r = await this.read(tx, 'runs', rid);
         if (r?.data.leaseOwner === owner)
-          await this.put(tx, "runs", rid, {
+          await this.put(tx, 'runs', rid, {
             ...r.data,
             leaseOwner: null,
             leaseUntil: this.loop.now(),
@@ -1823,9 +1491,7 @@ export class ImprovementController {
       reason: run!.data.reason,
       candidateIds: run!.data.candidateIds,
       budget: await this.budget(w),
-      ...(run!.data.nextEligibleAt
-        ? { nextEligibleAt: run!.data.nextEligibleAt }
-        : {}),
+      ...(run!.data.nextEligibleAt ? { nextEligibleAt: run!.data.nextEligibleAt } : {}),
       ...(run!.data.detail ? { detail: safeDetail(run!.data.detail) } : {}),
     };
   }
@@ -1833,7 +1499,7 @@ export class ImprovementController {
     run: ImprovementRun,
     owner: string,
     cid: string,
-    partition: "validation" | "audit",
+    partition: 'validation' | 'audit',
     signal: AbortSignal,
   ): Promise<Comparison | undefined> {
     const w = this.workflow(run.data.workflowId);
@@ -1846,26 +1512,20 @@ export class ImprovementController {
       partition,
     };
     if (!w.evaluateBatch) {
-      if (partition === "audit") await this.consumeAudit(run, owner, input.examples);
-      return this.operation(
-        run,
-        owner,
-        key,
-        (c) => w.evaluate(input, c),
-        signal,
-      );
+      if (partition === 'audit') await this.consumeAudit(run, owner, input.examples);
+      return this.operation(run, owner, key, c => w.evaluate(input, c), signal);
     }
     const batches = run.data.evaluationBatches?.[key] ?? [];
     const size = w.evaluationBatchSize ?? 4;
     const offset = batches.length * size;
     if (offset < input.examples.length) {
       const slice = input.examples.slice(offset, offset + size);
-      if (partition === "audit") await this.consumeAudit(run, owner, slice);
+      if (partition === 'audit') await this.consumeAudit(run, owner, slice);
       const result = await this.operation(
         run,
         owner,
         `${key}:batch:${offset}`,
-        (c) =>
+        c =>
           w.evaluateBatch!(
             {
               ...input,
@@ -1886,24 +1546,14 @@ export class ImprovementController {
       });
       return undefined;
     }
-    if (partition === "audit") await this.consumeAudit(run, owner, input.examples);
-    return this.operation(
-      run,
-      owner,
-      key,
-      (c) => w.evaluate({ ...input, batchResults: clone(batches) }, c),
-      signal,
-    );
+    if (partition === 'audit') await this.consumeAudit(run, owner, input.examples);
+    return this.operation(run, owner, key, c => w.evaluate({ ...input, batchResults: clone(batches) }, c), signal);
   }
-  private validateObservation(
-    o: Observation,
-    run: ImprovementRun,
-    w: ImprovementWorkflow,
-  ) {
+  private validateObservation(o: Observation, run: ImprovementRun, w: ImprovementWorkflow) {
     json(o, 16 * 1024 * 1024);
     this.baseline(o);
-    timestamp(o.startedAt, "observation start");
-    timestamp(o.endedAt, "observation end");
+    timestamp(o.startedAt, 'observation start');
+    timestamp(o.endedAt, 'observation end');
     if (
       o.artifactVersion !== run.data.artifactVersion ||
       o.configurationHash !== run.data.observationConfigurationHash ||
@@ -1911,47 +1561,32 @@ export class ImprovementController {
       Date.parse(o.endedAt) > Date.parse(this.loop.now()) ||
       Date.parse(o.endedAt) < Date.parse(o.startedAt)
     )
-      fail("invalid_observation", "Observation identity/window mismatch.");
-    if (
-      typeof o.complete !== "boolean" ||
-      !Array.isArray(o.unitIds) ||
-      new Set(o.unitIds).size !== o.unitIds.length
-    )
-      fail("invalid_observation", "Invalid observation units.");
-    o.unitIds.forEach((s) => nonempty(s, "observation unit"));
+      fail('invalid_observation', 'Observation identity/window mismatch.');
+    if (typeof o.complete !== 'boolean' || !Array.isArray(o.unitIds) || new Set(o.unitIds).size !== o.unitIds.length)
+      fail('invalid_observation', 'Invalid observation units.');
+    o.unitIds.forEach(s => nonempty(s, 'observation unit'));
     passesGates(o.metrics, w.policy.observation.guardrails);
-    if (w.policy.rollout.mode === "canary") {
+    if (w.policy.rollout.mode === 'canary') {
       if (o.controlVersion !== run.data.baseline.artifactVersion)
-        fail("invalid_observation", "Canary control mismatch.");
-      nonempty(o.assignmentHash, "assignmentHash");
-      if (
-        typeof o.improvementLowerBound !== "number" ||
-        !Number.isFinite(o.improvementLowerBound)
-      )
-        fail("invalid_observation", "Canary uncertainty bound required.");
-      if (
-        run.data.assignmentHash &&
-        o.assignmentHash !== run.data.assignmentHash
-      )
-        fail("invalid_observation", "Cohort assignment definition changed.");
+        fail('invalid_observation', 'Canary control mismatch.');
+      nonempty(o.assignmentHash, 'assignmentHash');
+      if (typeof o.improvementLowerBound !== 'number' || !Number.isFinite(o.improvementLowerBound))
+        fail('invalid_observation', 'Canary uncertainty bound required.');
+      if (run.data.assignmentHash && o.assignmentHash !== run.data.assignmentHash)
+        fail('invalid_observation', 'Cohort assignment definition changed.');
       const width = w.policy.objective.range[1] - w.policy.objective.range[0];
       if (o.improvementLowerBound! < -width || o.improvementLowerBound! > width)
-        fail("invalid_observation", "Canary bound outside objective range.");
+        fail('invalid_observation', 'Canary bound outside objective range.');
       if (
         !Array.isArray(o.controlUnitIds) ||
         new Set(o.controlUnitIds).size !== o.controlUnitIds.length ||
-        (o.complete &&
-          o.controlUnitIds.length < w.policy.observation.minimumUnits)
+        (o.complete && o.controlUnitIds.length < w.policy.observation.minimumUnits)
       )
-        fail(
-          "invalid_observation",
-          "Independent mature control units required.",
-        );
+        fail('invalid_observation', 'Independent mature control units required.');
       const candidateUnits = new Set(o.unitIds);
-      o.controlUnitIds.forEach((unit) => {
-        nonempty(unit, "control unit");
-        if (candidateUnits.has(unit))
-          fail("invalid_observation", "Canary/control units overlap.");
+      o.controlUnitIds.forEach(unit => {
+        nonempty(unit, 'control unit');
+        if (candidateUnits.has(unit)) fail('invalid_observation', 'Canary/control units overlap.');
       });
     }
   }

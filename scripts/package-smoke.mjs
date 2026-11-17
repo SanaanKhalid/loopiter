@@ -1,98 +1,116 @@
-import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-const root = fileURLToPath(new URL("..", import.meta.url));
-const temporary = await mkdtemp(join(tmpdir(), "loopiter-package-"));
+import assert from 'node:assert/strict';
+import { mkdtemp, readdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+const root = fileURLToPath(new URL('..', import.meta.url));
+const temporary = await mkdtemp(join(tmpdir(), 'loopiter-package-'));
 function run(command, args, cwd) {
   const result = spawnSync(command, args, {
     cwd,
-    stdio: "inherit",
+    stdio: 'inherit',
     env: process.env,
   });
   if (result.error) throw result.error;
-  if (result.status !== 0)
-    throw new Error(`${command} failed with exit ${result.status}`);
+  if (result.status !== 0) throw new Error(`${command} failed with exit ${result.status}`);
 }
 try {
   // pack invokes prepack: a clean checkout must not rely on stale dist output.
-  run("npm", ["pack", "--pack-destination", temporary], root);
-  const tarballs = (await readdir(temporary)).filter((name) =>
-    name.endsWith(".tgz"),
-  );
+  run('npm', ['pack', '--pack-destination', temporary], root);
+  const tarballs = (await readdir(temporary)).filter(name => name.endsWith('.tgz'));
   assert.equal(tarballs.length, 1);
   await writeFile(
-    join(temporary, "package.json"),
+    join(temporary, 'package.json'),
     JSON.stringify({
-      name: "loopiter-clean-consumer",
+      name: 'loopiter-clean-consumer',
       private: true,
-      type: "module",
+      type: 'module',
     }),
   );
   run(
-    "npm",
+    'npm',
     [
-      "install",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
+      'install',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
       resolve(temporary, tarballs[0]),
-      "typescript@5.9.3",
-      "@types/node@24",
+      'typescript@5.9.3',
+      '@types/node@24',
     ],
     temporary,
   );
-  const installed = JSON.parse(
-    await readFile(
-      join(temporary, "node_modules/loopiter/package.json"),
-      "utf8",
-    ),
-  );
-  assert.equal(installed.version, "0.3.0-alpha.1");
-  assert.equal(installed.license, "MIT");
-  assert.equal(installed.bin?.loopiter, "dist/src/cli.js");
+  const installed = JSON.parse(await readFile(join(temporary, 'node_modules/loopiter/package.json'), 'utf8'));
+  assert.equal(installed.version, '0.3.0-alpha.1');
+  assert.equal(installed.license, 'MIT');
+  assert.equal(installed.bin?.loopiter, 'dist/src/cli.js');
   assert.equal(Object.keys(installed.dependencies ?? {}).length, 0);
-  assert.ok(installed.exports["./onboarding"]);
-  assert.ok(installed.exports["./starters"]);
-  assert.ok(installed.exports["./integrations/openai"]);
-  assert.ok(installed.exports["./integrations/ai-sdk"]);
-  assert.ok(installed.exports["./integrations/observe"]);
-  assert.ok(installed.exports["./integrations/otel"]);
-  assert.match(await readFile(join(temporary,"node_modules/loopiter/docs/application-observation.md"),"utf8"), /metadata-only/);
-  await assert.rejects(readFile(join(temporary, "node_modules/openai/package.json")));
-  await assert.rejects(readFile(join(temporary, "node_modules/ai/package.json")));
-  assert.match(await readFile(join(temporary, "node_modules/loopiter/THIRD_PARTY_NOTICES.md"), "utf8"), /Supermemory Inc/);
-  assert.equal(
-    await readFile(
-      join(temporary, "node_modules/loopiter/AGENT_GUIDE.md"),
-      "utf8",
-    ),
-    await readFile(join(root, "AGENT_GUIDE.md"), "utf8"),
-  );
+  assert.ok(installed.exports['./onboarding']);
+  assert.ok(installed.exports['./starters']);
+  for (const path of ['./feedback', './improvement', './stores', './types']) {
+    assert.ok(installed.exports[path]);
+  }
+  assert.ok(installed.exports['./integrations/openai']);
+  assert.ok(installed.exports['./integrations/ai-sdk']);
+  assert.ok(installed.exports['./integrations/observe']);
+  assert.ok(installed.exports['./integrations/otel']);
   assert.match(
-    await readFile(join(temporary, "node_modules/loopiter/LICENSE"), "utf8"),
-    /MIT License/,
+    await readFile(join(temporary, 'node_modules/loopiter/docs/application-observation.md'), 'utf8'),
+    /metadata-only/,
   );
-  await assert.rejects(
-    readFile(join(temporary, "node_modules/pg/package.json")),
+  await assert.rejects(readFile(join(temporary, 'node_modules/openai/package.json')));
+  await assert.rejects(readFile(join(temporary, 'node_modules/ai/package.json')));
+  assert.match(
+    await readFile(join(temporary, 'node_modules/loopiter/THIRD_PARTY_NOTICES.md'), 'utf8'),
+    /Supermemory Inc/,
   );
-  const fixture = JSON.parse(
-    await readFile(join(root, "python/tests/fixtures/autonomy.json"), "utf8"),
+  assert.equal(
+    await readFile(join(temporary, 'node_modules/loopiter/AGENT_GUIDE.md'), 'utf8'),
+    await readFile(join(root, 'AGENT_GUIDE.md'), 'utf8'),
   );
+  assert.match(await readFile(join(temporary, 'node_modules/loopiter/LICENSE'), 'utf8'), /MIT License/);
+  await assert.rejects(readFile(join(temporary, 'node_modules/pg/package.json')));
+  const fixture = JSON.parse(await readFile(join(root, 'python/tests/fixtures/autonomy.json'), 'utf8'));
   await writeFile(
-    join(temporary, "consumer.mts"),
+    join(temporary, 'consumer.mts'),
     `
 import { FeedbackLoop, InMemoryStore, ImprovementController, type ImprovementWorkflow } from 'loopiter';
+import { FeedbackLoop as FeatureFeedbackLoop } from 'loopiter/feedback';
+import { InMemoryStore as FeatureInMemoryStore } from 'loopiter/stores';
+import { ImprovementController as FeatureImprovementController, assignCohort } from 'loopiter/improvement';
+import type { EvaluationInput, EvaluationBatchInput, ProposalInput, ObservationInput, RolloutAdapter } from 'loopiter/improvement';
+import type { FeedbackLoopOptions, RecordExecutionInput, Page, AiExecution, Observer, BoundedObserver, ObserveInput, SpanExporterOptions, LoopiterSpanExporter, CapturedPayload, CohortInput, CohortAssignment, JsonObject } from 'loopiter/types';
 import { PostgresStore, migratePostgres } from 'loopiter/postgres';
 import { runStoreConformance } from 'loopiter/testing';
 import { readAgentGuide, readReference, initializeSelfHosted, inspectSelfHostedSetup } from 'loopiter/onboarding';
 import { migrateArtifactRegistry } from 'loopiter/starters';
 import { withLoopiter as wrapModel } from 'loopiter/integrations/ai-sdk';
 import { replaceGuidance, stripGuidance } from 'loopiter/integrations/context';
-import { createObserver } from 'loopiter/integrations/observe';
+import { createObserver, capturePayload } from 'loopiter/integrations/observe';
 import { createLoopiterSpanExporter } from 'loopiter/integrations/otel';
+if (FeatureFeedbackLoop !== FeedbackLoop || FeatureInMemoryStore !== InMemoryStore || FeatureImprovementController !== ImprovementController) throw Error('Feature imports changed class identity');
+const typedOptions = { store: new FeatureInMemoryStore(), namespace: 'typed-imports' } satisfies FeedbackLoopOptions;
+const typedInput = { kind: 'prediction', input: { text: 'hello' } } satisfies RecordExecutionInput;
+const cohortInput = { experimentId: 'typed', entityId: 'entity', salt: 'stable', exposure: 0.5 } satisfies CohortInput;
+const cohort: CohortAssignment = assignCohort(cohortInput);
+const captured: CapturedPayload = capturePayload('typed', { mode: 'full' });
+const jsonResults: JsonObject[] = [cohort, captured];
+if (jsonResults.length !== 2 || captured.value !== 'typed') throw Error('Named results lost JSON compatibility');
+const typedLoop = new FeatureFeedbackLoop(typedOptions);
+await typedLoop.recordExecution(typedInput);
+const typedPage: Page<AiExecution> = await typedLoop.list('executions');
+if (typedPage.items[0]?.kind !== 'prediction') throw Error('Collection type mapping failed');
+const observer: Observer = createObserver({ loop: typedLoop });
+const observation = { kind: 'tool' } satisfies ObserveInput;
+if (await observer.observe('typed-tool', async () => 42, observation) !== 42) throw Error('Observer generic result changed');
+const boundedObserver: BoundedObserver = createObserver({ loop: typedLoop, bounded: { queueLimit: 2, writeTimeoutMs: 100 } });
+if (boundedObserver.stats().backlog !== 0) throw Error('Bounded observer overload changed');
+await boundedObserver.shutdown();
+const exporterOptions = { loop: typedLoop } satisfies SpanExporterOptions;
+const exporter: LoopiterSpanExporter = createLoopiterSpanExporter(exporterOptions);
+await exporter.shutdown();
+await typedLoop.close();
 if (typeof createObserver !== 'function' || typeof createLoopiterSpanExporter !== 'function') throw Error('Observation exports missing');
 if (typeof wrapModel !== 'function' || stripGuidance(replaceGuidance('policy', 'guidance')) !== 'policy') throw Error('Optional dependency-free integration exports missing');
 if (!(await readAgentGuide()).includes('self-hosted SDK/library')) throw Error('Packaged agent guide missing');
@@ -125,8 +143,8 @@ const workflow: ImprovementWorkflow = {
   policy: ${JSON.stringify(fixture.policy)},
   artifact: async () => ({ artifactVersion: version, configurationHash: 'fixed' }),
   dataset: async () => ({ version: '1', optimization: rows('o', 3, 1), validation: rows('v', 20, 2), audit: rows('a', 50, 3) }),
-  propose: async () => [{ score: 1 }],
-  evaluate: async ({ examples }) => ({ cases: examples.map(r => ({ id: r.id, baseline: 0, candidate: 1 })), metrics: { errors: 0 }, estimatedServingCost: 0 }),
+  propose: async (input: ProposalInput) => [{ score: 1 }],
+  evaluate: async ({ examples }: EvaluationInput) => ({ cases: examples.map(r => ({ id: r.id, baseline: 0, candidate: 1 })), metrics: { errors: 0 }, estimatedServingCost: 0 }),
   deployment: {
     apply: async ({ attempt, candidate }) => {
       if (version !== attempt.expectedArtifactVersion) throw Error('stale');
@@ -137,7 +155,7 @@ const workflow: ImprovementWorkflow = {
     inspect: async () => ({ status: 'unknown' }),
     rollback: async () => { throw Error('Not exercised by this isolated package smoke'); },
   },
-  observe: async input => ({ artifactVersion: version, configurationHash: 'fixed', startedAt: input.deployedAt,
+  observe: async (input: ObservationInput) => ({ artifactVersion: version, configurationHash: 'fixed', startedAt: input.deployedAt,
     endedAt: now.toISOString(), complete: true, unitIds: Array.from({ length: 10 }, (_, i) => 'production-' + i), metrics: { errors: 0 } }),
 };
 const disabled = new ImprovementController(loop, { workflows: [workflow], mode: 'autonomous', selfImproving: false });
@@ -158,47 +176,52 @@ console.log('Clean installed tarball: declarations, capture, conformance, migrat
   run(
     process.execPath,
     [
-      "node_modules/typescript/bin/tsc",
-      "consumer.mts",
-      "--outDir",
-      "built",
-      "--strict",
-      "--skipLibCheck",
-      "--target",
-      "ES2022",
-      "--module",
-      "NodeNext",
-      "--moduleResolution",
-      "NodeNext",
+      'node_modules/typescript/bin/tsc',
+      'consumer.mts',
+      '--outDir',
+      'built',
+      '--strict',
+      '--exactOptionalPropertyTypes',
+      '--verbatimModuleSyntax',
+      '--skipLibCheck',
+      '--target',
+      'ES2022',
+      '--module',
+      'NodeNext',
+      '--moduleResolution',
+      'NodeNext',
     ],
     temporary,
   );
-  run(process.execPath, ["built/consumer.mjs"], temporary);
-  run(process.execPath, ["node_modules/.bin/loopiter", "--help"], temporary);
-  run(process.execPath, ["node_modules/.bin/loopiter", "verify"], temporary);
+  run(process.execPath, ['built/consumer.mjs'], temporary);
+  const typeEntry = await import(join(temporary, 'node_modules/loopiter', installed.exports['./types'].import));
+  assert.deepEqual(Object.keys(typeEntry), []);
+  for (const name of ['feedback-loop', 'improvement-contracts', 'integrations/observe', 'integrations/otel']) {
+    const declaration = join(temporary, 'node_modules/loopiter/dist/src', `${name}.d.ts`);
+    const map = JSON.parse(await readFile(`${declaration}.map`, 'utf8'));
+    for (const source of map.sources) {
+      await readFile(resolve(declaration, '..', map.sourceRoot ?? '', source), 'utf8');
+    }
+  }
+  run(process.execPath, ['node_modules/.bin/loopiter', '--help'], temporary);
+  run(process.execPath, ['node_modules/.bin/loopiter', 'verify'], temporary);
   const doctor = spawnSync(
     process.execPath,
-    [
-      "node_modules/.bin/loopiter",
-      "doctor",
-      "--directory",
-      "setup with spaces",
-    ],
-    { cwd: temporary, encoding: "utf8" },
+    ['node_modules/.bin/loopiter', 'doctor', '--directory', 'setup with spaces'],
+    { cwd: temporary, encoding: 'utf8' },
   );
   assert.equal(doctor.status, 1);
   assert.equal(JSON.parse(doctor.stdout).configured, false);
-  for (const flags of [[], ["--reject"], ["--interrupt"]]) {
-    const demo = spawnSync(
-      process.execPath,
-      ["node_modules/.bin/loopiter", "starter", "demo", ...flags],
-      { cwd: temporary, encoding: "utf8" },
-    );
+  for (const flags of [[], ['--reject'], ['--interrupt']]) {
+    const demo = spawnSync(process.execPath, ['node_modules/.bin/loopiter', 'starter', 'demo', ...flags], {
+      cwd: temporary,
+      encoding: 'utf8',
+    });
     assert.equal(demo.status, 0, demo.stderr);
-    assert.equal(JSON.parse(demo.stdout).mode, "simulated");
+    assert.equal(JSON.parse(demo.stdout).mode, 'simulated');
   }
   await writeFile(
-    join(temporary, "worker.mjs"),
+    join(temporary, 'worker.mjs'),
     `
 import { FeedbackLoop, InMemoryStore } from 'loopiter';
 import { writeFile } from 'node:fs/promises';
@@ -216,23 +239,14 @@ export async function createIntegration() {
   );
   const tick = spawnSync(
     process.execPath,
-    [
-      "node_modules/.bin/loopiter",
-      "worker",
-      "--module",
-      "worker.mjs",
-      "--once",
-    ],
-    { cwd: temporary, encoding: "utf8" },
+    ['node_modules/.bin/loopiter', 'worker', '--module', 'worker.mjs', '--once'],
+    { cwd: temporary, encoding: 'utf8' },
   );
   assert.equal(tick.status, 0, tick.stderr);
-  assert.equal(JSON.parse(tick.stdout).state, "waiting_for_evidence");
-  assert.equal(
-    await readFile(join(temporary, "worker-closed"), "utf8"),
-    "closed",
-  );
+  assert.equal(JSON.parse(tick.stdout).state, 'waiting_for_evidence');
+  assert.equal(await readFile(join(temporary, 'worker-closed'), 'utf8'), 'closed');
   console.log(
-    "Installed self-hosted guide, initialization, disabled defaults, worker references, offline verification and packaged classification fixtures passed without pg.",
+    'Installed self-hosted guide, initialization, disabled defaults, worker references, offline verification and packaged classification fixtures passed without pg.',
   );
 } finally {
   // Only the exact temporary consumer directory created by this script is removed.

@@ -7,13 +7,9 @@ import {
   resolveContext,
   type CaptureOptions,
   type CaptureStatus,
-} from "./capture.js";
-import { guidanceMessages } from "./context.js";
-export type {
-  CaptureOptions,
-  ExecutionContext,
-  CaptureRequest,
-} from "./capture.js";
+} from './capture.js';
+import { guidanceMessages } from './context.js';
+export type { CaptureOptions, ExecutionContext, CaptureRequest } from './capture.js';
 
 // Structural model boundary keeps framework packages outside the default SDK import.
 interface Model {
@@ -23,22 +19,16 @@ interface Model {
   doGenerate(options: never): PromiseLike<unknown>;
   doStream(options: never): PromiseLike<{ stream: ReadableStream<unknown> }>;
 }
-const baseSymbol = Symbol.for("loopiter/ai-sdk/base-model");
+const baseSymbol = Symbol.for('loopiter/ai-sdk/base-model');
 
 /** Isolated Vercel AI SDK v2/v3/v4 model wrapper (AI SDK 5/6/7). */
-export function withLoopiter<T extends Model>(
-  model: T,
-  options: CaptureOptions,
-): T {
+export function withLoopiter<T extends Model>(model: T, options: CaptureOptions): T {
   options = { ...options };
   const base = (Reflect.get(model, baseSymbol) as T | undefined) ?? model;
-  if (!["v2", "v3", "v4"].includes(base.specificationVersion))
-    throw new TypeError("Unsupported AI SDK model specification.");
+  if (!['v2', 'v3', 'v4'].includes(base.specificationVersion))
+    throw new TypeError('Unsupported AI SDK model specification.');
   async function prepare(raw: unknown) {
-    const { abortSignal, headers, ...settings } = raw as Record<
-      string,
-      unknown
-    >;
+    const { abortSignal, headers, ...settings } = raw as Record<string, unknown>;
     const params = {
       ...(captureSnapshot(settings) as {
         prompt: { role: string; content: unknown }[];
@@ -47,15 +37,11 @@ export function withLoopiter<T extends Model>(
       headers,
     };
     const input = (value: typeof params) => {
-      const {
-        abortSignal: _signal,
-        headers: _headers,
-        ...settings
-      } = value as typeof params & { headers?: unknown };
+      const { abortSignal: _signal, headers: _headers, ...settings } = value as typeof params & { headers?: unknown };
       return captureJson({ ...settings, provider: base.provider });
     };
     const request = {
-      integration: "ai-sdk",
+      integration: 'ai-sdk',
       model: base.modelId,
       input: input(params),
     };
@@ -88,9 +74,7 @@ export function withLoopiter<T extends Model>(
         });
         return result;
       } catch (error) {
-        await session.finish(
-          params.abortSignal?.aborted ? "cancelled" : "failed",
-        );
+        await session.finish(params.abortSignal?.aborted ? 'cancelled' : 'failed');
         throw error;
       }
     },
@@ -100,7 +84,7 @@ export function withLoopiter<T extends Model>(
         params.abortSignal?.throwIfAborted();
         const result = await base.doStream(params as never);
         const reader = result.stream.getReader();
-        let status: CaptureStatus = "incomplete",
+        let status: CaptureStatus = 'incomplete',
           ended = false;
         const stream = new ReadableStream<unknown>(
           {
@@ -109,9 +93,7 @@ export function withLoopiter<T extends Model>(
                 const next = await reader.read();
                 if (ended) return;
                 if (next.done) {
-                  await session.finish(
-                    params.abortSignal?.aborted ? "cancelled" : status,
-                  );
+                  await session.finish(params.abortSignal?.aborted ? 'cancelled' : status);
                   ended = true;
                   reader.releaseLock();
                   controller.close();
@@ -122,9 +104,8 @@ export function withLoopiter<T extends Model>(
                   finishReason?: unknown;
                 };
                 session.append(next.value);
-                if (part.type === "finish" && status !== "failed")
-                  status = finishStatus(part.finishReason);
-                if (part.type === "error") status = "failed";
+                if (part.type === 'finish' && status !== 'failed') status = finishStatus(part.finishReason);
+                if (part.type === 'error') status = 'failed';
                 controller.enqueue(next.value);
               } catch (error) {
                 if (ended) return;
@@ -132,9 +113,7 @@ export function withLoopiter<T extends Model>(
                 await reader.cancel(error).catch(() => undefined);
                 reader.releaseLock();
                 try {
-                  await session.finish(
-                    params.abortSignal?.aborted ? "cancelled" : "failed",
-                  );
+                  await session.finish(params.abortSignal?.aborted ? 'cancelled' : 'failed');
                 } catch (persistenceError) {
                   controller.error(persistenceError);
                   return;
@@ -149,7 +128,7 @@ export function withLoopiter<T extends Model>(
                 await reader.cancel(reason);
               } finally {
                 reader.releaseLock();
-                await session.finish("cancelled");
+                await session.finish('cancelled');
               }
             },
           },
@@ -157,9 +136,7 @@ export function withLoopiter<T extends Model>(
         );
         return { ...result, stream };
       } catch (error) {
-        await session.finish(
-          params.abortSignal?.aborted ? "cancelled" : "failed",
-        );
+        await session.finish(params.abortSignal?.aborted ? 'cancelled' : 'failed');
         throw error;
       }
     },

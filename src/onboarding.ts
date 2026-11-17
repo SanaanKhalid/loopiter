@@ -1,92 +1,71 @@
 /** Node-only self-hosted onboarding. No platform account or external service is used. */
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { appendFile, lstat, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { userInfo } from "node:os";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
-import { FeedbackLoop } from "./feedback-loop.js";
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { appendFile, lstat, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { userInfo } from 'node:os';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+import { FeedbackLoop } from './feedback-loop.js';
 import {
   ImprovementController,
   improvementWorkDisabled,
   warnAmbiguousImprovementDisable,
-} from "./improvement-controller.js";
-import type {
-  ImprovementMode,
-  ImprovementWorkflow,
-  TickResult,
-} from "./improvement-contracts.js";
-import { describeAuditFloor, minimumCertifiableAuditUnits } from "./improvement-evidence.js";
-import { hash } from "./utils.js";
-import { runDemo } from "../examples/autonomous/demo.js";
+} from './improvement-controller.js';
+import type { ImprovementMode, ImprovementWorkflow, TickResult } from './improvement-contracts.js';
+import { describeAuditFloor, minimumCertifiableAuditUnits } from './improvement-evidence.js';
+import { hash } from './utils.js';
+import { runDemo } from '../examples/autonomous/demo.js';
 
-const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
-const workerModes = ["observe", "recommend", "experiment", "autonomous"] as const;
+const packageRoot = fileURLToPath(new URL('../../', import.meta.url));
+const workerModes = ['observe', 'recommend', 'experiment', 'autonomous'] as const;
 const MAX_STEP_MS = 7_200_000;
-const shellQuote = (value: string) =>
-  "'" + value.replaceAll("'", "'\\''") + "'";
+const shellQuote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 export const referenceFiles: Record<string, string> = {
-  workflows: "examples/autonomous/workflows.ts",
-  registry: "examples/autonomous/postgres-registry.ts",
-  registrySql: "examples/autonomous/registry.sql",
-  providers: "examples/autonomous/providers.ts",
-  classification: "examples/prompt-improvement/workflow.ts",
-  classificationReadme: "examples/prompt-improvement/README.md",
+  workflows: 'examples/autonomous/workflows.ts',
+  registry: 'examples/autonomous/postgres-registry.ts',
+  registrySql: 'examples/autonomous/registry.sql',
+  providers: 'examples/autonomous/providers.ts',
+  classification: 'examples/prompt-improvement/workflow.ts',
+  classificationReadme: 'examples/prompt-improvement/README.md',
 };
 
 export function readAgentGuide(): Promise<string> {
-  return readFile(resolve(packageRoot, "AGENT_GUIDE.md"), "utf8");
+  return readFile(resolve(packageRoot, 'AGENT_GUIDE.md'), 'utf8');
 }
 export async function readReference(name: string): Promise<string> {
   if (!Object.hasOwn(referenceFiles, name))
-    throw Error(
-      "Unknown reference. Use: " + Object.keys(referenceFiles).join(", "),
-    );
-  return readFile(resolve(packageRoot, referenceFiles[name]!), "utf8");
+    throw Error('Unknown reference. Use: ' + Object.keys(referenceFiles).join(', '));
+  return readFile(resolve(packageRoot, referenceFiles[name]!), 'utf8');
 }
 
 function validStepTimeout(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isSafeInteger(value) &&
-    value >= 1 &&
-    value <= MAX_STEP_MS
-  );
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 && value <= MAX_STEP_MS;
 }
 const DECIMAL_INTEGER = /^[0-9]+$/;
 
 /** Flag and plan timeouts are decimal integers only. `1e5`, `120000.0`, and `0x1e240` are rejected. */
 export function parseStepTimeout(raw: string): number {
-  if (!DECIMAL_INTEGER.test(raw))
-    throw Error("--step-timeout-ms must be a decimal integer.");
+  if (!DECIMAL_INTEGER.test(raw)) throw Error('--step-timeout-ms must be a decimal integer.');
   const value = Number(raw);
   if (!validStepTimeout(value))
-    throw Error(
-      "Step timeout must be an integer number of milliseconds from 1 to 7200000.",
-    );
+    throw Error('Step timeout must be an integer number of milliseconds from 1 to 7200000.');
   return value;
 }
 
 function assertPlanStepTimeout(text: string, plan: Record<string, unknown>) {
-  if (!Object.hasOwn(plan, "stepTimeoutMs")) return;
+  if (!Object.hasOwn(plan, 'stepTimeoutMs')) return;
   const literal = text.match(/"stepTimeoutMs"\s*:\s*([^\s,}\]]+)/)?.[1];
   if (!literal || !DECIMAL_INTEGER.test(literal) || !validStepTimeout(plan.stepTimeoutMs))
-    throw Error(
-      "stepTimeoutMs must be a decimal integer number of milliseconds from 1 to 7200000.",
-    );
+    throw Error('stepTimeoutMs must be a decimal integer number of milliseconds from 1 to 7200000.');
 }
 
-function loadIntegrationPlan(
-  modulePath: string,
-): Record<string, unknown> | undefined {
-  const path = resolve(dirname(resolve(modulePath)), "integration-plan.json");
+function loadIntegrationPlan(modulePath: string): Record<string, unknown> | undefined {
+  const path = resolve(dirname(resolve(modulePath)), 'integration-plan.json');
   if (!existsSync(path)) return undefined;
-  if (!statSync(path).isFile())
-    throw Error("Integration plan path is not a file.");
-  const text = readFileSync(path, "utf8");
+  if (!statSync(path).isFile()) throw Error('Integration plan path is not a file.');
+  const text = readFileSync(path, 'utf8');
   const plan = JSON.parse(text) as unknown;
-  if (!plan || typeof plan !== "object" || Array.isArray(plan))
-    throw Error("Invalid integration plan.");
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) throw Error('Invalid integration plan.');
   const record = plan as Record<string, unknown>;
   assertPlanStepTimeout(text, record);
   return record;
@@ -101,7 +80,7 @@ export function activationActor(env: NodeJS.ProcessEnv = process.env): string {
   } catch {
     // Some containers have no passwd entry.
   }
-  return "unknown";
+  return 'unknown';
 }
 
 /** LOOPITER_NAMESPACE when set, otherwise the plan namespace. A one-off flag is not a namespace. */
@@ -111,7 +90,7 @@ export function effectiveNamespace(
 ): string {
   const provided = env.LOOPITER_NAMESPACE?.trim();
   if (provided) return provided;
-  return typeof plan?.namespace === "string" ? plan.namespace : "";
+  return typeof plan?.namespace === 'string' ? plan.namespace : '';
 }
 
 /** Hash of the plan fields that decide autonomous activation. The stamp is not included.
@@ -122,15 +101,14 @@ export function autonomyPlanHash(
   plan: Record<string, unknown> | undefined,
   effective: { namespace?: string; mode?: string } = {},
 ): string {
-  const step = plan && Object.hasOwn(plan, "stepTimeoutMs") ? plan.stepTimeoutMs : 120000;
-  const mode =
-    effective.mode ?? (typeof plan?.mode === "string" ? plan.mode : "recommend");
+  const step = plan && Object.hasOwn(plan, 'stepTimeoutMs') ? plan.stepTimeoutMs : 120000;
+  const mode = effective.mode ?? (typeof plan?.mode === 'string' ? plan.mode : 'recommend');
   return hash({
     schemaVersion: plan?.schemaVersion ?? null,
     mode,
     selfImproving: plan?.selfImproving === true,
     namespace: effective.namespace ?? effectiveNamespace(plan),
-    stepTimeoutMs: typeof step === "number" ? step : null,
+    stepTimeoutMs: typeof step === 'number' ? step : null,
     audit: plan?.audit ?? null,
     policy: plan?.policy ?? null,
     budget: plan?.budget ?? null,
@@ -138,12 +116,9 @@ export function autonomyPlanHash(
 }
 
 const ACTIVATION_RETIRED =
-  "warning: activation confirmation is retired. This helper is a no-op. Use mode recommend to store proposals without applying them, or mode observe to inspect evidence without proposing, or --disable / LOOPITER_DISABLE to pause.";
+  'warning: activation confirmation is retired. This helper is a no-op. Use mode recommend to store proposals without applying them, or mode observe to inspect evidence without proposing, or --disable / LOOPITER_DISABLE to pause.';
 
-export function autonomousActivationCurrent(
-  _modulePath: string,
-  _mode?: ImprovementMode,
-): boolean {
+export function autonomousActivationCurrent(_modulePath: string, _mode?: ImprovementMode): boolean {
   console.error(ACTIVATION_RETIRED);
   return false;
 }
@@ -159,17 +134,12 @@ export function moduleActivationNamespace(modulePath: string): string {
 }
 
 /** Retired with activation confirmation. The worker no longer fingerprints budgets for a stamp. */
-export function effectiveBudgetFingerprint(
-  _workflows: readonly ImprovementWorkflow[],
-): string {
+export function effectiveBudgetFingerprint(_workflows: readonly ImprovementWorkflow[]): string {
   console.error(ACTIVATION_RETIRED);
-  return "";
+  return '';
 }
 
-export function activationBudgetCurrent(
-  _modulePath: string,
-  _budgetHash: string,
-): boolean {
+export function activationBudgetCurrent(_modulePath: string, _budgetHash: string): boolean {
   console.error(ACTIVATION_RETIRED);
   return false;
 }
@@ -191,46 +161,32 @@ export function readWorkerSettings(
   modulePath: string,
   overrides: {
     mode?: ImprovementMode;
-    modeSource?: "flag" | "option" | "plan" | "default";
+    modeSource?: 'flag' | 'option' | 'plan' | 'default';
     stepTimeoutMs?: number;
-    stepTimeoutSource?: "flag" | "option" | "plan" | "default";
+    stepTimeoutSource?: 'flag' | 'option' | 'plan' | 'default';
   } = {},
   options: { warnMissingPlan?: boolean } = {},
 ) {
   const plan = loadIntegrationPlan(modulePath);
-  if (
-    plan &&
-    !workerModes.includes(plan.mode as (typeof workerModes)[number])
-  )
-    throw Error("Invalid mode in integration plan.");
-  const mode = (overrides.mode ??
-    (plan?.mode as ImprovementMode | undefined) ??
-    "autonomous") as ImprovementMode;
-  if (!workerModes.includes(mode)) throw Error("Invalid improvement mode.");
-  const modeSource = overrides.mode
-    ? (overrides.modeSource ?? "option")
-    : plan?.mode
-      ? "plan"
-      : "default";
+  if (plan && !workerModes.includes(plan.mode as (typeof workerModes)[number]))
+    throw Error('Invalid mode in integration plan.');
+  const mode = (overrides.mode ?? (plan?.mode as ImprovementMode | undefined) ?? 'autonomous') as ImprovementMode;
+  if (!workerModes.includes(mode)) throw Error('Invalid improvement mode.');
+  const modeSource = overrides.mode ? (overrides.modeSource ?? 'option') : plan?.mode ? 'plan' : 'default';
   if (!plan && !overrides.mode && options.warnMissingPlan !== false)
-    console.error(
-      "warning: no integration plan found; falling back to autonomous mode.",
-    );
+    console.error('warning: no integration plan found; falling back to autonomous mode.');
   if (plan?.stepTimeoutMs !== undefined && !validStepTimeout(plan.stepTimeoutMs))
-    throw Error("Invalid stepTimeoutMs in integration plan.");
+    throw Error('Invalid stepTimeoutMs in integration plan.');
   const stepTimeoutMs =
-    overrides.stepTimeoutMs ??
-    (validStepTimeout(plan?.stepTimeoutMs) ? plan.stepTimeoutMs : 120000);
+    overrides.stepTimeoutMs ?? (validStepTimeout(plan?.stepTimeoutMs) ? plan.stepTimeoutMs : 120000);
   if (!validStepTimeout(stepTimeoutMs))
-    throw Error(
-      "Step timeout must be an integer number of milliseconds from 1 to 7200000.",
-    );
+    throw Error('Step timeout must be an integer number of milliseconds from 1 to 7200000.');
   const stepTimeoutSource =
     overrides.stepTimeoutMs !== undefined
-      ? (overrides.stepTimeoutSource ?? "option")
+      ? (overrides.stepTimeoutSource ?? 'option')
       : plan?.stepTimeoutMs !== undefined
-        ? "plan"
-        : "default";
+        ? 'plan'
+        : 'default';
   return {
     mode,
     modeSource,
@@ -244,7 +200,7 @@ function auditPlanMessages(plan: Record<string, unknown>): {
 } {
   const audit = plan.audit;
   if (audit === undefined) {
-    if (plan.mode !== "autonomous") return {};
+    if (plan.mode !== 'autonomous') return {};
     return {
       error: `Declare audit sizing. ${describeAuditFloor({
         minimumImprovement: 0.05,
@@ -253,31 +209,26 @@ function auditPlanMessages(plan: Record<string, unknown>): {
       })}`,
     };
   }
-  if (!audit || typeof audit !== "object" || Array.isArray(audit))
-    throw Error("Invalid audit sizing in integration plan.");
+  if (!audit || typeof audit !== 'object' || Array.isArray(audit))
+    throw Error('Invalid audit sizing in integration plan.');
   const row = audit as Record<string, unknown>;
-  const method = row.method ?? "paired-hoeffding";
-  if (typeof method !== "string" || !method.trim())
-    throw Error("Invalid audit method in integration plan.");
-  if (
-    typeof row.minimumUnits !== "number" ||
-    !Number.isSafeInteger(row.minimumUnits) ||
-    row.minimumUnits < 1
-  )
-    throw Error("Invalid audit.minimumUnits in integration plan.");
-  if (method !== "paired-hoeffding")
+  const method = row.method ?? 'paired-hoeffding';
+  if (typeof method !== 'string' || !method.trim()) throw Error('Invalid audit method in integration plan.');
+  if (typeof row.minimumUnits !== 'number' || !Number.isSafeInteger(row.minimumUnits) || row.minimumUnits < 1)
+    throw Error('Invalid audit.minimumUnits in integration plan.');
+  if (method !== 'paired-hoeffding')
     return {
-      warning: "Custom audit method is not sized by the paired Hoeffding check.",
+      warning: 'Custom audit method is not sized by the paired Hoeffding check.',
     };
   if (
-    typeof row.minimumImprovement !== "number" ||
+    typeof row.minimumImprovement !== 'number' ||
     !Array.isArray(row.range) ||
     row.range.length !== 2 ||
-    typeof row.range[0] !== "number" ||
-    typeof row.range[1] !== "number" ||
-    typeof row.alpha !== "number"
+    typeof row.range[0] !== 'number' ||
+    typeof row.range[1] !== 'number' ||
+    typeof row.alpha !== 'number'
   )
-    throw Error("Invalid audit objective in integration plan.");
+    throw Error('Invalid audit objective in integration plan.');
   let needed: number;
   try {
     needed = minimumCertifiableAuditUnits({
@@ -286,9 +237,7 @@ function auditPlanMessages(plan: Record<string, unknown>): {
       alpha: row.alpha,
     });
   } catch (error) {
-    throw Error(
-      error instanceof Error ? error.message : "Invalid audit objective.",
-    );
+    throw Error(error instanceof Error ? error.message : 'Invalid audit objective.');
   }
   if (row.minimumUnits >= needed) return {};
   const message = `Audit of ${row.minimumUnits} units is too small for this objective. ${describeAuditFloor({
@@ -296,20 +245,20 @@ function auditPlanMessages(plan: Record<string, unknown>): {
     range: [row.range[0], row.range[1]],
     alpha: row.alpha,
   })}`;
-  return plan.mode === "autonomous" ? { error: message } : { warning: message };
+  return plan.mode === 'autonomous' ? { error: message } : { warning: message };
 }
-const STATE_IGNORE_LINE = ".state/";
+const STATE_IGNORE_LINE = '.state/';
 
 function gitignoreLineCoversState(line: string): boolean {
   const trimmed = line.trim();
-  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("!")) return false;
+  if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('!')) return false;
   return (
-    trimmed === ".state" ||
-    trimmed === ".state/" ||
-    trimmed === "/.state" ||
-    trimmed === "/.state/" ||
-    trimmed === "**/.state" ||
-    trimmed === "**/.state/"
+    trimmed === '.state' ||
+    trimmed === '.state/' ||
+    trimmed === '/.state' ||
+    trimmed === '/.state/' ||
+    trimmed === '**/.state' ||
+    trimmed === '**/.state/'
   );
 }
 
@@ -323,7 +272,7 @@ export async function ensureStateGitignored(directory: string): Promise<void> {
     return;
   }
   if (!info.isDirectory()) return;
-  const path = resolve(destination, ".gitignore");
+  const path = resolve(destination, '.gitignore');
   let gitignore;
   try {
     gitignore = await lstat(path);
@@ -331,9 +280,9 @@ export async function ensureStateGitignored(directory: string): Promise<void> {
     return;
   }
   if (!gitignore.isFile()) return;
-  const text = await readFile(path, "utf8");
+  const text = await readFile(path, 'utf8');
   if (text.split(/\r?\n/).some(gitignoreLineCoversState)) return;
-  const separator = text.length === 0 || text.endsWith("\n") ? "" : "\n";
+  const separator = text.length === 0 || text.endsWith('\n') ? '' : '\n';
   await appendFile(path, `${separator}${STATE_IGNORE_LINE}\n`);
 }
 
@@ -345,27 +294,26 @@ export async function initializeSelfHosted(directory: string) {
   try {
     await mkdir(destination, { mode: 0o700 });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST")
-      await ensureStateGitignored(destination);
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') await ensureStateGitignored(destination);
     throw error;
   }
   const plan = {
     schemaVersion: 2,
-    language: "node",
-    preset: "autonomous-default",
-    mode: "autonomous",
+    language: 'node',
+    preset: 'autonomous-default',
+    mode: 'autonomous',
     selfImproving: true,
     stepTimeoutMs: 120000,
     audit: {
-      method: "paired-hoeffding",
+      method: 'paired-hoeffding',
       minimumImprovement: 0.05,
       range: [0, 1],
       alpha: 0.05,
       minimumUnits: 50,
     },
-    namespace: "",
-    applicationModule: "./application.mjs",
-    storage: "unconfigured",
+    namespace: '',
+    applicationModule: './application.mjs',
+    storage: 'unconfigured',
     requiredEnvironment: [],
     reviewed: {
       target: false,
@@ -376,16 +324,16 @@ export async function initializeSelfHosted(directory: string) {
     },
   };
   const files: Record<string, string> = {
-    "AGENT_GUIDE.md": guide,
-    ".gitignore": ".state/\n.env\n.env.*\n!.env.example\n*.log\n",
-    "integration-plan.json": JSON.stringify(plan, null, 2) + "\n",
-    "verify.mjs":
+    'AGENT_GUIDE.md': guide,
+    '.gitignore': '.state/\n.env\n.env.*\n!.env.example\n*.log\n',
+    'integration-plan.json': JSON.stringify(plan, null, 2) + '\n',
+    'verify.mjs':
       'import { verifySelfHostedInstallation } from "loopiter/onboarding";\nconsole.log(JSON.stringify(await verifySelfHostedInstallation(), null, 2));\n',
-    "README.md": `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 to pause before the application module is imported, in every mode, including recommend and experiment. Any non-empty value pauses except 0, false, no, and off. The pause makes no provider call and stores no proposal. It is not mode recommend. Set mode to recommend, or set plan.mode to recommend, to store proposals without applying them. Set mode to observe, or set plan.mode to observe, to inspect evidence without proposing. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --once\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + "/application.mjs")} --mode recommend --once\n\nThe recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. With no integration plan, the worker uses autonomous. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
+    'README.md': `# Self-hosted Loopiter setup\n\nGive your coding agent this instruction:\n\n> Read AGENT_GUIDE.md in this directory. Inspect my application, propose the integration and feedback placement, and complete the self-hosted SDK setup. Use my infrastructure and model credentials. Verify the integration and explain how to run, pause and roll it back.\n\nRun from the application root:\n\n- npx --no-install loopiter verify — isolated offline controller checks; no credentials or charges.\n- npx --no-install loopiter doctor --directory ${shellQuote(directory)} — configuration checks, never model calls.\n- npx --no-install loopiter reference — installed reference names; no repository clone needed.\n\nYour agent creates application.mjs here, exporting async createIntegration({ signal }) returning { loop, workflows, close }. This is the application-specific connection to your real serving code, datasets, evaluator and durable artifact registry. The plan starts incomplete on purpose; initialization does not claim your application is connected.\n\nThis plan is schemaVersion 2 with preset autonomous-default: mode autonomous and selfImproving true. Doctor still blocks until the reviewed checklist, namespace, durable storage, application module and required environment names are set. verify does not spend or release.\n\nAfter doctor reports configured and verify passes, the worker runs by default. An ImprovementController created with no mode is autonomous with self-improving on. The worker runs without --enable. Pass --disable or set LOOPITER_DISABLE=1 to pause before the application module is imported, in every mode, including recommend and experiment. Any non-empty value pauses except 0, false, no, and off. The pause makes no provider call and stores no proposal. It is not mode recommend. Set mode to recommend, or set plan.mode to recommend, to store proposals without applying them. Set mode to observe, or set plan.mode to observe, to inspect evidence without proposing. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, minimum improvement, guardrails, trusted sources, budgets, cooldown, the consecutive-failure stop, canary promotion, observation rollback, pause, and lease checks still apply. Autonomous mode fails closed without an audit partition or a budget. Init writes .state/ into a new .gitignore and appends that same pattern to an existing .gitignore without duplicating it.\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + '/application.mjs')} --once\n\n--mode recommend stores proposals and does not apply a candidate. Set plan.mode to recommend, or run:\n\n    npx --no-install loopiter worker --module ${shellQuote(directory + '/application.mjs')} --mode recommend --once\n\nThe recipe above omits --mode, so plan.mode controls it. Set plan.mode to recommend to turn off autonomous. The --mode flag still overrides the plan. With no integration plan, the worker uses autonomous. Existing schemaVersion 1 plans are left unchanged.\n\nOne tick advances one durable phase. Omit --once to run a foreground worker; deploy that command with your own process manager. A worker does not remain running after its process exits.\n\nYou pay your selected model/judge, database, retrieval, hosting and logging providers directly. No Loopiter platform login, project key or cloud subscription is needed. See AGENT_GUIDE.md for Python, feedback verification, Jev selection, production storage and recovery.\n`,
   };
   for (const [name, contents] of Object.entries(files)) {
     await writeFile(resolve(destination, name), contents, {
-      flag: "wx",
+      flag: 'wx',
       mode: 0o600,
     });
   }
@@ -393,82 +341,52 @@ export async function initializeSelfHosted(directory: string) {
     directory: destination,
     files: Object.keys(files),
     schemaVersion: 2,
-    preset: "autonomous-default",
-    mode: "autonomous",
+    preset: 'autonomous-default',
+    mode: 'autonomous',
     selfImproving: true,
     connected: false,
-    prompt: `Read ${resolve(destination, "AGENT_GUIDE.md")} and complete the self-hosted SDK integration in this project.`,
+    prompt: `Read ${resolve(destination, 'AGENT_GUIDE.md')} and complete the self-hosted SDK integration in this project.`,
   };
 }
 
-export async function inspectSelfHostedSetup(
-  directory: string,
-  environment: NodeJS.ProcessEnv = process.env,
-) {
+export async function inspectSelfHostedSetup(directory: string, environment: NodeJS.ProcessEnv = process.env) {
   const root = resolve(directory);
-  const planText = await readFile(resolve(root, "integration-plan.json"), "utf8");
+  const planText = await readFile(resolve(root, 'integration-plan.json'), 'utf8');
   const plan = JSON.parse(planText) as Record<string, unknown>;
   assertPlanStepTimeout(planText, plan);
-  if (
-    (plan.schemaVersion !== 1 && plan.schemaVersion !== 2) ||
-    plan.language !== "node"
-  )
-    throw Error(
-      "Expected a Node self-hosted integration plan, schemaVersion 1 or 2.",
-    );
+  if ((plan.schemaVersion !== 1 && plan.schemaVersion !== 2) || plan.language !== 'node')
+    throw Error('Expected a Node self-hosted integration plan, schemaVersion 1 or 2.');
   const missing: string[] = [];
-  if (typeof plan.namespace !== "string" || !plan.namespace.trim())
-    missing.push("Choose an application-owned namespace.");
-  if (!["postgres", "custom-durable"].includes(String(plan.storage)))
-    missing.push(
-      "Configure durable storage; memory and JSON files are development-only.",
-    );
+  if (typeof plan.namespace !== 'string' || !plan.namespace.trim())
+    missing.push('Choose an application-owned namespace.');
+  if (!['postgres', 'custom-durable'].includes(String(plan.storage)))
+    missing.push('Configure durable storage; memory and JSON files are development-only.');
   const reviewed = plan.reviewed as Record<string, unknown> | undefined;
-  for (const name of [
-    "target",
-    "feedback",
-    "evaluation",
-    "budgets",
-    "deployment",
-  ]) {
+  for (const name of ['target', 'feedback', 'evaluation', 'budgets', 'deployment']) {
     if (reviewed?.[name] !== true) missing.push(`Review ${name}.`);
   }
   if (
-    !["observe", "recommend", "experiment", "autonomous"].includes(
-      String(plan.mode),
-    ) ||
-    typeof plan.selfImproving !== "boolean"
+    !['observe', 'recommend', 'experiment', 'autonomous'].includes(String(plan.mode)) ||
+    typeof plan.selfImproving !== 'boolean'
   )
-    throw Error("Invalid mode or selfImproving in integration plan.");
-  if (
-    typeof plan.applicationModule !== "string" ||
-    !plan.applicationModule.trim()
-  )
-    throw Error("Choose a local applicationModule.");
+    throw Error('Invalid mode or selfImproving in integration plan.');
+  if (typeof plan.applicationModule !== 'string' || !plan.applicationModule.trim())
+    throw Error('Choose a local applicationModule.');
   try {
     if (!(await stat(resolve(root, plan.applicationModule))).isFile())
-      missing.push("Implement the application integration module.");
+      missing.push('Implement the application integration module.');
   } catch {
-    missing.push("Implement the application integration module.");
+    missing.push('Implement the application integration module.');
   }
   if (
     !Array.isArray(plan.requiredEnvironment) ||
-    plan.requiredEnvironment.some(
-      (name) => typeof name !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(name),
-    )
+    plan.requiredEnvironment.some(name => typeof name !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(name))
   )
-    throw Error(
-      "requiredEnvironment must contain environment-variable names, never values.",
-    );
+    throw Error('requiredEnvironment must contain environment-variable names, never values.');
   for (const name of plan.requiredEnvironment as string[])
-    if (!environment[name])
-      missing.push(
-        `Set ${name} through your secret manager or process environment.`,
-      );
+    if (!environment[name]) missing.push(`Set ${name} through your secret manager or process environment.`);
   if (plan.stepTimeoutMs !== undefined && !validStepTimeout(plan.stepTimeoutMs))
-    throw Error(
-      "stepTimeoutMs must be an integer number of milliseconds from 1 to 7200000.",
-    );
+    throw Error('stepTimeoutMs must be an integer number of milliseconds from 1 to 7200000.');
   const audit = auditPlanMessages(plan);
   const warnings = audit.warning ? [audit.warning] : [];
   if (audit.error) missing.push(audit.error);
@@ -479,30 +397,28 @@ export async function inspectSelfHostedSetup(
     selfImproving: plan.selfImproving,
     missing,
     warnings,
-    note: "Configuration checks only. This does not import application code, contact providers, verify model quality or activate releases.",
+    note: 'Configuration checks only. This does not import application code, contact providers, verify model quality or activate releases.',
   };
 }
 
 export async function verifySelfHostedInstallation() {
   const expected = {
-    accepted: "completed",
-    rejected: "no_improvement",
-    insufficient: "waiting_for_evidence",
-    interrupted: "completed",
-    regression: "rolled_back",
+    accepted: 'completed',
+    rejected: 'no_improvement',
+    insufficient: 'waiting_for_evidence',
+    interrupted: 'completed',
+    regression: 'rolled_back',
   } as const;
   const checks = [];
   for (const [path, state] of Object.entries(expected)) {
-    const report = await runDemo("prompt", path as keyof typeof expected);
-    if (report.result?.state !== state)
-      throw Error(`Offline ${path} check failed: ${report.result?.state}`);
-    if (path === "regression" && report.activeVersion !== report.baseline)
-      throw Error("Offline rollback did not restore the original artifact.");
+    const report = await runDemo('prompt', path as keyof typeof expected);
+    if (report.result?.state !== state) throw Error(`Offline ${path} check failed: ${report.result?.state}`);
+    if (path === 'regression' && report.activeVersion !== report.baseline)
+      throw Error('Offline rollback did not restore the original artifact.');
     checks.push({ path, state, passed: true });
   }
   return {
-    evidence:
-      "SIMULATED: isolated in-memory fixtures, not live model or application verification",
+    evidence: 'SIMULATED: isolated in-memory fixtures, not live model or application verification',
     providerCalls: 0,
     checks,
   };
@@ -516,9 +432,9 @@ export interface SelfHostedIntegration {
 export interface SelfHostedWorkerOptions {
   module: string;
   mode?: ImprovementMode;
-  modeSource?: "flag" | "option" | "plan" | "default";
+  modeSource?: 'flag' | 'option' | 'plan' | 'default';
   stepTimeoutMs?: number;
-  stepTimeoutSource?: "flag" | "option" | "plan" | "default";
+  stepTimeoutSource?: 'flag' | 'option' | 'plan' | 'default';
   selfImproving?: boolean;
   once?: boolean;
   intervalMs?: number;
@@ -530,24 +446,19 @@ export interface SelfHostedWorkerOptions {
   confirmBudget?: () => Promise<boolean>;
 }
 export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
-  if (
-    options.selfImproving !== undefined &&
-    typeof options.selfImproving !== "boolean"
-  )
-    throw Error("selfImproving must be boolean.");
+  if (options.selfImproving !== undefined && typeof options.selfImproving !== 'boolean')
+    throw Error('selfImproving must be boolean.');
   const selfImproving = options.selfImproving !== false;
   const disabled = options.selfImproving === false || improvementWorkDisabled();
   warnAmbiguousImprovementDisable();
   if (options.recordActivation || options.confirmBudget)
     console.error(
-      "warning: activation confirmation is deprecated and ignored. Activation confirmation is no longer required.",
+      'warning: activation confirmation is deprecated and ignored. Activation confirmation is no longer required.',
     );
   const settings = readWorkerSettings(
     options.module,
     {
-      ...(options.mode
-        ? { mode: options.mode, modeSource: options.modeSource }
-        : {}),
+      ...(options.mode ? { mode: options.mode, modeSource: options.modeSource } : {}),
       ...(options.stepTimeoutMs !== undefined
         ? {
             stepTimeoutMs: options.stepTimeoutMs,
@@ -559,53 +470,36 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
   );
   const interval = options.intervalMs ?? 30000;
   if (!Number.isSafeInteger(interval) || interval < 1000)
-    throw Error("intervalMs must be an integer of at least 1000.");
-  console.error(
-    `effective mode ${settings.mode} (source: ${settings.modeSource})`,
-  );
-  console.error(
-    `effective step timeout ${settings.stepTimeoutMs}ms (source: ${settings.stepTimeoutSource})`,
-  );
+    throw Error('intervalMs must be an integer of at least 1000.');
+  console.error(`effective mode ${settings.mode} (source: ${settings.modeSource})`);
+  console.error(`effective step timeout ${settings.stepTimeoutMs}ms (source: ${settings.stepTimeoutSource})`);
   options.signal?.throwIfAborted();
   if (disabled) {
     const paused: TickResult = {
       runId: null,
-      state: "paused",
-      reason: "self_improvement_disabled",
+      state: 'paused',
+      reason: 'self_improvement_disabled',
       candidateIds: [],
       budget: { modelRequests: 0, tokens: 0, deployments: 0 },
     };
     options.onTick?.(paused);
     return [paused];
   }
-  const loaded = (await import(
-    pathToFileURL(resolve(options.module)).href
-  )) as {
-    createIntegration?: (context: {
-      signal?: AbortSignal;
-    }) => Promise<SelfHostedIntegration>;
+  const loaded = (await import(pathToFileURL(resolve(options.module)).href)) as {
+    createIntegration?: (context: { signal?: AbortSignal }) => Promise<SelfHostedIntegration>;
   };
-  if (typeof loaded.createIntegration !== "function")
-    throw Error(
-      "The local module must export async createIntegration({ signal }).",
-    );
-  const integration = await loaded.createIntegration(
-    options.signal ? { signal: options.signal } : {},
-  );
+  if (typeof loaded.createIntegration !== 'function')
+    throw Error('The local module must export async createIntegration({ signal }).');
+  const integration = await loaded.createIntegration(options.signal ? { signal: options.signal } : {});
   try {
-    if (
-      !(integration?.loop instanceof FeedbackLoop) ||
-      !Array.isArray(integration.workflows)
-    )
-      throw Error(
-        "createIntegration must return { loop: FeedbackLoop, workflows, close? }.",
-      );
+    if (!(integration?.loop instanceof FeedbackLoop) || !Array.isArray(integration.workflows))
+      throw Error('createIntegration must return { loop: FeedbackLoop, workflows, close? }.');
     for (const workflow of integration.workflows) {
       if (workflow.policy.auditMethod) continue;
       const needed = minimumCertifiableAuditUnits(workflow.policy.objective);
       if (workflow.policy.minimumAuditUnits >= needed) continue;
       const message = `Audit size ${workflow.policy.minimumAuditUnits} is too small for this objective. ${describeAuditFloor(workflow.policy.objective)}`;
-      if (settings.mode === "autonomous") throw Error(message);
+      if (settings.mode === 'autonomous') throw Error(message);
       console.error(`warning: ${message}`);
     }
     const controller = new ImprovementController(integration.loop, {
@@ -624,11 +518,7 @@ export async function runSelfHostedWorker(options: SelfHostedWorkerOptions) {
       }
       if (options.once || options.signal?.aborted) break;
       try {
-        await delay(
-          interval,
-          undefined,
-          options.signal ? { signal: options.signal } : {},
-        );
+        await delay(interval, undefined, options.signal ? { signal: options.signal } : {});
       } catch (error) {
         if (!options.signal?.aborted) throw error;
       }

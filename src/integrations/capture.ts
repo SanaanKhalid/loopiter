@@ -1,12 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { capturePayload, type CapturePolicy } from "./privacy.js";
-import type {
-  AiExecution,
-  ArtifactVersions,
-  JsonObject,
-  JsonValue,
-} from "../contracts.js";
-import type { FeedbackLoop } from "../feedback-loop.js";
+import { randomUUID } from 'node:crypto';
+import { capturePayload, type CapturePolicy } from './privacy.js';
+import type { AiExecution, ArtifactVersions, JsonObject, JsonValue } from '../contracts.js';
+import type { FeedbackLoop } from '../feedback-loop.js';
 
 export interface ExecutionContext {
   /** A new ID for each provider call, including steps in a tool loop. */
@@ -31,46 +26,32 @@ export interface CaptureOptions {
   capture?: CapturePolicy;
   loop: FeedbackLoop;
   /** Resolve per request, rather than mutating a shared client with tenant state. */
-  context(
-    request: CaptureRequest,
-  ): ExecutionContext | Promise<ExecutionContext>;
+  context(request: CaptureRequest): ExecutionContext | Promise<ExecutionContext>;
   /** Bound stream buffering. Overflow fails capture and cancels consumption. */
   maximumOutputBytes?: number;
   /** Awaited after persistence, including the initial pending record. */
   onExecution?(execution: AiExecution): void | Promise<void>;
 }
 
-export type CaptureStatus = "completed" | "incomplete" | "cancelled" | "failed";
+export type CaptureStatus = 'completed' | 'incomplete' | 'cancelled' | 'failed';
 
 /** Provider values are normalized before the normal SDK sanitizer and byte limits. */
 function providerValue(value: unknown, normalize: boolean): unknown {
   const ancestors = new Set<object>();
   function visit(item: unknown): unknown {
-    if (item === null || typeof item === "string" || typeof item === "boolean")
-      return item;
-    if (typeof item === "number" && Number.isFinite(item)) return item;
+    if (item === null || typeof item === 'string' || typeof item === 'boolean') return item;
+    if (typeof item === 'number' && Number.isFinite(item)) return item;
     if (item instanceof URL) return normalize ? item.href : new URL(item.href);
     if (item instanceof Uint8Array)
-      return normalize
-        ? { encoding: "base64", data: Buffer.from(item).toString("base64") }
-        : new Uint8Array(item);
-    if (typeof item !== "object" || !item || ancestors.has(item))
-      throw new TypeError(
-        "Captured provider payloads must be finite, acyclic JSON values.",
-      );
+      return normalize ? { encoding: 'base64', data: Buffer.from(item).toString('base64') } : new Uint8Array(item);
+    if (typeof item !== 'object' || !item || ancestors.has(item))
+      throw new TypeError('Captured provider payloads must be finite, acyclic JSON values.');
     ancestors.add(item);
     try {
       if (Array.isArray(item)) return item.map(visit);
-      if (
-        Object.getPrototypeOf(item) !== Object.prototype &&
-        Object.getPrototypeOf(item) !== null
-      )
-        throw new TypeError(
-          "Unsupported provider payload object; supply plain JSON.",
-        );
-      const result: Record<string, unknown> = Object.create(
-        normalize ? null : Object.getPrototypeOf(item),
-      );
+      if (Object.getPrototypeOf(item) !== Object.prototype && Object.getPrototypeOf(item) !== null)
+        throw new TypeError('Unsupported provider payload object; supply plain JSON.');
+      const result: Record<string, unknown> = Object.create(normalize ? null : Object.getPrototypeOf(item));
       for (const [key, entry] of Object.entries(item))
         if (entry !== undefined)
           Object.defineProperty(result, key, {
@@ -97,36 +78,21 @@ export function captureSnapshot(value: unknown): unknown {
 }
 
 export function finishStatus(reason: unknown): CaptureStatus {
-  const normalized =
-    typeof reason === "object" && reason !== null
-      ? (reason as { unified?: unknown }).unified
-      : reason;
-  return ["stop", "tool_calls", "tool-calls", "function_call"].includes(
-    String(normalized),
-  )
-    ? "completed"
-    : normalized === "error"
-      ? "failed"
-      : "incomplete";
+  const normalized = typeof reason === 'object' && reason !== null ? (reason as { unified?: unknown }).unified : reason;
+  return ['stop', 'tool_calls', 'tool-calls', 'function_call'].includes(String(normalized))
+    ? 'completed'
+    : normalized === 'error'
+      ? 'failed'
+      : 'incomplete';
 }
 
-export async function resolveContext(
-  options: CaptureOptions,
-  request: CaptureRequest,
-) {
+export async function resolveContext(options: CaptureOptions, request: CaptureRequest) {
   // Detach mutable application configuration before any external operation.
-  const context = captureJson(
-    await options.context(structuredClone(request)),
-  ) as unknown as ExecutionContext;
-  if (!context.artifacts || typeof context.artifacts !== "object")
-    throw new TypeError("Capture context requires artifact versions.");
-  if (
-    context.guidance !== undefined &&
-    (typeof context.guidance !== "string" || !context.artifacts.prompt)
-  )
-    throw new TypeError(
-      "Released guidance requires a string and artifacts.prompt.",
-    );
+  const context = captureJson(await options.context(structuredClone(request))) as unknown as ExecutionContext;
+  if (!context.artifacts || typeof context.artifacts !== 'object')
+    throw new TypeError('Capture context requires artifact versions.');
+  if (context.guidance !== undefined && (typeof context.guidance !== 'string' || !context.artifacts.prompt))
+    throw new TypeError('Released guidance requires a string and artifacts.prompt.');
   return context;
 }
 
@@ -141,81 +107,78 @@ export class CaptureSession {
     private readonly maximum: number,
   ) {}
 
-  static async begin(
-    options: CaptureOptions,
-    context: ExecutionContext,
-    request: CaptureRequest,
-  ) {
+  static async begin(options: CaptureOptions, context: ExecutionContext, request: CaptureRequest) {
     const maximum = options.maximumOutputBytes ?? 65536;
     if (!Number.isSafeInteger(maximum) || maximum < 1)
-      throw new TypeError("maximumOutputBytes must be a positive integer.");
+      throw new TypeError('maximumOutputBytes must be a positive integer.');
     const attemptId = randomUUID();
     const captured = options.capture ? capturePayload(request.input, options.capture) : undefined;
     const execution = await options.loop.recordExecution({
       ...(context.id === undefined ? {} : { id: context.id }),
-      ...(context.episodeId === undefined
-        ? {}
-        : { episodeId: context.episodeId }),
+      ...(context.episodeId === undefined ? {} : { episodeId: context.episodeId }),
       ...(context.entityId === undefined ? {} : { entityId: context.entityId }),
-      ...(context.parentExecutionId === undefined
-        ? {}
-        : { parentExecutionId: context.parentExecutionId }),
-      kind: "inference",
+      ...(context.parentExecutionId === undefined ? {} : { parentExecutionId: context.parentExecutionId }),
+      kind: 'inference',
       input: captured?.value ?? request.input,
       artifacts: { ...context.artifacts, model: request.model },
       metadata: {
-        ...(options.capture?.mode === "metadata-only" ? {} : options.capture ? capturePayload(context.metadata ?? {}, options.capture).value as JsonObject : context.metadata),
+        ...(options.capture?.mode === 'metadata-only'
+          ? {}
+          : options.capture
+            ? (capturePayload(context.metadata ?? {}, options.capture).value as JsonObject)
+            : context.metadata),
         loopiterCapture: {
           attemptId,
           integration: request.integration,
-          status: "pending",
-          ...(options.capture ? { mode: options.capture.mode, truncated: captured!.truncated, replayEligible: false } : {}),
+          status: 'pending',
+          ...(options.capture
+            ? { mode: options.capture.mode, truncated: captured!.truncated, replayEligible: false }
+            : {}),
         },
       },
     });
-    const identity = execution.metadata.loopiterCapture as
-      | JsonObject
-      | undefined;
-    if (identity?.attemptId !== attemptId || identity.status !== "pending")
-      throw new Error(
-        "The sanitizer must preserve loopiterCapture identity and status.",
-      );
+    const identity = execution.metadata.loopiterCapture as JsonObject | undefined;
+    if (identity?.attemptId !== attemptId || identity.status !== 'pending')
+      throw new Error('The sanitizer must preserve loopiterCapture identity and status.');
     const session = new CaptureSession(options, execution, maximum);
     try {
       await options.onExecution?.(structuredClone(execution));
     } catch (error) {
-      await session.finish("failed");
+      await session.finish('failed');
       throw error;
     }
     return session;
   }
 
   append(event: unknown): void {
-    if (this.options.capture?.mode === "metadata-only" || this.truncated) return;
+    if (this.options.capture?.mode === 'metadata-only' || this.truncated) return;
     const value = captureJson(event);
-    this.bytes += Buffer.byteLength(JSON.stringify(value), "utf8");
+    this.bytes += Buffer.byteLength(JSON.stringify(value), 'utf8');
     if (this.bytes > this.maximum && this.options.capture) {
       this.truncated = true;
       this.events.length = 0;
       return;
     }
-    if (this.bytes > this.maximum)
-      throw new RangeError("Captured stream exceeded maximumOutputBytes.");
+    if (this.bytes > this.maximum) throw new RangeError('Captured stream exceeded maximumOutputBytes.');
     this.events.push(value);
   }
 
   async finish(status: CaptureStatus, output?: unknown): Promise<void> {
     if (this.finalization) return this.finalization;
     let value =
-      this.options.capture?.mode === "metadata-only" ? null : output === undefined ? { events: this.events } : captureJson(output);
+      this.options.capture?.mode === 'metadata-only'
+        ? null
+        : output === undefined
+          ? { events: this.events }
+          : captureJson(output);
     if (this.options.capture) {
       const captured = capturePayload(value, this.options.capture);
       this.truncated ||= captured.truncated;
       value = this.truncated ? { omitted: true, truncated: true } : captured.value;
     }
-    if (Buffer.byteLength(JSON.stringify(value), "utf8") > this.maximum) {
-      if (status === "completed" || status === "incomplete")
-        throw new RangeError("Captured response exceeded maximumOutputBytes.");
+    if (Buffer.byteLength(JSON.stringify(value), 'utf8') > this.maximum) {
+      if (status === 'completed' || status === 'incomplete')
+        throw new RangeError('Captured response exceeded maximumOutputBytes.');
       value = null;
     }
     this.finalization = this.finalize(status, value);
@@ -231,7 +194,12 @@ export class CaptureSession {
           loopiterCapture: {
             ...(this.execution.metadata.loopiterCapture as JsonObject),
             status,
-            ...(this.options.capture ? { truncated: this.truncated || (this.execution.metadata.loopiterCapture as JsonObject).truncated, replayEligible: false } : {}),
+            ...(this.options.capture
+              ? {
+                  truncated: this.truncated || (this.execution.metadata.loopiterCapture as JsonObject).truncated,
+                  replayEligible: false,
+                }
+              : {}),
           },
         },
       },
@@ -240,21 +208,15 @@ export class CaptureSession {
     const identity = saved.metadata.loopiterCapture as JsonObject | undefined;
     if (
       identity?.status !== status ||
-      identity.attemptId !==
-        (this.execution.metadata.loopiterCapture as JsonObject).attemptId
+      identity.attemptId !== (this.execution.metadata.loopiterCapture as JsonObject).attemptId
     )
-      throw new Error(
-        "The sanitizer must preserve loopiterCapture identity and status.",
-      );
+      throw new Error('The sanitizer must preserve loopiterCapture identity and status.');
     await this.options.onExecution?.(structuredClone(saved));
   }
 }
 
 /** Adapted from Supermemory OpenAI middleware's descriptor-preserving clone. */
-export function cloneWithOverrides<T extends object>(
-  source: T,
-  overrides: object,
-): T {
+export function cloneWithOverrides<T extends object>(source: T, overrides: object): T {
   const descriptors = Object.getOwnPropertyDescriptors(source);
   for (const key of Reflect.ownKeys(overrides))
     Object.defineProperty(descriptors, key, {

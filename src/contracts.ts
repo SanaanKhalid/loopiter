@@ -2,54 +2,39 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
 export const executionKinds = [
-  "agent",
-  "turn",
-  "inference",
-  "prediction",
-  "tool",
-  "workflow",
-  "retrieval",
-  "custom",
+  'agent',
+  'turn',
+  'inference',
+  'prediction',
+  'tool',
+  'workflow',
+  'retrieval',
+  'custom',
 ] as const;
 export type ExecutionKind = (typeof executionKinds)[number];
-export const signalKinds = [
-  "rating",
-  "correction",
-  "outcome",
-  "reward",
-  "approval",
-  "tool_result",
-  "custom",
-] as const;
+export const signalKinds = ['rating', 'correction', 'outcome', 'reward', 'approval', 'tool_result', 'custom'] as const;
 export type SignalKind = (typeof signalKinds)[number];
 export const targetKinds = [
-  "agent_release",
-  "prompt",
-  "routing",
-  "rule",
-  "retrieval",
-  "model",
-  "dataset",
-  "threshold",
-  "tool_schema",
-  "workflow",
-  "agent_topology",
-  "code",
-  "capacity",
-  "custom",
+  'agent_release',
+  'prompt',
+  'routing',
+  'rule',
+  'retrieval',
+  'model',
+  'dataset',
+  'threshold',
+  'tool_schema',
+  'workflow',
+  'agent_topology',
+  'code',
+  'capacity',
+  'custom',
 ] as const;
 export type CandidateTargetKind = (typeof targetKinds)[number];
-export const risks = ["low", "medium", "high", "critical"] as const;
+export const risks = ['low', 'medium', 'high', 'critical'] as const;
 export type CandidateRisk = (typeof risks)[number];
 export type CandidateStatus =
-  | "proposed"
-  | "evaluated"
-  | "approved"
-  | "deployed"
-  | "rejected"
-  | "superseded"
-  | "rolled_back"
-  | "historical";
+  'proposed' | 'evaluated' | 'approved' | 'deployed' | 'rejected' | 'superseded' | 'rolled_back' | 'historical';
 export interface RecordBase {
   id: string;
   namespace: string;
@@ -78,9 +63,7 @@ export interface RecordExecutionInput {
   startedAt?: string;
   completedAt?: string;
 }
-export interface AiExecution
-  extends RecordBase,
-    Omit<RecordExecutionInput, "id"> {
+export interface AiExecution extends RecordBase, Omit<RecordExecutionInput, 'id'> {
   inputHash: string;
   artifacts: ArtifactVersions;
   metadata: JsonObject;
@@ -104,9 +87,7 @@ export interface RecordSignalInput {
   metadata?: JsonObject;
   observedAt?: string;
 }
-export interface FeedbackSignal
-  extends RecordBase,
-    Omit<RecordSignalInput, "id"> {
+export interface FeedbackSignal extends RecordBase, Omit<RecordSignalInput, 'id'> {
   inputHash: string;
   confidence: number;
   metadata: JsonObject;
@@ -155,7 +136,7 @@ export interface AnalyzeOptions {
   minimumEffectSize?: number;
   minimumRecurrence?: number;
   minimumDistinctEntities?: number;
-  timeBucket?: "day" | "week" | "month";
+  timeBucket?: 'day' | 'week' | 'month';
   includeEpisodeSignals?: boolean;
   maximumRecords?: number;
   score?: (signal: FeedbackSignal) => number | undefined;
@@ -240,8 +221,8 @@ export interface DeploymentReceipt {
 export interface DeploymentAttempt extends RecordBase {
   target: CandidateTarget;
   candidateId: string;
-  operation: "apply" | "rollback";
-  status: "pending" | "succeeded" | "not_applied";
+  operation: 'apply' | 'rollback';
+  status: 'pending' | 'succeeded' | 'not_applied';
   restoreCandidateId?: string;
   previousCandidateId?: string;
   expectedArtifactVersion: string | null;
@@ -256,9 +237,7 @@ export interface DeploymentRequest {
   signal: AbortSignal;
 }
 export type InspectionResult =
-  | { status: "applied"; receipt: DeploymentReceipt }
-  | { status: "unknown" }
-  | { status: "not_applied" };
+  { status: 'applied'; receipt: DeploymentReceipt } | { status: 'unknown' } | { status: 'not_applied' };
 /** not_applied MUST mean the attempt is fenced: it cannot take effect later. */
 export interface DeploymentAdapter {
   apply(request: DeploymentRequest): Promise<DeploymentReceipt>;
