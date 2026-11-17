@@ -1,6 +1,6 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-import { readFile } from "node:fs/promises";
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import {
   FeedbackLoop,
   InMemoryStore,
@@ -14,99 +14,89 @@ import {
   type DatasetSnapshot,
   type ImprovementWorkflow,
   type DeploymentRequest,
-} from "../src/index.js";
-import { Registry } from "./helpers.js";
-import { assignCohort, validateChange } from "../src/index.js";
+} from '../src/index.js';
+import { Registry } from './helpers.js';
+import { assignCohort, validateChange } from '../src/index.js';
 
 const failureDetailProbes = JSON.parse(
-  await readFile(
-    new URL("../../python/tests/fixtures/failure-detail-probes.json", import.meta.url),
-    "utf8",
-  ),
+  await readFile(new URL('../../python/tests/fixtures/failure-detail-probes.json', import.meta.url), 'utf8'),
 ) as { cases: { input: string; output: string }[] };
 
 const fixtures = JSON.parse(
-  await readFile(
-    new URL("../../python/tests/fixtures/autonomy.json", import.meta.url),
-    "utf8",
-  ),
+  await readFile(new URL('../../python/tests/fixtures/autonomy.json', import.meta.url), 'utf8'),
 );
 
-test("manual apply respects an autonomous target lock; reviewed rollback can finish recovery", async () => {
+test('manual apply respects an autonomous target lock; reviewed rollback can finish recovery', async () => {
   const x = setup();
   let result;
-  for (let i = 0; i < 4; i++)
-    result = await x.controller().tick("classification");
+  for (let i = 0; i < 4; i++) result = await x.controller().tick('classification');
   const run = (await x.controller().getRun(result!.runId!))!;
   const c = await x.loop.createCandidate({
     target: x.workflow.policy.target,
     proposedChange: { score: 0.9 },
     evidence: {},
-    risk: "low",
+    risk: 'low',
   });
   const evaluated = await x.loop.evaluateCandidate(
     c.id,
-    { evaluator: "manual", version: "1", datasetHash: "manual-fixture" },
+    { evaluator: 'manual', version: '1', datasetHash: 'manual-fixture' },
     () => ({ passed: true }),
   );
   await x.loop.approveCandidate(c.id, {
-    actor: "test",
+    actor: 'test',
     evaluationId: evaluated.evaluations[0]!.id,
   });
   await assert.rejects(x.loop.deployCandidate(c.id, { adapter: x.registry }), {
-    code: "target_busy",
+    code: 'target_busy',
   });
-  await x.controller().pause("classification", "manual recovery");
+  await x.controller().pause('classification', 'manual recovery');
   await x.loop.rollbackCandidate(run.data.selectedId!, { adapter: x.registry });
-  const recovered = await x.controller().tick("classification");
-  assert.equal(recovered.state, "rolled_back");
-  assert.equal(recovered.reason, "reviewed_rollback_confirmed");
+  const recovered = await x.controller().tick('classification');
+  assert.equal(recovered.state, 'rolled_back');
+  assert.equal(recovered.reason, 'reviewed_rollback_confirmed');
 });
 
-test("an unrelated passing evaluation cannot replace the autonomous audit", async () => {
+test('an unrelated passing evaluation cannot replace the autonomous audit', async () => {
   const x = setup();
-  await x.controller().tick("classification");
-  const selected = await x.controller().tick("classification");
+  await x.controller().tick('classification');
+  const selected = await x.controller().tick('classification');
   const run = (await x.controller().getRun(selected.runId!))!;
   await x.loop.evaluateCandidate(
     run.data.selectedId!,
     {
-      evaluator: "external-review",
-      version: "different",
-      datasetHash: "not-the-audit",
+      evaluator: 'external-review',
+      version: 'different',
+      datasetHash: 'not-the-audit',
     },
     () => ({ passed: true, metrics: { errors: 0 } }),
   );
-  const result = await x.controller().tick("classification");
-  assert.equal(result.reason, "audit_evaluation_conflict");
-  assert.equal(result.state, "failed");
+  const result = await x.controller().tick('classification');
+  assert.equal(result.reason, 'audit_evaluation_conflict');
+  assert.equal(result.state, 'failed');
   assert.equal(x.registry.applications, 0);
-  assert.equal(
-    (await x.loop.getCandidate(run.data.selectedId!))!.approval,
-    undefined,
-  );
+  assert.equal((await x.loop.getCandidate(run.data.selectedId!))!.approval, undefined);
 });
 
-test("an evaluation changed just before approval cannot gain autonomous authorization", async () => {
+test('an evaluation changed just before approval cannot gain autonomous authorization', async () => {
   const x = setup();
-  await x.controller().tick("classification");
-  const result = await x.controller().tick("classification");
+  await x.controller().tick('classification');
+  const result = await x.controller().tick('classification');
   const run = (await x.controller().getRun(result.runId!))!;
   const artifact = x.workflow.artifact;
-  x.workflow.artifact = async (c) => {
+  x.workflow.artifact = async c => {
     await x.loop.evaluateCandidate(
       run.data.selectedId!,
       {
-        evaluator: "external-review",
-        version: "different",
-        datasetHash: "not-the-audit",
+        evaluator: 'external-review',
+        version: 'different',
+        datasetHash: 'not-the-audit',
       },
       () => ({ passed: true }),
     );
     return artifact(c);
   };
-  const blocked = await x.controller().tick("classification");
-  assert.equal(blocked.reason, "audit_evaluation_conflict");
+  const blocked = await x.controller().tick('classification');
+  assert.equal(blocked.reason, 'audit_evaluation_conflict');
   assert.equal(x.registry.applications, 0);
 });
 
@@ -115,17 +105,17 @@ export function dataset(): DatasetSnapshot {
     id: `customer-${name}-${i}`,
     episodeId: `ticket-${name}-${i}`,
     entityId: `person-${name}-${i}`,
-    input: { text: "A customer correction, not a bundled fixture ID" },
-    label: "billing",
-    source: "verified-human",
+    input: { text: 'A customer correction, not a bundled fixture ID' },
+    label: 'billing',
+    source: 'verified-human',
     occurredAt: `2026-01-0${day}T00:00:00.000Z`,
     observedAt: `2026-01-0${day}T01:00:00.000Z`,
   });
   return {
-    version: "customer-export-1",
-    optimization: Array.from({ length: 3 }, (_, i) => row("train", i, 1)),
-    validation: Array.from({ length: 20 }, (_, i) => row("validation", i, 2)),
-    audit: Array.from({ length: 50 }, (_, i) => row("audit", i, 3)),
+    version: 'customer-export-1',
+    optimization: Array.from({ length: 3 }, (_, i) => row('train', i, 1)),
+    validation: Array.from({ length: 20 }, (_, i) => row('validation', i, 2)),
+    audit: Array.from({ length: 50 }, (_, i) => row('audit', i, 3)),
   };
 }
 function setup(
@@ -134,49 +124,49 @@ function setup(
     scores: number[];
     errors: number;
     productionErrors?: number;
-  } = { name: "accepted", scores: [0.95, 0.85], errors: 0 },
+  } = { name: 'accepted', scores: [0.95, 0.85], errors: 0 },
 ) {
-  let now = new Date("2026-02-01T00:00:00.000Z");
+  let now = new Date('2026-02-01T00:00:00.000Z');
   let proposals = 0,
     evaluations = 0;
   class TestRegistry extends Registry {
     override async apply(r: DeploymentRequest) {
       const result = await super.apply(r);
-      if (s.name === "interrupted") throw Error("Injected lost receipt");
+      if (s.name === 'interrupted') throw Error('Injected lost receipt');
       return result;
     }
   }
   const registry = new TestRegistry(),
     loop = new FeedbackLoop({
       store: new InMemoryStore(),
-      namespace: "test",
+      namespace: 'test',
       clock: () => now,
     });
   const policy = structuredClone(fixtures.policy) as AutonomyPolicy,
     data = dataset();
-  if (s.name === "insufficient") data.audit = [];
+  if (s.name === 'insufficient') data.audit = [];
   const workflow: ImprovementWorkflow = {
-    id: "classification",
-    version: "1",
-    optimizerVersion: "1",
-    evaluatorVersion: "paired-v1",
+    id: 'classification',
+    version: '1',
+    optimizerVersion: '1',
+    evaluatorVersion: 'paired-v1',
     policy,
     artifact: async () => ({
       artifactVersion: registry.version,
-      configurationHash: "model-v1",
+      configurationHash: 'model-v1',
     }),
     dataset: async () => data,
     propose: async (_input, context) => {
       proposals++;
       return context.meter(100, async () => ({
-        value: s.scores.map((score) => ({ score })),
+        value: s.scores.map(score => ({ score })),
         tokens: 40,
       }));
     },
-    evaluate: async (input) => {
+    evaluate: async input => {
       evaluations++;
       return {
-        cases: input.examples.map((row) => ({
+        cases: input.examples.map(row => ({
           id: row.id,
           baseline: 0,
           candidate: (input.change as { score: number }).score,
@@ -186,12 +176,12 @@ function setup(
       };
     },
     deployment: registry,
-    observe: async (input) => ({
+    observe: async input => ({
       artifactVersion: input.artifactVersion,
-      configurationHash: "model-v1",
+      configurationHash: 'model-v1',
       startedAt: input.deployedAt,
       endedAt: now.toISOString(),
-      complete: !["delayed", "missing"].includes(s.name),
+      complete: !['delayed', 'missing'].includes(s.name),
       unitIds: Array.from({ length: 10 }, (_, i) => `production-${i}`),
       metrics: { errors: s.productionErrors ?? 0 },
     }),
@@ -204,7 +194,7 @@ function setup(
     } = {},
   ) =>
     new ImprovementController(loop, {
-      mode: "autonomous",
+      mode: 'autonomous',
       selfImproving: true,
       workflows: [workflow],
       ...extra,
@@ -224,45 +214,27 @@ function setup(
 for (const scenario of fixtures.scenarios)
   test(`shared behavioral fixture: ${scenario.name}`, async () => {
     const x = setup(scenario);
-    let result = await x.controller().tick("classification");
+    let result = await x.controller().tick('classification');
     for (
       let i = 0;
-      i < 8 &&
-      ![
-        "completed",
-        "no_improvement",
-        "rolled_back",
-        "waiting_for_evidence",
-      ].includes(result.state);
+      i < 8 && !['completed', 'no_improvement', 'rolled_back', 'waiting_for_evidence'].includes(result.state);
       i++
     ) {
-      if (result.state === "observing")
-        x.advance(scenario.name === "missing" ? 25 : 2);
-      result = await x.controller().tick("classification");
-      if (
-        scenario.name === "delayed" &&
-        result.reason === "waiting_for_mature_outcomes"
-      )
-        break;
+      if (result.state === 'observing') x.advance(scenario.name === 'missing' ? 25 : 2);
+      result = await x.controller().tick('classification');
+      if (scenario.name === 'delayed' && result.reason === 'waiting_for_mature_outcomes') break;
     }
     assert.equal(result.state, scenario.expected, JSON.stringify(result));
-    if (scenario.name === "accepted") {
+    if (scenario.name === 'accepted') {
       const run = (await x.controller().getRun(result.runId!))!;
       assert.equal(
         (await x.loop.getCandidate(run.data.selectedId!))!.proposedChange &&
-          (
-            (await x.loop.getCandidate(run.data.selectedId!))!
-              .proposedChange as { score: number }
-          ).score,
+          ((await x.loop.getCandidate(run.data.selectedId!))!.proposedChange as { score: number }).score,
         0.95,
       );
-      assert.equal(
-        x.registry.applications,
-        1,
-        "Weaker passing candidate must not replace winner",
-      );
+      assert.equal(x.registry.applications, 1, 'Weaker passing candidate must not replace winner');
       const calls = x.counts();
-      await x.controller().tick("classification");
+      await x.controller().tick('classification');
       assert.deepEqual(x.counts(), calls);
       assert.deepEqual(result.budget, {
         modelRequests: 1,
@@ -270,57 +242,52 @@ for (const scenario of fixtures.scenarios)
         deployments: 1,
       });
     }
-    if (scenario.name === "interrupted")
-      assert.equal(x.registry.applications, 1);
-    if (scenario.name === "regression" || scenario.name === "missing")
-      assert.equal(x.registry.version, null);
+    if (scenario.name === 'interrupted') assert.equal(x.registry.applications, 1);
+    if (scenario.name === 'regression' || scenario.name === 'missing') assert.equal(x.registry.version, null);
   });
-test("omitted controller mode is autonomous and self-improving", async () => {
+test('omitted controller mode is autonomous and self-improving', async () => {
   const x = setup();
   const controller = new ImprovementController(x.loop, {
     workflows: [x.workflow],
   });
-  let result = await controller.tick("classification");
+  let result = await controller.tick('classification');
   for (
     let i = 0;
-    i < 8 &&
-    !["completed", "no_improvement", "rolled_back", "waiting_for_evidence"].includes(
-      result.state,
-    );
+    i < 8 && !['completed', 'no_improvement', 'rolled_back', 'waiting_for_evidence'].includes(result.state);
     i++
   ) {
-    if (result.state === "observing") x.advance();
-    result = await controller.tick("classification");
+    if (result.state === 'observing') x.advance();
+    result = await controller.tick('classification');
   }
-  assert.equal(result.state, "completed");
+  assert.equal(result.state, 'completed');
   assert.equal(x.registry.applications, 1);
-  const page = await x.loop.list("coordination", { limit: 1000 });
-  const row = page.items.find((item) => item.id === "workflow:classification");
-  assert.equal(row?.data.mode, "autonomous");
+  const page = await x.loop.list('coordination', { limit: 1000 });
+  const row = page.items.find(item => item.id === 'workflow:classification');
+  assert.equal(row?.data.mode, 'autonomous');
   assert.equal(row?.data.selfImproving, true);
 });
-test("recommend mode stores a proposal and never applies", async () => {
+test('recommend mode stores a proposal and never applies', async () => {
   const x = setup();
   const controller = new ImprovementController(x.loop, {
     workflows: [x.workflow],
-    mode: "recommend",
+    mode: 'recommend',
   });
-  const result = await controller.tick("classification");
-  assert.equal(result.state, "completed");
-  assert.equal(result.reason, "recommendations_only");
+  const result = await controller.tick('classification');
+  assert.equal(result.state, 'completed');
+  assert.equal(result.reason, 'recommendations_only');
   assert.equal(x.registry.applications, 0);
   assert.equal(x.counts().proposals, 1);
-  const again = await controller.tick("classification");
-  assert.equal(again.reason, "unchanged_evidence");
+  const again = await controller.tick('classification');
+  assert.equal(again.reason, 'unchanged_evidence');
   assert.equal(x.registry.applications, 0);
 });
-test("disable pauses every mode before a provider callback", async () => {
-  for (const mode of ["recommend", "experiment", "observe", "autonomous"] as const) {
+test('disable pauses every mode before a provider callback', async () => {
+  for (const mode of ['recommend', 'experiment', 'observe', 'autonomous'] as const) {
     const x = setup();
     let calls = 0;
     const touch = async () => {
       calls += 1;
-      throw new Error("provider");
+      throw new Error('provider');
     };
     x.workflow.artifact = touch;
     x.workflow.dataset = touch;
@@ -329,14 +296,14 @@ test("disable pauses every mode before a provider callback", async () => {
       workflows: [x.workflow],
       mode,
       selfImproving: false,
-    }).tick("classification");
-    assert.equal(result.state, "paused", mode);
-    assert.equal(result.reason, "self_improvement_disabled", mode);
+    }).tick('classification');
+    assert.equal(result.state, 'paused', mode);
+    assert.equal(result.reason, 'self_improvement_disabled', mode);
     assert.equal(calls, 0, mode);
     assert.equal(x.registry.applications, 0, mode);
   }
 });
-test("null mode is rejected and LOOPITER_DISABLE fails closed", async () => {
+test('null mode is rejected and LOOPITER_DISABLE fails closed', async () => {
   const x = setup();
   assert.throws(
     () =>
@@ -344,25 +311,25 @@ test("null mode is rejected and LOOPITER_DISABLE fails closed", async () => {
         workflows: [x.workflow],
         mode: null as never,
       }),
-    { code: "invalid_input" },
+    { code: 'invalid_input' },
   );
   const previous = process.env.LOOPITER_DISABLE;
   const cases: Array<[string | undefined, boolean]> = [
     [undefined, false],
-    ["", false],
-    ["0", false],
-    ["false", false],
-    ["NO", false],
-    [" off ", false],
-    ["1", true],
-    ["true", true],
-    ["yes", true],
-    ["on", true],
-    ["y", true],
-    ["enabled", true],
-    ["disable", true],
-    ["disabled", true],
-    [" TRUE ", true],
+    ['', false],
+    ['0', false],
+    ['false', false],
+    ['NO', false],
+    [' off ', false],
+    ['1', true],
+    ['true', true],
+    ['yes', true],
+    ['on', true],
+    ['y', true],
+    ['enabled', true],
+    ['disable', true],
+    ['disabled', true],
+    [' TRUE ', true],
   ];
   try {
     for (const [value, disabled] of cases) {
@@ -377,13 +344,13 @@ test("null mode is rejected and LOOPITER_DISABLE fails closed", async () => {
       };
       const result = await new ImprovementController(run.loop, {
         workflows: [run.workflow],
-        mode: "experiment",
-      }).tick("classification");
+        mode: 'experiment',
+      }).tick('classification');
       if (disabled) {
-        assert.equal(result.reason, "self_improvement_disabled", JSON.stringify(value));
+        assert.equal(result.reason, 'self_improvement_disabled', JSON.stringify(value));
         assert.equal(calls, 0, JSON.stringify(value));
       } else {
-        assert.notEqual(result.reason, "self_improvement_disabled", JSON.stringify(value));
+        assert.notEqual(result.reason, 'self_improvement_disabled', JSON.stringify(value));
         assert.equal(calls, 1, JSON.stringify(value));
       }
     }
@@ -392,188 +359,157 @@ test("null mode is rejected and LOOPITER_DISABLE fails closed", async () => {
     else process.env.LOOPITER_DISABLE = previous;
   }
 });
-test("default autonomous mode blocks a losing candidate", async () => {
-  const x = setup({ name: "rejected", scores: [0], errors: 0 });
+test('default autonomous mode blocks a losing candidate', async () => {
+  const x = setup({ name: 'rejected', scores: [0], errors: 0 });
   const controller = new ImprovementController(x.loop, {
     workflows: [x.workflow],
   });
-  let result = await controller.tick("classification");
-  for (let i = 0; i < 8 && result.state !== "no_improvement"; i++)
-    result = await controller.tick("classification");
-  assert.equal(result.state, "no_improvement");
-  assert.equal(result.reason, "validation_failed");
+  let result = await controller.tick('classification');
+  for (let i = 0; i < 8 && result.state !== 'no_improvement'; i++) result = await controller.tick('classification');
+  assert.equal(result.state, 'no_improvement');
+  assert.equal(result.reason, 'validation_failed');
   assert.equal(x.registry.applications, 0);
 });
-test("autonomous fails closed without audit, budget, or enable", async () => {
+test('autonomous fails closed without audit, budget, or enable', async () => {
   const disabled = setup();
   const paused = await new ImprovementController(disabled.loop, {
-    mode: "autonomous",
+    mode: 'autonomous',
     selfImproving: false,
     workflows: [disabled.workflow],
-  }).tick("classification");
-  assert.equal(paused.reason, "self_improvement_disabled");
-  assert.equal(paused.state, "paused");
+  }).tick('classification');
+  assert.equal(paused.reason, 'self_improvement_disabled');
+  assert.equal(paused.state, 'paused');
   assert.equal(disabled.registry.applications, 0);
   assert.equal(disabled.counts().proposals, 0);
-  const unaudited = setup({ name: "insufficient", scores: [1], errors: 0 });
-  const waiting = await unaudited.controller().tick("classification");
-  assert.equal(waiting.reason, "insufficient_evidence");
-  assert.equal(waiting.state, "waiting_for_evidence");
+  const unaudited = setup({ name: 'insufficient', scores: [1], errors: 0 });
+  const waiting = await unaudited.controller().tick('classification');
+  assert.equal(waiting.reason, 'insufficient_evidence');
+  assert.equal(waiting.state, 'waiting_for_evidence');
   assert.equal(unaudited.registry.applications, 0);
-  delete (disabled.workflow.policy.daily as Partial<AutonomyPolicy["daily"]>)
-    .tokens;
-  assert.throws(() => disabled.controller(), { code: "invalid_input" });
+  delete (disabled.workflow.policy.daily as Partial<AutonomyPolicy['daily']>).tokens;
+  assert.throws(() => disabled.controller(), { code: 'invalid_input' });
   assert.equal(disabled.registry.applications, 0);
 });
-test("flag, exact schema and required budgets fail closed", async () => {
+test('flag, exact schema and required budgets fail closed', async () => {
   const x = setup();
   assert.equal(
     (
       await new ImprovementController(x.loop, {
-        mode: "autonomous",
+        mode: 'autonomous',
         selfImproving: false,
         workflows: [x.workflow],
-      }).tick("classification")
+      }).tick('classification')
     ).reason,
-    "self_improvement_disabled",
+    'self_improvement_disabled',
   );
   assert.equal(x.counts().proposals, 0);
   assert.throws(
     () =>
       new ImprovementController(x.loop, {
-        mode: "apply" as never,
+        mode: 'apply' as never,
         workflows: [x.workflow],
       }),
   );
-  delete (x.workflow.policy.daily as Partial<AutonomyPolicy["daily"]>).tokens;
+  delete (x.workflow.policy.daily as Partial<AutonomyPolicy['daily']>).tokens;
   assert.throws(() => x.controller());
 });
-test("same evidence does not repeat a failed validation across restarts", async () => {
-  const x = setup({ name: "rejected", scores: [0], errors: 0 });
-  await x.controller().tick("classification");
-  await x.controller().tick("classification");
+test('same evidence does not repeat a failed validation across restarts', async () => {
+  const x = setup({ name: 'rejected', scores: [0], errors: 0 });
+  await x.controller().tick('classification');
+  await x.controller().tick('classification');
   const prior = x.counts();
-  assert.equal(
-    (await x.controller().tick("classification")).reason,
-    "unchanged_evidence",
-  );
+  assert.equal((await x.controller().tick('classification')).reason, 'unchanged_evidence');
   assert.deepEqual(x.counts(), prior);
 });
-test("baseline drift is blocked after independent evaluation", async () => {
+test('baseline drift is blocked after independent evaluation', async () => {
   const x = setup();
-  await x.controller().tick("classification");
-  await x.controller().tick("classification");
-  x.registry.version = "external";
-  const result = await x.controller().tick("classification");
-  assert.equal(result.reason, "stale_baseline");
+  await x.controller().tick('classification');
+  await x.controller().tick('classification');
+  x.registry.version = 'external';
+  const result = await x.controller().tick('classification');
+  assert.equal(result.reason, 'stale_baseline');
   assert.equal(x.registry.applications, 0);
 });
-test("concurrent ticks dispatch one proposal", async () => {
+test('concurrent ticks dispatch one proposal', async () => {
   const x = setup();
-  await Promise.all([
-    x.controller().tick("classification"),
-    x.controller().tick("classification"),
-  ]);
+  await Promise.all([x.controller().tick('classification'), x.controller().tick('classification')]);
   assert.equal(x.counts().proposals, 1);
 });
-test("unknown token usage retains reservation and failed calls are not replayed", async () => {
+test('unknown token usage retains reservation and failed calls are not replayed', async () => {
   const x = setup();
   x.workflow.propose = async (_, c) =>
     c.meter(100, async () => {
-      throw Error("response lost");
+      throw Error('response lost');
     });
-  const a = await x.controller().tick("classification");
-  assert.equal(a.state, "failed");
+  const a = await x.controller().tick('classification');
+  assert.equal(a.state, 'failed');
   assert.equal(a.budget.tokens, 100);
-  assert.equal(
-    (await x.controller().tick("classification")).reason,
-    "unchanged_evidence",
-  );
+  assert.equal((await x.controller().tick('classification')).reason, 'unchanged_evidence');
 });
-test("contradictions quarantine and duplicate episodes do not inflate audit", () => {
+test('contradictions quarantine and duplicate episodes do not inflate audit', () => {
   const x = setup();
   x.data.optimization.push({
     ...x.data.optimization[0]!,
-    id: "conflicting",
-    label: "other",
+    id: 'conflicting',
+    label: 'other',
   });
-  x.data.audit.push({ ...x.data.audit[0]!, id: "duplicate" });
-  const prepared = prepareDataset(
-    x.data,
-    x.workflow.policy,
-    "2026-02-01T00:00:00Z",
-  );
+  x.data.audit.push({ ...x.data.audit[0]!, id: 'duplicate' });
+  const prepared = prepareDataset(x.data, x.workflow.policy, '2026-02-01T00:00:00Z');
   assert.equal(prepared.optimization.length, 2);
   assert.equal(prepared.audit.length, 50);
   assert.throws(() =>
-    compare(
-      { cases: [], metrics: { errors: 0 }, estimatedServingCost: 0 },
-      prepared.audit,
-      x.workflow.policy,
-    ),
+    compare({ cases: [], metrics: { errors: 0 }, estimatedServingCost: 0 }, prepared.audit, x.workflow.policy),
   );
 });
-test("untrusted, delayed and cross-partition outcomes cannot authorize deployment", () => {
+test('untrusted, delayed and cross-partition outcomes cannot authorize deployment', () => {
   const x = setup();
-  x.data.optimization[0]!.observedAt = "2026-02-01T00:00:00Z";
-  x.data.optimization[1]!.source = "model-generated";
-  assert.equal(
-    prepareDataset(x.data, x.workflow.policy, "2026-02-01T00:00:00Z")
-      .optimization.length,
-    1,
-  );
+  x.data.optimization[0]!.observedAt = '2026-02-01T00:00:00Z';
+  x.data.optimization[1]!.source = 'model-generated';
+  assert.equal(prepareDataset(x.data, x.workflow.policy, '2026-02-01T00:00:00Z').optimization.length, 1);
   x.data.audit[0]!.entityId = x.data.optimization[2]!.entityId;
-  assert.throws(() =>
-    prepareDataset(x.data, x.workflow.policy, "2026-02-01T00:00:00Z"),
-  );
+  assert.throws(() => prepareDataset(x.data, x.workflow.policy, '2026-02-01T00:00:00Z'));
 });
-test("pause prevents deployment, but observation failure may still roll back", async () => {
+test('pause prevents deployment, but observation failure may still roll back', async () => {
   const x = setup({
-    name: "regression",
+    name: 'regression',
     scores: [1],
     errors: 0,
     productionErrors: 1,
   });
-  for (let i = 0; i < 4; i++) await x.controller().tick("classification");
-  await x.controller().pause("classification", "operator pause");
+  for (let i = 0; i < 4; i++) await x.controller().tick('classification');
+  await x.controller().pause('classification', 'operator pause');
   x.advance();
-  assert.equal(
-    (await x.controller().tick("classification")).state,
-    "rolling_back",
-  );
+  assert.equal((await x.controller().tick('classification')).state, 'rolling_back');
   assert.equal(
     (
       await new ImprovementController(x.loop, {
         workflows: [x.workflow],
-        mode: "autonomous",
-      }).tick("classification")
+        mode: 'autonomous',
+      }).tick('classification')
     ).state,
-    "rolled_back",
+    'rolled_back',
   );
 });
-test("observation callback failure does not reset observation deadline", async () => {
+test('observation callback failure does not reset observation deadline', async () => {
   const x = setup();
-  for (let i = 0; i < 4; i++) await x.controller().tick("classification");
+  for (let i = 0; i < 4; i++) await x.controller().tick('classification');
   x.workflow.observe = async () => {
-    throw Error("monitor unavailable");
+    throw Error('monitor unavailable');
   };
-  const a = await x.controller().tick("classification");
-  assert.equal(a.state, "observing");
+  const a = await x.controller().tick('classification');
+  assert.equal(a.state, 'observing');
   x.advance(25);
-  assert.equal(
-    (await x.controller().tick("classification")).state,
-    "rolling_back",
-  );
+  assert.equal((await x.controller().tick('classification')).state, 'rolling_back');
 });
-for (const outcome of ["promoted", "not_applied", "unknown"] as const)
+for (const outcome of ['promoted', 'not_applied', 'unknown'] as const)
   test(`canary uncertain promotion: ${outcome}`, async () => {
     const x = setup();
-    x.workflow.policy.rollout.mode = "canary";
+    x.workflow.policy.rollout.mode = 'canary';
     let promotions = 0;
     x.workflow.rollout = {
       promote: async () => {
         promotions++;
-        throw Error("Injected lost promotion response");
+        throw Error('Injected lost promotion response');
       },
       inspect: async () => outcome,
     };
@@ -581,196 +517,170 @@ for (const outcome of ["promoted", "not_applied", "unknown"] as const)
     x.workflow.observe = async (i, c) => ({
       ...(await observe(i, c)),
       controlVersion: i.baseline.artifactVersion,
-      assignmentHash: "stable-cohort-v1",
+      assignmentHash: 'stable-cohort-v1',
       controlUnitIds: Array.from({ length: 10 }, (_, i) => `control-${i}`),
       improvementLowerBound: 0.5,
     });
-    for (let i = 0; i < 4; i++) await x.controller().tick("classification");
+    for (let i = 0; i < 4; i++) await x.controller().tick('classification');
     x.advance();
-    assert.equal(
-      (await x.controller().tick("classification")).state,
-      "reconciliation_required",
-    );
-    const next = await x.controller().tick("classification");
+    assert.equal((await x.controller().tick('classification')).state, 'reconciliation_required');
+    const next = await x.controller().tick('classification');
     assert.equal(
       next.state,
-      outcome === "promoted"
-        ? "completed"
-        : outcome === "not_applied"
-          ? "rolling_back"
-          : "reconciliation_required",
+      outcome === 'promoted' ? 'completed' : outcome === 'not_applied' ? 'rolling_back' : 'reconciliation_required',
     );
     assert.equal(promotions, 1);
-    if (outcome === "not_applied")
-      assert.equal(
-        (await x.controller().tick("classification")).state,
-        "rolled_back",
-      );
+    if (outcome === 'not_applied') assert.equal((await x.controller().tick('classification')).state, 'rolled_back');
   });
-test("honor the disable setting in all apply paths", async () => {
+test('honor the disable setting in all apply paths', async () => {
   const previous = process.env.LOOPITER_DISABLE;
   try {
     const x = setup();
-    x.workflow.policy.rollout.mode = "canary";
+    x.workflow.policy.rollout.mode = 'canary';
     let promotions = 0;
     x.workflow.rollout = {
       promote: async () => {
         promotions++;
       },
-      inspect: async () => "promoted",
+      inspect: async () => 'promoted',
     };
     const observe = x.workflow.observe;
     x.workflow.observe = async (input, context) => ({
       ...(await observe(input, context)),
       controlVersion: input.baseline.artifactVersion,
-      assignmentHash: "stable-cohort-v1",
+      assignmentHash: 'stable-cohort-v1',
       controlUnitIds: Array.from({ length: 10 }, (_, n) => `control-${n}`),
       improvementLowerBound: 0.5,
     });
-    for (let i = 0; i < 4; i++) await x.controller().tick("classification");
+    for (let i = 0; i < 4; i++) await x.controller().tick('classification');
     x.advance();
-    process.env.LOOPITER_DISABLE = "1";
-    const held = await x.controller().tick("classification");
-    assert.equal(held.reason, "promotion_paused");
+    process.env.LOOPITER_DISABLE = '1';
+    const held = await x.controller().tick('classification');
+    assert.equal(held.reason, 'promotion_paused');
     assert.equal(promotions, 0);
 
     delete process.env.LOOPITER_DISABLE;
     const applied = setup();
-    let ready = await applied.controller().tick("classification");
-    for (let i = 0; i < 8 && ready.reason !== "audit_passed"; i++)
-      ready = await applied.controller().tick("classification");
-    assert.equal(ready.reason, "audit_passed");
+    let ready = await applied.controller().tick('classification');
+    for (let i = 0; i < 8 && ready.reason !== 'audit_passed'; i++)
+      ready = await applied.controller().tick('classification');
+    assert.equal(ready.reason, 'audit_passed');
     assert.equal(applied.registry.applications, 0);
-    process.env.LOOPITER_DISABLE = "1";
-    const blocked = await applied.controller().tick("classification");
-    assert.equal(blocked.reason, "self_improvement_disabled");
+    process.env.LOOPITER_DISABLE = '1';
+    const blocked = await applied.controller().tick('classification');
+    assert.equal(blocked.reason, 'self_improvement_disabled');
     assert.equal(applied.registry.applications, 0);
 
     delete process.env.LOOPITER_DISABLE;
     const recovering = setup({
-      name: "regression",
+      name: 'regression',
       scores: [1],
       errors: 0,
       productionErrors: 1,
     });
-    for (let i = 0; i < 4; i++)
-      await recovering.controller().tick("classification");
+    for (let i = 0; i < 4; i++) await recovering.controller().tick('classification');
     recovering.advance();
-    assert.equal(
-      (await recovering.controller().tick("classification")).state,
-      "rolling_back",
-    );
-    process.env.LOOPITER_DISABLE = "1";
-    assert.equal(
-      (await recovering.controller().tick("classification")).state,
-      "rolled_back",
-    );
+    assert.equal((await recovering.controller().tick('classification')).state, 'rolling_back');
+    process.env.LOOPITER_DISABLE = '1';
+    assert.equal((await recovering.controller().tick('classification')).state, 'rolled_back');
   } finally {
     if (previous === undefined) delete process.env.LOOPITER_DISABLE;
     else process.env.LOOPITER_DISABLE = previous;
   }
 });
-test("tighten the disable check before apply", async () => {
+test('tighten the disable check before apply', async () => {
   const previous = process.env.LOOPITER_DISABLE;
   try {
     delete process.env.LOOPITER_DISABLE;
     const x = setup();
-    let ready = await x.controller().tick("classification");
-    for (let i = 0; i < 8 && ready.reason !== "audit_passed"; i++)
-      ready = await x.controller().tick("classification");
-    assert.equal(ready.reason, "audit_passed");
+    let ready = await x.controller().tick('classification');
+    for (let i = 0; i < 8 && ready.reason !== 'audit_passed'; i++) ready = await x.controller().tick('classification');
+    assert.equal(ready.reason, 'audit_passed');
     assert.equal(x.registry.applications, 0);
     const read = x.workflow.artifact;
-    x.workflow.artifact = async (context) => {
+    x.workflow.artifact = async context => {
       const current = await read(context);
-      process.env.LOOPITER_DISABLE = "1";
+      process.env.LOOPITER_DISABLE = '1';
       return current;
     };
-    const blocked = await x.controller().tick("classification");
-    assert.equal(blocked.reason, "self_improvement_disabled");
-    assert.equal(blocked.state, "paused");
+    const blocked = await x.controller().tick('classification');
+    assert.equal(blocked.reason, 'self_improvement_disabled');
+    assert.equal(blocked.state, 'paused');
     assert.equal(x.registry.applications, 0);
-    const again = await x.controller().tick("classification");
-    assert.equal(again.reason, "self_improvement_disabled");
-    assert.equal(again.state, "paused");
+    const again = await x.controller().tick('classification');
+    assert.equal(again.reason, 'self_improvement_disabled');
+    assert.equal(again.state, 'paused');
     const held = (await x.controller().getRun(again.runId!))!;
-    assert.equal(held.data.state, "paused");
-    assert.notEqual(held.data.state, "reconciliation_required");
+    assert.equal(held.data.state, 'paused');
+    assert.notEqual(held.data.state, 'reconciliation_required');
     assert.equal(x.registry.applications, 0);
-    const attempts = await x.loop.list("attempts", { limit: 100 });
+    const attempts = await x.loop.list('attempts', { limit: 100 });
     assert.equal(attempts.items.length, 0);
-    const targets = await x.loop.list("targets", { limit: 100 });
-    for (const target of targets.items)
-      assert.equal(target.pendingAttemptId, undefined);
-    const coordination = await x.loop.list("coordination", { limit: 1000 });
-    const lock = coordination.items.find((row) => row.id.startsWith("target:"));
+    const targets = await x.loop.list('targets', { limit: 100 });
+    for (const target of targets.items) assert.equal(target.pendingAttemptId, undefined);
+    const coordination = await x.loop.list('coordination', { limit: 1000 });
+    const lock = coordination.items.find(row => row.id.startsWith('target:'));
     assert.equal(lock?.data.consecutiveFailures ?? 0, 0);
     x.workflow.artifact = read;
     delete process.env.LOOPITER_DISABLE;
-    let resumed = await x.controller().tick("classification");
-    for (let i = 0; i < 8 && resumed.state !== "completed"; i++) {
-      if (resumed.state === "observing") x.advance();
-      resumed = await x.controller().tick("classification");
+    let resumed = await x.controller().tick('classification');
+    for (let i = 0; i < 8 && resumed.state !== 'completed'; i++) {
+      if (resumed.state === 'observing') x.advance();
+      resumed = await x.controller().tick('classification');
     }
-    assert.equal(resumed.state, "completed");
+    assert.equal(resumed.state, 'completed');
     assert.equal(x.registry.applications, 1);
   } finally {
     if (previous === undefined) delete process.env.LOOPITER_DISABLE;
     else process.env.LOOPITER_DISABLE = previous;
   }
 });
-test("out-of-band changes are never blindly overwritten by rollback", async () => {
+test('out-of-band changes are never blindly overwritten by rollback', async () => {
   const x = setup({
-    name: "regression",
+    name: 'regression',
     scores: [1],
     errors: 0,
     productionErrors: 1,
   });
-  for (let i = 0; i < 4; i++) await x.controller().tick("classification");
+  for (let i = 0; i < 4; i++) await x.controller().tick('classification');
   x.advance();
-  await x.controller().tick("classification");
-  x.registry.version = "external-change";
-  const r = await x.controller().tick("classification");
-  assert.equal(r.reason, "out_of_band_change");
-  assert.equal(x.registry.version, "external-change");
+  await x.controller().tick('classification');
+  x.registry.version = 'external-change';
+  const r = await x.controller().tick('classification');
+  assert.equal(r.reason, 'out_of_band_change');
+  assert.equal(x.registry.version, 'external-change');
   assert.equal(x.registry.applications, 1);
 });
-test("audit examples cannot authorize successive selection cycles", async () => {
+test('audit examples cannot authorize successive selection cycles', async () => {
   const x = setup();
   const experiment = () =>
     new ImprovementController(x.loop, {
       workflows: [x.workflow],
-      mode: "experiment",
+      mode: 'experiment',
     });
-  for (let i = 0; i < 3; i++) await experiment().tick("classification");
-  x.data.version = "new-export";
-  x.data.optimization = x.data.optimization.map((r) => ({
+  for (let i = 0; i < 3; i++) await experiment().tick('classification');
+  x.data.version = 'new-export';
+  x.data.optimization = x.data.optimization.map(r => ({
     ...r,
     id: `new-${r.id}`,
     episodeId: `new-${r.episodeId}`,
     entityId: `new-${r.entityId}`,
   }));
-  await experiment().tick("classification");
-  await experiment().tick("classification");
-  assert.equal(
-    (await experiment().tick("classification")).reason,
-    "audit_consumed",
-  );
+  await experiment().tick('classification');
+  await experiment().tick('classification');
+  assert.equal((await experiment().tick('classification')).reason, 'audit_consumed');
 });
-test("lost lease results are ignored and ambiguous optimizer calls never replay", async () => {
+test('lost lease results are ignored and ambiguous optimizer calls never replay', async () => {
   const x = setup();
   x.workflow.propose = async () => {
     x.advance(1);
     return [{ score: 1 }];
   };
-  const r = await x.controller().tick("classification");
+  const r = await x.controller().tick('classification');
   assert.equal(r.candidateIds.length, 0);
-  assert.equal(
-    (await x.controller().tick("classification")).reason,
-    "ambiguous_callback",
-  );
+  assert.equal((await x.controller().tick('classification')).reason, 'ambiguous_callback');
 });
-test("daily budget races block calls before external work", async () => {
+test('daily budget races block calls before external work', async () => {
   const x = setup();
   x.workflow.policy.daily.modelRequests = 1;
   let dispatched = 0;
@@ -785,89 +695,80 @@ test("daily budget races block calls before external work", async () => {
     );
     return [];
   };
-  const result = await x.controller().tick("classification");
-  assert.equal(result.reason, "budget_exhausted");
+  const result = await x.controller().tick('classification');
+  assert.equal(result.reason, 'budget_exhausted');
   assert.equal(dispatched, 1);
   assert.equal(result.budget.modelRequests, 1);
 });
-test("reported overage is charged and cannot authorize a candidate", async () => {
+test('reported overage is charged and cannot authorize a candidate', async () => {
   const x = setup();
-  x.workflow.propose = async (_, c) =>
-    c.meter(100, async () => ({ value: [{ score: 1 }], tokens: 150 }));
-  const result = await x.controller().tick("classification");
-  assert.equal(result.reason, "budget_contract");
+  x.workflow.propose = async (_, c) => c.meter(100, async () => ({ value: [{ score: 1 }], tokens: 150 }));
+  const result = await x.controller().tick('classification');
+  assert.equal(result.reason, 'budget_contract');
   assert.equal(result.budget.tokens, 150);
   assert.equal(result.candidateIds.length, 0);
 });
-test("later flag disablement prevents an in-flight proposal from advancing", async () => {
+test('later flag disablement prevents an in-flight proposal from advancing', async () => {
   const x = setup();
   let entered!: () => void, release!: () => void;
-  const ready = new Promise<void>((r) => (entered = r)),
-    gate = new Promise<void>((r) => (release = r));
+  const ready = new Promise<void>(r => (entered = r)),
+    gate = new Promise<void>(r => (release = r));
   x.workflow.propose = async () => {
     entered();
     await gate;
     return [{ score: 1 }];
   };
-  const running = x.controller().tick("classification");
+  const running = x.controller().tick('classification');
   await ready;
   await new ImprovementController(x.loop, {
     workflows: [x.workflow],
-    mode: "autonomous",
+    mode: 'autonomous',
     selfImproving: false,
-  }).tick("classification");
+  }).tick('classification');
   release();
   const result = await running;
   assert.equal(result.candidateIds.length, 0);
-  assert.equal(result.reason, "policy_changed");
+  assert.equal(result.reason, 'policy_changed');
 });
 
-test("article-inspired repeated failure stop retains history and requires logged resume", async () => {
-  const x = setup({ name: "rejected", scores: [0], errors: 0 });
+test('article-inspired repeated failure stop retains history and requires logged resume', async () => {
+  const x = setup({ name: 'rejected', scores: [0], errors: 0 });
   const histories: unknown[] = [];
   const propose = x.workflow.propose;
   x.workflow.propose = async (i, c) => {
     histories.push(i.previousOutcomes);
-    assert.equal(c.configuration?.policyVersion, "simulation-v1");
+    assert.equal(c.configuration?.policyVersion, 'simulation-v1');
     assert.ok(Object.isFrozen(c.configuration));
     return propose(i, c);
   };
   for (let cycle = 0; cycle < 3; cycle++) {
     x.data.version = `export-${cycle}`;
-    x.data.optimization = x.data.optimization.map((r) => ({
+    x.data.optimization = x.data.optimization.map(r => ({
       ...r,
       id: `${cycle}-${r.id}`,
       episodeId: `${cycle}-${r.episodeId}`,
       entityId: `${cycle}-${r.entityId}`,
     }));
-    await x.controller().tick("classification");
-    assert.equal(
-      (await x.controller().tick("classification")).state,
-      "no_improvement",
-    );
+    await x.controller().tick('classification');
+    assert.equal((await x.controller().tick('classification')).state, 'no_improvement');
   }
   assert.deepEqual((histories[2] as unknown[]).length, 2);
   const before = x.counts();
-  assert.equal(
-    (await x.controller().tick("classification")).reason,
-    "repeated_failures_require_review",
-  );
+  assert.equal((await x.controller().tick('classification')).reason, 'repeated_failures_require_review');
   assert.deepEqual(x.counts(), before);
-  await x.controller().resume("classification");
+  await x.controller().resume('classification');
   assert.equal(
-    (await x.controller().tick("classification")).reason,
-    "unchanged_evidence",
-    "Resume must not erase failed decision keys.",
+    (await x.controller().tick('classification')).reason,
+    'unchanged_evidence',
+    'Resume must not erase failed decision keys.',
   );
   assert.ok(
-    (await x.loop.list("events", { limit: 100 })).items.some(
-      (e) => e.type === "improvement.administrative_resume",
-    ),
+    (await x.loop.list('events', { limit: 100 })).items.some(e => e.type === 'improvement.administrative_resume'),
   );
 });
-test("run inspection distinguishes actual charges from unresolved reservations", async () => {
+test('run inspection distinguishes actual charges from unresolved reservations', async () => {
   const x = setup();
-  const result = await x.controller().tick("classification");
+  const result = await x.controller().tick('classification');
   const run = (await x.controller().getRun(result.runId!))!;
   assert.equal(run.accounting?.chargedOrReservedTokens, 40);
   assert.equal(run.accounting?.modelRequests, 1);
@@ -875,17 +776,17 @@ test("run inspection distinguishes actual charges from unresolved reservations",
   const y = setup();
   y.workflow.propose = async (_, c) =>
     c.meter(100, async () => {
-      throw Error("unknown completion");
+      throw Error('unknown completion');
     });
-  const failed = await y.controller().tick("classification"),
+  const failed = await y.controller().tick('classification'),
     pending = (await y.controller().getRun(failed.runId!))!;
   assert.equal(pending.accounting?.chargedOrReservedTokens, 100);
   assert.equal(pending.accounting?.outstandingOperations.length, 1);
 });
-test("custom audit uncertainty must match trusted version and assumptions", () => {
+test('custom audit uncertainty must match trusted version and assumptions', () => {
   const x = setup(),
     report = {
-      cases: x.data.audit.map((r) => ({
+      cases: x.data.audit.map(r => ({
         id: r.id,
         baseline: 0,
         candidate: 0.5,
@@ -893,27 +794,24 @@ test("custom audit uncertainty must match trusted version and assumptions", () =
       metrics: { errors: 0 },
       estimatedServingCost: 0,
       uncertainty: {
-        method: "trusted-paired",
-        version: "1",
+        method: 'trusted-paired',
+        version: '1',
         lowerBound: 0.2,
         assumptionsValid: true,
       },
     };
-  x.workflow.policy.auditMethod = { name: "trusted-paired", version: "1" };
-  assert.equal(
-    compare(report, x.data.audit, x.workflow.policy, true).passed,
-    true,
-  );
+  x.workflow.policy.auditMethod = { name: 'trusted-paired', version: '1' };
+  assert.equal(compare(report, x.data.audit, x.workflow.policy, true).passed, true);
   report.uncertainty.assumptionsValid = false;
   assert.throws(() => compare(report, x.data.audit, x.workflow.policy, true));
   report.uncertainty.assumptionsValid = true;
-  report.uncertainty.version = "2";
+  report.uncertainty.version = '2';
   assert.throws(() => compare(report, x.data.audit, x.workflow.policy, true));
 });
-test("callback timeout ignores late results and retains spending", async () => {
+test('callback timeout ignores late results and retains spending', async () => {
   const x = setup();
   let finish!: () => void;
-  const late = new Promise<void>((resolve) => (finish = resolve));
+  const late = new Promise<void>(resolve => (finish = resolve));
   x.workflow.propose = async (_, c) =>
     c.meter(100, async () => {
       await late;
@@ -921,117 +819,114 @@ test("callback timeout ignores late results and retains spending", async () => {
     });
   const c = new ImprovementController(x.loop, {
     workflows: [x.workflow],
-    mode: "autonomous",
+    mode: 'autonomous',
     selfImproving: true,
     callbackTimeoutMs: 20,
   });
-  const r = await c.tick("classification");
+  const r = await c.tick('classification');
   finish();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(r.state, "proposing");
-  assert.equal(r.reason, "timed_out");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(r.state, 'proposing');
+  assert.equal(r.reason, 'timed_out');
   assert.equal(r.budget.tokens, 100);
   assert.equal((await c.getRun(r.runId!))!.data.candidateIds.length, 0);
 });
-test("cancellation does not accept late uncooperative proposals", async () => {
+test('cancellation does not accept late uncooperative proposals', async () => {
   const x = setup();
   const abort = new AbortController();
   let start!: () => void, finish!: () => void;
-  const ready = new Promise<void>((resolve) => (start = resolve)),
-    late = new Promise<void>((resolve) => (finish = resolve));
+  const ready = new Promise<void>(resolve => (start = resolve)),
+    late = new Promise<void>(resolve => (finish = resolve));
   x.workflow.propose = async () => {
     start();
     await late;
     return [{ score: 1 }];
   };
-  const running = x.controller().tick("classification", abort.signal);
+  const running = x.controller().tick('classification', abort.signal);
   await ready;
   abort.abort();
   const result = await running;
   finish();
-  assert.equal(result.reason, "cancelled");
+  assert.equal(result.reason, 'cancelled');
   assert.equal(result.candidateIds.length, 0);
   assert.ok(result.runId);
 });
-test("changed policy during a cycle cannot authorize deployment", async () => {
+test('changed policy during a cycle cannot authorize deployment', async () => {
   const x = setup();
-  await x.controller().tick("classification");
-  x.workflow.policy.version = "2";
-  const r = await x.controller().tick("classification");
-  assert.equal(r.reason, "policy_changed_requires_recovery");
+  await x.controller().tick('classification');
+  x.workflow.policy.version = '2';
+  const r = await x.controller().tick('classification');
+  assert.equal(r.reason, 'policy_changed_requires_recovery');
   assert.equal(x.registry.applications, 0);
 });
-test("pinned model configuration changes after dispatch block observation and new changes", async () => {
+test('pinned model configuration changes after dispatch block observation and new changes', async () => {
   const x = setup();
   const artifact = x.workflow.artifact;
   let drift = false;
-  x.workflow.artifact = async (c) => ({
+  x.workflow.artifact = async c => ({
     ...(await artifact(c)),
-    configurationHash: drift ? "model-v2" : "model-v1",
+    configurationHash: drift ? 'model-v2' : 'model-v1',
   });
   const apply = x.registry.apply.bind(x.registry);
-  x.registry.apply = async (r) => {
+  x.registry.apply = async r => {
     const receipt = await apply(r);
     drift = true;
     return receipt;
   };
-  for (let i = 0; i < 3; i++) await x.controller().tick("classification");
-  const result = await x.controller().tick("classification");
-  assert.equal(result.state, "reconciliation_required");
-  assert.equal(result.reason, "out_of_band_change");
+  for (let i = 0; i < 3; i++) await x.controller().tick('classification');
+  const result = await x.controller().tick('classification');
+  assert.equal(result.state, 'reconciliation_required');
+  assert.equal(result.reason, 'out_of_band_change');
   assert.equal(x.registry.applications, 1);
 });
-test("bounded prompt schema counts Unicode characters consistently", () => {
-  validateChange("🌀", { type: "string", maxLength: 1 });
-  assert.throws(() => validateChange("🌀x", { type: "string", maxLength: 1 }));
+test('bounded prompt schema counts Unicode characters consistently', () => {
+  validateChange('🌀', { type: 'string', maxLength: 1 });
+  assert.throws(() => validateChange('🌀x', { type: 'string', maxLength: 1 }));
 });
-test("stable cohorts retain assignment as exposure increases", () => {
+test('stable cohorts retain assignment as exposure increases', () => {
   const a = assignCohort({
-    experimentId: "test",
-    entityId: "customer-🌀",
-    salt: "private-salt",
+    experimentId: 'test',
+    entityId: 'customer-🌀',
+    salt: 'private-salt',
     exposure: 0.25,
   });
   const b = assignCohort({
-    experimentId: "test",
-    entityId: "customer-🌀",
-    salt: "private-salt",
+    experimentId: 'test',
+    entityId: 'customer-🌀',
+    salt: 'private-salt',
     exposure: 0.75,
   });
   assert.equal(a.bucket, b.bucket);
   assert.equal(a.entityFingerprint, b.entityFingerprint);
   assert.equal(
     assignCohort({
-      experimentId: "test",
-      entityId: "customer-🌀",
-      salt: "private-salt",
+      experimentId: 'test',
+      entityId: 'customer-🌀',
+      salt: 'private-salt',
       exposure: 1,
     }).cohort,
-    "candidate",
+    'candidate',
   );
 });
 
-test("batched evaluation resumes across controllers and runs at most one batch per tick", async () => {
+test('batched evaluation resumes across controllers and runs at most one batch per tick', async () => {
   const x = setup();
-  x.workflow.policy.target.kind = "agent_release";
+  x.workflow.policy.target.kind = 'agent_release';
   x.workflow.evaluationBatchSize = 4;
   const dispatched = new Set<string>();
   let batchCalls = 0;
   x.workflow.evaluateBatch = async (input, context) => {
     assert.ok(input.examples.length <= 4);
-    assert.ok(
-      !dispatched.has(context.operationId),
-      "batch must not be replayed",
-    );
+    assert.ok(!dispatched.has(context.operationId), 'batch must not be replayed');
     dispatched.add(context.operationId);
     batchCalls++;
-    return input.examples.map((row) => ({
+    return input.examples.map(row => ({
       id: row.id,
       baseline: 0,
       candidate: (input.change as { score: number }).score,
     }));
   };
-  x.workflow.evaluate = async (input) => ({
+  x.workflow.evaluate = async input => ({
     cases: input.batchResults!.flat() as unknown as {
       id: string;
       baseline: number;
@@ -1043,23 +938,23 @@ test("batched evaluation resumes across controllers and runs at most one batch p
   let result;
   for (let i = 0; i < 60; i++) {
     const before = batchCalls;
-    result = await x.controller().tick("classification");
-    assert.ok(batchCalls - before <= 1, "only one live batch per tick");
-    if (result.state === "observing") x.advance();
-    if (result.state === "completed") break;
-    assert.notEqual(result.state, "failed", result.reason);
+    result = await x.controller().tick('classification');
+    assert.ok(batchCalls - before <= 1, 'only one live batch per tick');
+    if (result.state === 'observing') x.advance();
+    if (result.state === 'completed') break;
+    assert.notEqual(result.state, 'failed', result.reason);
   }
-  assert.equal(result!.state, "completed");
+  assert.equal(result!.state, 'completed');
   assert.equal(batchCalls, 23); // 2 * ceil(20/4) validation + ceil(50/4) audit
   assert.equal(x.registry.applications, 1);
 });
 
-test("batch configuration is pinned and invalid batch sizes are rejected", () => {
+test('batch configuration is pinned and invalid batch sizes are rejected', () => {
   const x = setup();
   x.workflow.evaluationBatchSize = 33;
-  assert.throws(() => x.controller(), { code: "invalid_input" });
+  assert.throws(() => x.controller(), { code: 'invalid_input' });
 });
-test("step timeout can be raised and a timed-out audit is not reused", async () => {
+test('step timeout can be raised and a timed-out audit is not reused', async () => {
   const objective = {
     minimumImprovement: 0.05,
     range: [0, 1] as [number, number],
@@ -1073,7 +968,7 @@ test("step timeout can be raised and a timed-out audit is not reused", async () 
   assert.equal(
     compare(
       {
-        cases: sized.data.audit.map((row) => ({
+        cases: sized.data.audit.map(row => ({
           id: row.id,
           baseline: 0,
           candidate: 1,
@@ -1093,7 +988,7 @@ test("step timeout can be raised and a timed-out audit is not reused", async () 
   assert.equal(
     compare(
       {
-        cases: impossible.data.audit.map((row) => ({
+        cases: impossible.data.audit.map(row => ({
           id: row.id,
           baseline: 0,
           candidate: 1,
@@ -1107,24 +1002,21 @@ test("step timeout can be raised and a timed-out audit is not reused", async () 
     ).passed,
     false,
   );
-  assert.equal(
-    (await impossible.controller().tick("classification")).reason,
-    "audit_size_cannot_certify",
-  );
+  assert.equal((await impossible.controller().tick('classification')).reason, 'audit_size_cannot_certify');
   const x = setup();
   assert.doesNotThrow(() => x.controller({ stepTimeoutMs: 180000 }));
   assert.doesNotThrow(() => x.controller({ stepTimeoutMs: 7_200_000 }));
   assert.throws(() => x.controller({ stepTimeoutMs: 7_200_001 }), {
-    code: "invalid_input",
+    code: 'invalid_input',
   });
   const original = x.workflow.evaluate;
   let auditCalls = 0;
   x.workflow.evaluate = async (input, context) => {
-    if (input.partition === "audit") {
+    if (input.partition === 'audit') {
       auditCalls += 1;
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         const timer = setTimeout(resolve, 1000);
-        context.signal.addEventListener("abort", () => {
+        context.signal.addEventListener('abort', () => {
           clearTimeout(timer);
           resolve();
         });
@@ -1133,236 +1025,226 @@ test("step timeout can be raised and a timed-out audit is not reused", async () 
     return original(input, context);
   };
   const controller = x.controller({ callbackTimeoutMs: 40 });
-  let result = await controller.tick("classification");
-  for (let i = 0; i < 5 && result.state !== "timed_out"; i++)
-    result = await controller.tick("classification");
-  assert.equal(result.state, "timed_out");
-  assert.equal(result.reason, "timed_out");
+  let result = await controller.tick('classification');
+  for (let i = 0; i < 5 && result.state !== 'timed_out'; i++) result = await controller.tick('classification');
+  assert.equal(result.state, 'timed_out');
+  assert.equal(result.reason, 'timed_out');
   const run = (await controller.getRun(result.runId!))!;
-  const coordination = await x.loop.list("coordination", { limit: 1000 });
+  const coordination = await x.loop.list('coordination', { limit: 1000 });
   assert.equal(
-    coordination.items.some((row) => row.id.startsWith("audit:")),
+    coordination.items.some(row => row.id.startsWith('audit:')),
     true,
   );
   const sent = auditCalls;
-  x.data.version = "export-reuse";
-  x.data.optimization = x.data.optimization.map((row) => ({
+  x.data.version = 'export-reuse';
+  x.data.optimization = x.data.optimization.map(row => ({
     ...row,
     id: `reuse-${row.id}`,
     episodeId: `reuse-${row.episodeId}`,
     entityId: `reuse-${row.entityId}`,
   }));
-  let reused = await controller.tick("classification");
-  for (let i = 0; i < 8 && reused.reason !== "audit_consumed"; i++)
-    reused = await controller.tick("classification");
-  assert.equal(reused.reason, "audit_consumed");
+  let reused = await controller.tick('classification');
+  for (let i = 0; i < 8 && reused.reason !== 'audit_consumed'; i++) reused = await controller.tick('classification');
+  assert.equal(reused.reason, 'audit_consumed');
   assert.equal(auditCalls, sent);
-  const target = coordination.items.find((row) => row.id.startsWith("target:"));
+  const target = coordination.items.find(row => row.id.startsWith('target:'));
   assert.equal(target?.data.consecutiveFailures ?? 0, 0);
   assert.equal(target?.data.consecutiveTimeouts, 1);
-  for (const id of run.data.candidateIds)
-    assert.equal((await x.loop.getCandidate(id))?.status, "rejected");
+  for (const id of run.data.candidateIds) assert.equal((await x.loop.getCandidate(id))?.status, 'rejected');
   const stale = await x.loop.createCandidate({
     target: x.workflow.policy.target,
     proposedChange: { score: 0.4 },
     evidence: {},
-    risk: "low",
+    risk: 'low',
     metadata: { runId: run.id },
   });
-  await x.controller().tick("classification");
-  assert.equal((await x.loop.getCandidate(stale.id))?.status, "rejected");
+  await x.controller().tick('classification');
+  assert.equal((await x.loop.getCandidate(stale.id))?.status, 'rejected');
   for (let cycle = 2; cycle <= 3; cycle++) {
     x.data.version = `export-${cycle}`;
-    x.data.optimization = x.data.optimization.map((row) => ({
+    x.data.optimization = x.data.optimization.map(row => ({
       ...row,
       id: `${cycle}-${row.id}`,
       episodeId: `${cycle}-${row.episodeId}`,
       entityId: `${cycle}-${row.entityId}`,
     }));
-    x.data.audit = x.data.audit.map((row) => ({
+    x.data.audit = x.data.audit.map(row => ({
       ...row,
       id: `${cycle}-${row.id}`,
       episodeId: `${cycle}-${row.episodeId}`,
       entityId: `${cycle}-${row.entityId}`,
     }));
-    result = await controller.tick("classification");
-    for (let i = 0; i < 5 && result.state !== "timed_out"; i++)
-      result = await controller.tick("classification");
-    assert.equal(result.state, "timed_out");
+    result = await controller.tick('classification');
+    for (let i = 0; i < 5 && result.state !== 'timed_out'; i++) result = await controller.tick('classification');
+    assert.equal(result.state, 'timed_out');
   }
-  x.data.version = "export-4";
-  x.data.optimization = x.data.optimization.map((row) => ({
+  x.data.version = 'export-4';
+  x.data.optimization = x.data.optimization.map(row => ({
     ...row,
     id: `4-${row.id}`,
     episodeId: `4-${row.episodeId}`,
     entityId: `4-${row.entityId}`,
   }));
-  x.data.audit = x.data.audit.map((row) => ({
+  x.data.audit = x.data.audit.map(row => ({
     ...row,
     id: `4-${row.id}`,
     episodeId: `4-${row.episodeId}`,
     entityId: `4-${row.entityId}`,
   }));
-  assert.equal(
-    (await controller.tick("classification")).reason,
-    "repeated_timeouts_require_review",
-  );
+  assert.equal((await controller.tick('classification')).reason, 'repeated_timeouts_require_review');
 });
 
-test("callback failure keeps a redacted truncated detail", async () => {
+test('callback failure keeps a redacted truncated detail', async () => {
   const x = setup();
-  const host = "https://secret.example.openai.azure.com/openai";
-  const key = "sk-test-secret-value";
+  const host = 'https://secret.example.openai.azure.com/openai';
+  const key = 'sk-test-secret-value';
   x.workflow.propose = async () => {
-    throw new Error(
-      `proposal exploded at ${host} api-key: ${key} authorization: Bearer ${key} ${"y".repeat(800)}`,
-    );
+    throw new Error(`proposal exploded at ${host} api-key: ${key} authorization: Bearer ${key} ${'y'.repeat(800)}`);
   };
   const controller = x.controller();
-  const result = await controller.tick("classification");
-  assert.equal(result.reason, "callback_failed");
-  assert.equal(result.state, "failed");
-  const detail = result.detail ?? "";
+  const result = await controller.tick('classification');
+  assert.equal(result.reason, 'callback_failed');
+  assert.equal(result.state, 'failed');
+  const detail = result.detail ?? '';
   assert.match(detail, /proposal exploded/);
   assert.equal(detail.includes(host), false);
-  assert.equal(detail.includes("secret.example.openai.azure.com"), false);
+  assert.equal(detail.includes('secret.example.openai.azure.com'), false);
   assert.equal(detail.includes(key), false);
   assert.ok(detail.length <= 500);
   assert.equal((await controller.getRun(result.runId!))?.data.detail, detail);
 });
 
-test("failure text redacts provider hosts and credential material", () => {
+test('failure text redacts provider hosts and credential material', () => {
   const text = [
-    "contoso.openai.azure.com",
-    "myres.openai.azure.com.",
-    "westus.cognitiveservices.azure.com",
-    "prod.azure.com",
-    "contoso.azure-api.net",
-    "contoso.openai.azure.us",
-    "contoso.openai.azure.cn",
-    "acct.blob.core.windows.net",
-    "api.openai.com",
-    "Bearer sk-bearersecretvalue",
-    "sk-baresecretvalue99",
+    'contoso.openai.azure.com',
+    'myres.openai.azure.com.',
+    'westus.cognitiveservices.azure.com',
+    'prod.azure.com',
+    'contoso.azure-api.net',
+    'contoso.openai.azure.us',
+    'contoso.openai.azure.cn',
+    'acct.blob.core.windows.net',
+    'api.openai.com',
+    'Bearer sk-bearersecretvalue',
+    'sk-baresecretvalue99',
     '{"api_key":"json-secret-value"}',
-    "?api-key=query-secret-value&x=1",
-    "x-api-key: header-secret-value",
-    "apiKey=kv-secret-value",
-    "API-KEY: mixed-case-secret",
-    "api_key = spaced-secret",
-    "api_key:\nnewline-secret",
-    "api-key%3Dencoded-secret",
-    "Ocp-Apim-Subscription-Key=ocp-secret-value",
-    "Subscription-Key=sub-key-secret",
-    "authorization: raw-auth-secret",
-    "Authorization=raw-auth-eq-secret",
-    "Authorization: Basic basic-auth-secret",
-    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signaturevalue",
-    "AKIAABCDEFGHIJKLMNOP",
-    "AccountKey=account-key-secret==",
-    "?sv=2022&sig=sas-signature-secret",
-    "postgres://admin:dsn-password-secret@db.internal:5432/app",
-    "password=labeled-password-secret",
-    "ghp_abcdefghijklmnopqrstuvwxyz",
-    "https://example.com/path?q=1",
-    "y".repeat(800),
-  ].join(" ");
+    '?api-key=query-secret-value&x=1',
+    'x-api-key: header-secret-value',
+    'apiKey=kv-secret-value',
+    'API-KEY: mixed-case-secret',
+    'api_key = spaced-secret',
+    'api_key:\nnewline-secret',
+    'api-key%3Dencoded-secret',
+    'Ocp-Apim-Subscription-Key=ocp-secret-value',
+    'Subscription-Key=sub-key-secret',
+    'authorization: raw-auth-secret',
+    'Authorization=raw-auth-eq-secret',
+    'Authorization: Basic basic-auth-secret',
+    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signaturevalue',
+    'AKIAABCDEFGHIJKLMNOP',
+    'AccountKey=account-key-secret==',
+    '?sv=2022&sig=sas-signature-secret',
+    'postgres://admin:dsn-password-secret@db.internal:5432/app',
+    'password=labeled-password-secret',
+    'ghp_abcdefghijklmnopqrstuvwxyz',
+    'https://example.com/path?q=1',
+    'y'.repeat(800),
+  ].join(' ');
   const detail = failureDetailText(text);
   for (const secret of [
-    "contoso.openai.azure.com",
-    "myres.openai.azure.com",
-    "westus.cognitiveservices.azure.com",
-    "prod.azure.com",
-    "contoso.azure-api.net",
-    "contoso.openai.azure.us",
-    "contoso.openai.azure.cn",
-    "acct.blob.core.windows.net",
-    "api.openai.com",
-    "sk-bearersecretvalue",
-    "sk-baresecretvalue99",
-    "json-secret-value",
-    "query-secret-value",
-    "header-secret-value",
-    "kv-secret-value",
-    "mixed-case-secret",
-    "spaced-secret",
-    "newline-secret",
-    "encoded-secret",
-    "ocp-secret-value",
-    "sub-key-secret",
-    "raw-auth-secret",
-    "raw-auth-eq-secret",
-    "basic-auth-secret",
-    "eyJhbGciOiJIUzI1NiJ9",
-    "AKIAABCDEFGHIJKLMNOP",
-    "account-key-secret",
-    "sas-signature-secret",
-    "dsn-password-secret",
-    "labeled-password-secret",
-    "ghp_abcdefghijklmnopqrstuvwxyz",
-    "example.com",
+    'contoso.openai.azure.com',
+    'myres.openai.azure.com',
+    'westus.cognitiveservices.azure.com',
+    'prod.azure.com',
+    'contoso.azure-api.net',
+    'contoso.openai.azure.us',
+    'contoso.openai.azure.cn',
+    'acct.blob.core.windows.net',
+    'api.openai.com',
+    'sk-bearersecretvalue',
+    'sk-baresecretvalue99',
+    'json-secret-value',
+    'query-secret-value',
+    'header-secret-value',
+    'kv-secret-value',
+    'mixed-case-secret',
+    'spaced-secret',
+    'newline-secret',
+    'encoded-secret',
+    'ocp-secret-value',
+    'sub-key-secret',
+    'raw-auth-secret',
+    'raw-auth-eq-secret',
+    'basic-auth-secret',
+    'eyJhbGciOiJIUzI1NiJ9',
+    'AKIAABCDEFGHIJKLMNOP',
+    'account-key-secret',
+    'sas-signature-secret',
+    'dsn-password-secret',
+    'labeled-password-secret',
+    'ghp_abcdefghijklmnopqrstuvwxyz',
+    'example.com',
   ])
     assert.equal(detail.includes(secret), false, secret);
   assert.ok(detail.length <= 500);
 });
 
-test("failure text leaves benign wording unchanged", () => {
+test('failure text leaves benign wording unchanged', () => {
   for (const benign of [
-    "signature mismatch in design=modern; apikeys rotated; the azure.com docs; risk-assessment",
-    "task-runner disk-usage ask-me",
-    "status code: 429",
-    "code=context_length_exceeded",
-    "Basic validation failed",
-    "read the docs on platform.openai.com before retrying",
-    "token: 4096 exceeds limit",
-    "max_tokens=4096",
-    "token_type=Bearer",
-    "tokenizer=cl100k",
+    'signature mismatch in design=modern; apikeys rotated; the azure.com docs; risk-assessment',
+    'task-runner disk-usage ask-me',
+    'status code: 429',
+    'code=context_length_exceeded',
+    'Basic validation failed',
+    'read the docs on platform.openai.com before retrying',
+    'token: 4096 exceeds limit',
+    'max_tokens=4096',
+    'token_type=Bearer',
+    'tokenizer=cl100k',
   ])
     assert.equal(failureDetailText(benign), benign);
 });
 
-test("failure text matches the shared probe corpus", () => {
-  for (const item of failureDetailProbes.cases)
-    assert.equal(failureDetailText(item.input), item.output);
+test('failure text matches the shared probe corpus', () => {
+  for (const item of failureDetailProbes.cases) assert.equal(failureDetailText(item.input), item.output);
 });
 
-test("failure text finishes on a long unspaced input", () => {
-  const input = `api_key=early-secret ${"a.".repeat(100_000)}`;
+test('failure text finishes on a long unspaced input', () => {
+  const input = `api_key=early-secret ${'a.'.repeat(100_000)}`;
   const started = performance.now();
   const detail = failureDetailText(input);
   assert.ok(performance.now() - started < 1000);
-  assert.equal(detail.includes("early-secret"), false);
+  assert.equal(detail.includes('early-secret'), false);
 });
 
-test("failure text finishes on a long scheme-like input", () => {
-  for (const input of ["a://".repeat(8192), "https://a:".repeat(3276)]) {
+test('failure text finishes on a long scheme-like input', () => {
+  for (const input of ['a://'.repeat(8192), 'https://a:'.repeat(3276)]) {
     const started = performance.now();
     failureDetailText(input);
     assert.ok(performance.now() - started < 1000);
   }
 });
 
-test("a chained cause is sanitized on the failed tick", async () => {
+test('a chained cause is sanitized on the failed tick', async () => {
   const x = setup();
-  const secret = "cause-host.openai.azure.com";
+  const secret = 'cause-host.openai.azure.com';
   x.workflow.propose = async () => {
-    throw new Error("outer", { cause: new Error(`see ${secret} sk-causesecretvalue99`) });
+    throw new Error('outer', { cause: new Error(`see ${secret} sk-causesecretvalue99`) });
   };
   const controller = x.controller();
-  const result = await controller.tick("classification");
-  assert.equal(result.state, "failed");
+  const result = await controller.tick('classification');
+  assert.equal(result.state, 'failed');
   const rendered = JSON.stringify(result);
-  assert.match(result.detail ?? "", /outer/);
+  assert.match(result.detail ?? '', /outer/);
   assert.equal(rendered.includes(secret), false);
-  assert.equal(rendered.includes("sk-causesecretvalue99"), false);
+  assert.equal(rendered.includes('sk-causesecretvalue99'), false);
 });
 
-test("a sanitizer failure records a fixed message and not the raw text", async () => {
+test('a sanitizer failure records a fixed message and not the raw text', async () => {
   const x = setup();
-  const secret = "should-not-leak-secret";
-  const error = new Error("prefix");
-  Object.defineProperty(error, "message", {
+  const secret = 'should-not-leak-secret';
+  const error = new Error('prefix');
+  Object.defineProperty(error, 'message', {
     get() {
       throw new Error(secret);
     },
@@ -1371,10 +1253,10 @@ test("a sanitizer failure records a fixed message and not the raw text", async (
     throw error;
   };
   const controller = x.controller();
-  const result = await controller.tick("classification");
-  assert.equal(result.state, "failed");
-  assert.equal(result.detail, "[detail unavailable]");
+  const result = await controller.tick('classification');
+  assert.equal(result.state, 'failed');
+  assert.equal(result.detail, '[detail unavailable]');
   assert.equal(JSON.stringify(result).includes(secret), false);
   const stored = (await controller.getRun(result.runId!))?.data.detail;
-  assert.equal(stored, "[detail unavailable]");
+  assert.equal(stored, '[detail unavailable]');
 });
