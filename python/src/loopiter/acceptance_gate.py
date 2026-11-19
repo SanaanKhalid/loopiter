@@ -1,14 +1,22 @@
 """Acceptance rule for a candidate versus the incumbent.
 
 The lower bound of a two-sided interval must clear ``minimum_effect``.
-Paired scores use a fixed-seed percentile bootstrap. Aggregate counts use a
-Newcombe interval built from Wilson bounds. The stream matches the Node gate.
+That lower bound is the same cutoff as a one-sided bound at
+``(1 + confidence) / 2`` (0.95 when confidence is 0.90).
+Paired scores use a fixed-seed percentile bootstrap. Items are sorted by id
+before resampling, so the bound does not depend on input order.
+``minimum_items`` defaults to 0. A percentile interval on one or two items can
+accept a one-sided difference. Aggregate counts, used only when no paired items
+are supplied, use a Newcombe interval built from Wilson bounds.
+The stream matches the Node gate.
 """
 
 from __future__ import annotations
 
 import math
 from typing import Any
+
+MAX_BOOTSTRAP_SAMPLES = 100_000
 
 DEFAULT_GATE = {
     "minimum_effect": 0.0,
@@ -41,6 +49,8 @@ def decide_acceptance(
     _validate_parameters(rule)
     sign = 1 if direction == "maximize" else -1
     rows = items or []
+    if rows and unpaired:
+        raise ValueError("Pass paired items or unpaired counts, not both.")
     if rows:
         return _decide_paired(rows, sign, rule)
     if unpaired:
@@ -136,13 +146,8 @@ def normal_z(confidence: float) -> float:
 def _decide_paired(
     items: list[dict[str, Any]], sign: int, parameters: dict[str, Any]
 ) -> dict[str, Any]:
-    diffs = []
-    for item in items:
-        incumbent = item["incumbent"]
-        candidate = item["candidate"]
-        if not math.isfinite(incumbent) or not math.isfinite(candidate):
-            raise ValueError("Paired scores must be finite.")
-        diffs.append(sign * (candidate - incumbent))
+    ordered = _ordered_pairs(items)
+    diffs = [sign * (item["candidate"] - item["incumbent"]) for item in ordered]
     if parameters["minimum_items"] > 0 and len(diffs) < parameters["minimum_items"]:
         return _blocked("minimum_items", sum(diffs) / len(diffs), len(diffs), "paired-bootstrap")
     interval = bootstrap_mean_interval(diffs, parameters)
@@ -207,8 +212,10 @@ def _validate_parameters(parameters: dict[str, Any]) -> None:
     if not 0 < confidence < 1:
         raise ValueError("Confidence must be between 0 and 1.")
     samples = parameters["samples"]
-    if type(samples) is not int or samples < 100:
-        raise ValueError("Bootstrap sample count must be an integer of at least 100.")
+    if type(samples) is not int or samples < 100 or samples > MAX_BOOTSTRAP_SAMPLES:
+        raise ValueError(
+            f"Bootstrap sample count must be an integer from 100 to {MAX_BOOTSTRAP_SAMPLES}."
+        )
     seed = parameters["seed"]
     if type(seed) is not int or isinstance(seed, bool):
         raise ValueError("Bootstrap seed must be an integer.")
@@ -245,6 +252,21 @@ def _percentile(sorted_values: list[float], p: float) -> float:
 
 def _clamp01(value: float) -> float:
     return min(1.0, max(0.0, value))
+
+
+def _ordered_pairs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ordered = sorted(items, key=lambda item: str(item.get("id", "")).encode("utf-8"))
+    seen: set[str] = set()
+    for item in ordered:
+        item_id = item.get("id")
+        if type(item_id) is not str or not item_id:
+            raise ValueError("Paired item id must be a non-empty string.")
+        if item_id in seen:
+            raise ValueError(f"Duplicate paired item id {item_id}.")
+        seen.add(item_id)
+        if not math.isfinite(item["incumbent"]) or not math.isfinite(item["candidate"]):
+            raise ValueError("Paired scores must be finite.")
+    return ordered
 
 
 def _i32(value: int) -> int:

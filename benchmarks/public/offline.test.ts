@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,7 @@ import {
 } from "./constants.js";
 import { planTask } from "./estimate.js";
 import { resolveLimits } from "./limits.js";
+import { readDecisionLog, replaySeed } from "./decisions.js";
 import { runOfflineBenchmark } from "./harness.js";
 import { leakedIds, mockRunner, runOneShot } from "./loop.js";
 import { promptPolicy } from "./policy.js";
@@ -415,11 +417,14 @@ print("ok")
 });
 
 async function assertRegression<T extends PublicExample>(task: BenchmarkTask<T>): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), "gate-log-"));
   const report = await runOfflineBenchmark(task, {
     seeds: [1],
     source: "fixtures",
     minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    decisionLogPath: join(directory, "decisions.json"),
   });
+  try {
   assert.equal(report.passed, true);
   assert.equal(report.minimumImprovement, PRODUCT_MINIMUM_IMPROVEMENT);
   assert.equal(report.regression.passed, true);
@@ -430,11 +435,21 @@ async function assertRegression<T extends PublicExample>(task: BenchmarkTask<T>)
   assert.equal(report.perSeed[0]?.leakedIds.length, 0);
   assert.equal(report.perSeed[0]?.oneShot.gates, "none");
   assert.notEqual(report.perSeed[0]?.oneShot.version, report.perSeed[0]?.oneShot.baselineVersion);
-  assert.notEqual(report.perSeed[0]?.controller.version, report.perSeed[0]?.controller.baselineVersion);
-  assert.ok(report.perSeed[0]!.controller.served.rate >= report.perSeed[0]!.baseline.rate);
+  assert.ok(
+    ["completed", "no_improvement", "rolled_back"].includes(report.perSeed[0]!.controller.state),
+  );
+  const log = readDecisionLog(join(directory, "decisions.json")).seeds[0];
+  assert.ok(log);
+  assert.equal(log.complete, true);
+  assert.equal(replaySeed(log).matched, true);
+  const promoted = log.rounds.some((round) => round.split === "audit" && round.decision.accept);
+  assert.equal(log.served.id === log.baseline.id, !promoted || log.observation === "rolled_back");
   assert.equal(report.arms.oneShot.gates, "none");
   assert.equal(report.arms.controller.gates, "improvement-controller");
   assert.ok(report.arms.controller.ungated);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 async function assertHarmfulOneShot<T extends PublicExample>(task: BenchmarkTask<T>): Promise<void> {

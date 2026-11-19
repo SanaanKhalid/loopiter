@@ -7,6 +7,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   decideAcceptance,
+  DEFAULT_GATE,
+  MAX_BOOTSTRAP_SAMPLES,
   type GateDecision,
   type GateItem,
   type GateParameters,
@@ -41,6 +43,8 @@ export interface SeedDecisionLog {
   baseline: PromptRef;
   rounds: DecisionRound[];
   served: PromptRef;
+  /** Set only after the harness checks the served prompt against this log. */
+  complete?: boolean;
   /** Production observation undid the last accepted deploy. The rule decisions stay. */
   observation?: "rolled_back";
   /** Optional totals for an offline sanity check. The rule does not read them. */
@@ -73,6 +77,13 @@ export function appendRound(
     rule: GateParameters;
   },
 ): DecisionRound {
+  const prior = log.rounds.find(
+    (round) =>
+      round.candidateId === input.candidateId &&
+      round.split === input.split &&
+      round.promptHash === input.promptHash,
+  );
+  if (prior) return prior;
   const served = settleSeed(log);
   const decision = decideAcceptance({
     ...(input.items ? { items: input.items } : {}),
@@ -122,11 +133,17 @@ export interface ReplaySeed {
   mismatches: string[];
 }
 
-export function replaySeed(log: SeedDecisionLog): ReplaySeed {
+export function replaySeed(
+  log: SeedDecisionLog,
+  expected: GateParameters = DEFAULT_GATE,
+): ReplaySeed {
   const mismatches: string[] = [];
+  if (log.complete === false) mismatches.push(`seed ${log.seed} incomplete`);
   let incumbent = { ...log.baseline };
   const validated = new Set<string>();
   for (const round of log.rounds) {
+    if (!sameRule(round.rule, expected))
+      mismatches.push(`seed ${log.seed} round ${round.round} rule`);
     if (
       round.incumbentId !== incumbent.id ||
       round.incumbentPromptHash !== incumbent.promptHash
@@ -167,7 +184,7 @@ export function replaySeed(log: SeedDecisionLog): ReplaySeed {
 export function replayLogs(file: DecisionLogFile): ReplaySeed[] {
   if (file.schemaVersion !== 1 || file.kind !== "acceptance-decisions" || !Array.isArray(file.seeds))
     throw new Error("Decision log is not an acceptance-decisions file.");
-  return file.seeds.map(replaySeed);
+  return file.seeds.map((seed) => replaySeed(seed));
 }
 
 export function formatReplay(results: readonly ReplaySeed[]): string {
@@ -201,10 +218,89 @@ export function writeDecisionLog(path: string, seeds: readonly SeedDecisionLog[]
 }
 
 export function readDecisionLog(path: string): DecisionLogFile {
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as DecisionLogFile;
-  if (parsed.schemaVersion !== 1 || parsed.kind !== "acceptance-decisions")
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    throw new Error("Decision log is not JSON.");
+  }
+  if (!parsed || typeof parsed !== "object")
     throw new Error("Decision log is not an acceptance-decisions file.");
-  return parsed;
+  const file = parsed as DecisionLogFile;
+  if (file.schemaVersion !== 1 || file.kind !== "acceptance-decisions" || !Array.isArray(file.seeds))
+    throw new Error("Decision log is not an acceptance-decisions file.");
+  file.seeds.forEach(validateSeed);
+  return file;
+}
+
+function sameRule(actual: GateParameters, expected: GateParameters): boolean {
+  return (
+    actual.minimumEffect === expected.minimumEffect &&
+    actual.confidence === expected.confidence &&
+    actual.samples === expected.samples &&
+    actual.seed === expected.seed &&
+    actual.minimumItems === expected.minimumItems
+  );
+}
+
+function validateSeed(log: SeedDecisionLog): void {
+  if (!log || typeof log !== "object" || typeof log.seed !== "number" || !Array.isArray(log.rounds))
+    throw new Error("Decision log seed is malformed.");
+  requireRef(log.baseline, "baseline");
+  requireRef(log.served, "served");
+  const ids = new Set<string>();
+  for (const round of log.rounds) {
+    if (!round || typeof round.round !== "number")
+      throw new Error(`Seed ${log.seed} has a malformed round.`);
+    if (typeof round.candidateId !== "string" || typeof round.promptHash !== "string")
+      throw new Error(`Seed ${log.seed} round ${round.round} is missing its candidate.`);
+    if (round.split !== "validation" && round.split !== "audit")
+      throw new Error(`Seed ${log.seed} round ${round.round} has an unknown split.`);
+    requireRule(round.rule, log.seed, round.round);
+    requireDecision(round.decision, log.seed, round.round);
+    if (round.items) {
+      ids.clear();
+      for (const item of round.items) {
+        if (!item || typeof item.id !== "string" || !item.id)
+          throw new Error(`Seed ${log.seed} round ${round.round} has an item without an id.`);
+        if (ids.has(item.id))
+          throw new Error(`Seed ${log.seed} round ${round.round} repeats item ${item.id}.`);
+        ids.add(item.id);
+        if (!Number.isFinite(item.incumbent) || !Number.isFinite(item.candidate))
+          throw new Error(`Seed ${log.seed} round ${round.round} has a non-finite score.`);
+      }
+    }
+  }
+}
+
+function requireRef(value: PromptRef, name: string): void {
+  if (!value || typeof value.id !== "string" || typeof value.promptHash !== "string")
+    throw new Error(`Decision log ${name} is malformed.`);
+}
+
+function requireRule(rule: GateParameters, seed: number, round: number): void {
+  if (
+    !rule ||
+    !Number.isFinite(rule.minimumEffect) ||
+    !(rule.confidence > 0 && rule.confidence < 1) ||
+    !Number.isInteger(rule.samples) ||
+    rule.samples < 100 ||
+    rule.samples > MAX_BOOTSTRAP_SAMPLES ||
+    !Number.isSafeInteger(rule.seed) ||
+    !Number.isInteger(rule.minimumItems) ||
+    rule.minimumItems < 0
+  )
+    throw new Error(`Seed ${seed} round ${round} has a rule outside the documented bounds.`);
+}
+
+function requireDecision(decision: GateDecision, seed: number, round: number): void {
+  if (
+    !decision ||
+    typeof decision.accept !== "boolean" ||
+    typeof decision.reason !== "string" ||
+    (decision.method !== "paired-bootstrap" && decision.method !== "newcombe-wilson")
+  )
+    throw new Error(`Seed ${seed} round ${round} has a malformed decision.`);
 }
 
 function cloneSeed(log: SeedDecisionLog): SeedDecisionLog {

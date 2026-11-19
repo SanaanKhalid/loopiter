@@ -104,11 +104,12 @@ it.
 
 ## Acceptance
 
-`--minimum-improvement` defaults to 0.05 and is written on the report. The
-acceptance rule does not use that fixed margin. It keeps a candidate when the
-paired bootstrap lower bound is above `--minimum-effect` (default 0), at
-confidence 0.90. Audit uses the same rule. The ungated score is still reported.
-See the benchmarks README for the decision log and `replay.js`.
+`--minimum-improvement` defaults to 0.05 and is written on the report. Benchmark
+acceptance is a paired bootstrap lower bound above `--minimum-effect` (default
+0), at confidence 0.90. That is separate from the product default, which still
+uses the fixed margin. Audit uses the same benchmark rule. The ungated score
+is still reported. See the benchmarks README for the decision log and
+`replay.js`.
 
 ## Commands
 

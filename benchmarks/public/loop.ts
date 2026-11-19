@@ -209,6 +209,7 @@ export async function runController<T extends PublicExample>(input: {
     ...(input.minimumItems !== undefined ? { minimumItems: input.minimumItems } : {}),
   });
   const decisionLog = input.decisionLog ?? emptySeedLog(input.split.seed, input.task.baselinePrompt);
+  decisionLog.complete = false;
   const recorded: { split: "validation" | "audit"; promptHash: string; items: GateItem[] }[] = [];
   let proposal: string | null = null;
   let observeCursor = 0;
@@ -429,8 +430,14 @@ export async function runController<T extends PublicExample>(input: {
       throw new Error(
         `Loop did not finish: ${result?.state ?? "none"} (${result?.reason ?? "no tick"}).`,
       );
-    const candidateId = result.candidateIds[0] ?? "controller";
-    for (const comparison of recorded)
+    const candidateIds = new Map<string, string>();
+    for (const id of result.candidateIds) {
+      const candidate = await loop.getCandidate(id);
+      if (!candidate) continue;
+      candidateIds.set(promptHash(fragmentOf(candidate.proposedChange)), id);
+    }
+    for (const comparison of recorded) {
+      const candidateId = candidateIds.get(comparison.promptHash) ?? `prompt:${comparison.promptHash.slice(0, 12)}`;
       appendRound(decisionLog, {
         candidateId,
         promptHash: comparison.promptHash,
@@ -438,11 +445,13 @@ export async function runController<T extends PublicExample>(input: {
         items: comparison.items,
         rule,
       });
+    }
     if (result.state === "rolled_back") decisionLog.observation = "rolled_back";
     const settled = settleSeed(decisionLog);
     if (settled.promptHash !== promptHash(registry.fragment()))
       throw new Error("Served prompt does not match the acceptance log.");
     decisionLog.served = settled;
+    decisionLog.complete = true;
     const served = registry.fragment();
     const held = await scoreHeldOut(input.task, input.runner, served, input.split.heldOut, {
       arm: "controller",

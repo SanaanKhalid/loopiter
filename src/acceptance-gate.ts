@@ -1,9 +1,18 @@
 /**
  * Acceptance rule for a candidate versus the incumbent on the same items.
  * The lower bound of a two-sided interval must clear `minimumEffect`.
- * Paired scores use a fixed-seed percentile bootstrap. Aggregate counts
- * use a Newcombe interval built from Wilson bounds.
+ * That lower bound is the same cutoff as a one-sided bound at
+ * `(1 + confidence) / 2` (0.95 when confidence is 0.90).
+ * Paired scores use a fixed-seed percentile bootstrap. Items are sorted by id
+ * before resampling, so the bound does not depend on input order.
+ * `minimumItems` defaults to 0. A percentile interval on one or two items can
+ * accept a one-sided difference; callers that need a floor set `minimumItems`
+ * or the policy unit counts. Aggregate counts, used only when no paired items
+ * are supplied, use a Newcombe interval built from Wilson bounds.
  */
+
+/** Hard ceiling so a policy or a replayed log cannot allocate an unbounded sample list. */
+export const MAX_BOOTSTRAP_SAMPLES = 100_000;
 
 export interface GateItem {
   id: string;
@@ -78,6 +87,8 @@ export function decideAcceptance(input: {
   const direction = input.direction ?? "maximize";
   const sign = direction === "maximize" ? 1 : -1;
   const items = input.items ?? [];
+  if (items.length > 0 && input.unpaired)
+    throw new Error("Pass paired items or unpaired counts, not both.");
   if (items.length > 0) return decidePaired(items, sign, parameters);
   if (input.unpaired) return decideUnpaired(input.unpaired, sign, parameters);
   return {
@@ -96,12 +107,9 @@ function decidePaired(
   sign: number,
   parameters: GateParameters,
 ): GateDecision {
+  const ordered = orderPairedItems(items);
   const diffs: number[] = [];
-  for (const item of items) {
-    if (!Number.isFinite(item.incumbent) || !Number.isFinite(item.candidate))
-      throw new Error("Paired scores must be finite.");
-    diffs.push(sign * (item.candidate - item.incumbent));
-  }
+  for (const item of ordered) diffs.push(sign * (item.candidate - item.incumbent));
   if (parameters.minimumItems > 0 && diffs.length < parameters.minimumItems)
     return blocked("minimum_items", meanOf(diffs), diffs.length, "paired-bootstrap");
   const interval = bootstrapMeanInterval(diffs, parameters);
@@ -248,8 +256,14 @@ function validateParameters(parameters: GateParameters): void {
     throw new Error("minimumEffect must be finite.");
   if (!(parameters.confidence > 0 && parameters.confidence < 1))
     throw new Error("Confidence must be between 0 and 1.");
-  if (!Number.isInteger(parameters.samples) || parameters.samples < 100)
-    throw new Error("Bootstrap sample count must be an integer of at least 100.");
+  if (
+    !Number.isInteger(parameters.samples) ||
+    parameters.samples < 100 ||
+    parameters.samples > MAX_BOOTSTRAP_SAMPLES
+  )
+    throw new Error(
+      `Bootstrap sample count must be an integer from 100 to ${MAX_BOOTSTRAP_SAMPLES}.`,
+    );
   if (!Number.isSafeInteger(parameters.seed))
     throw new Error("Bootstrap seed must be an integer.");
   if (!Number.isInteger(parameters.minimumItems) || parameters.minimumItems < 0)
@@ -267,6 +281,22 @@ function validateCounts(counts: UnpairedCounts): void {
       throw new Error(`${name} trials must be a positive integer.`);
     if (successes > trials) throw new Error(`${name} successes cannot exceed trials.`);
   }
+}
+
+function orderPairedItems(items: readonly GateItem[]): GateItem[] {
+  const ordered = [...items].sort((a, b) =>
+    Buffer.compare(Buffer.from(String(a.id)), Buffer.from(String(b.id))),
+  );
+  const seen = new Set<string>();
+  for (const item of ordered) {
+    if (typeof item.id !== "string" || item.id.length === 0)
+      throw new Error("Paired item id must be a non-empty string.");
+    if (seen.has(item.id)) throw new Error(`Duplicate paired item id ${item.id}.`);
+    seen.add(item.id);
+    if (!Number.isFinite(item.incumbent) || !Number.isFinite(item.candidate))
+      throw new Error("Paired scores must be finite.");
+  }
+  return ordered;
 }
 
 function meanOf(values: readonly number[]): number {

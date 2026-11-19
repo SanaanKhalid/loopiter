@@ -10,16 +10,29 @@ are internal.
 HotpotQA and IFBench keep a candidate when the lower bound of a two-sided
 paired bootstrap interval on (candidate − incumbent), over the same items, is
 above `minimumEffect`. The default effect is 0. The default confidence is
-0.90, the default resample count is 2000, and the resample seed is fixed so a
-log replays the same decision. Validation and audit use that rule. A
+0.90, which uses the same cutoff as a one-sided 95% bound. The default resample
+count is 2000, the maximum is 100000, and the resample seed is fixed. Items are
+sorted by id before resampling. Validation and audit use that rule. A
 `minimumItems` guard can require more items before the interval is used; the
-default leaves the guard off.
+default is 0, so a very small paired sample can still accept. `compare()` also
+requires the policy's validation and audit unit counts.
+
+This benchmark rule is not the product default. Onboarding and other workflows
+stay on the fixed `minimumImprovement` margin unless a policy sets
+`objective.acceptance` to `confidence`. That setting is only valid for an
+immediate rollout without a custom audit method. Canary observation still uses
+the fixed margin.
+
+The one-shot seed is scored with this interval and the split's unit count. It
+does not pass through the controller's latency guardrails or candidate ledger.
+The same audit rows are then used for the later controller candidate.
 
 If a one-shot rewrite exists, it is judged first against the frozen baseline.
 When it passes validation and audit, it becomes the incumbent. Later rounds
-have to beat that incumbent. A rejected later round leaves the incumbent in
-place. The served prompt is the incumbent after the last round that passed
-both splits. A production rollback restores the previous incumbent.
+have to beat that incumbent. The served prompt is the last candidate that
+passed both splits against the incumbent it faced. A rejected later round
+leaves that incumbent in place. A production rollback restores the previous
+incumbent.
 
 The harness writes a decision log beside a report when `--out` is set
 (`report.json` produces `report.decisions.json`). Each seed records, per

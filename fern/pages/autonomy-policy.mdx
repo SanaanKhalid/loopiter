@@ -160,6 +160,12 @@ equivalent to harmless or useful.
 | `minimumImprovement` / `minimum_improvement` | Finite, nonnegative absolute difference in the declared score units. Acceptance requires strictly greater, not equal. |
 | `range` | Two finite numbers with upper greater than lower. Every baseline and candidate case score must lie inside this interval. |
 | `alpha` | Strictly between 0 and 1; used by the default fixed-sample audit bound. It does not make invalid statistical assumptions valid. |
+| `acceptance` | Omit it to keep the fixed margin. `confidence` uses a paired bootstrap lower bound instead, and only with `rollout.mode: immediate` and no `auditMethod`. |
+| `minimumEffect` / `minimum_effect` | Finite threshold the confidence lower bound must exceed. Default 0. |
+| `confidence` | Two-sided interval level for that bound. Default 0.90, the same cutoff as a one-sided 95% bound. |
+| `bootstrapSamples` / `bootstrap_samples` | Integer from 100 to 100000. Default 2000. |
+| `bootstrapSeed` / `bootstrap_seed` | Integer resample seed. Items are sorted by id before the draw. |
+| `minimumItems` / `minimum_items` | Optional extra item floor. Default 0, so a very small paired sample can still accept. The validation and audit unit counts still apply inside `compare`. |
 | `guardrails` | Nonempty array of exact metric names, `gte`/`lte`, and finite thresholds. All must pass. Missing metrics do not pass; non-finite values are invalid. |
 | `auditMethod` / `audit_method` | Optional trusted method name/version. Requires matching evaluator uncertainty fields and valid assumptions; not a license to return an arbitrary favorable bound. |
 

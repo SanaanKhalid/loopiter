@@ -8,7 +8,7 @@ import math
 from copy import deepcopy
 
 from . import _validation as v
-from .acceptance_gate import decide_acceptance, gate_parameters
+from .acceptance_gate import MAX_BOOTSTRAP_SAMPLES, decide_acceptance, gate_parameters
 
 
 def validate_schema(schema):
@@ -152,6 +152,11 @@ def validate_policy(p):
             v.fail("invalid_policy", "confidence must be between 0 and 1.")
     if "bootstrap_samples" in o:
         v.integer(o["bootstrap_samples"], "bootstrap samples", 100)
+        if o["bootstrap_samples"] > MAX_BOOTSTRAP_SAMPLES:
+            v.fail(
+                "invalid_policy",
+                f"bootstrap samples cannot exceed {MAX_BOOTSTRAP_SAMPLES}.",
+            )
     if "bootstrap_seed" in o:
         if type(o["bootstrap_seed"]) is not int or isinstance(o["bootstrap_seed"], bool):
             v.fail("invalid_policy", "bootstrap seed must be an integer.")
@@ -221,6 +226,17 @@ def validate_policy(p):
         v.fields(p["audit_method"], ["name", "version"], ("name", "version"))
         v.nonempty(p["audit_method"]["name"], "audit method")
         v.nonempty(p["audit_method"]["version"], "audit method version")
+    if p["objective"].get("acceptance") == "confidence":
+        if p["rollout"]["mode"] != "immediate":
+            v.fail(
+                "invalid_policy",
+                "Confidence acceptance requires immediate rollout. Canary observation still uses the fixed margin.",
+            )
+        if "audit_method" in p:
+            v.fail(
+                "invalid_policy",
+                "Confidence acceptance does not combine with a custom audit method.",
+            )
 
 
 def prepare_dataset(raw, policy, now):
@@ -299,6 +315,21 @@ def passes_gates(metrics, rules):
     )
 
 
+_ACCEPTANCE_CACHE: dict[str, dict] = {}
+
+
+def _cached_acceptance(items, direction, parameters):
+    key = v.fingerprint({"items": items, "direction": direction, "parameters": parameters})
+    cached = _ACCEPTANCE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    decision = decide_acceptance(items, direction=direction, parameters=parameters)
+    if len(_ACCEPTANCE_CACHE) > 32:
+        _ACCEPTANCE_CACHE.clear()
+    _ACCEPTANCE_CACHE[key] = decision
+    return decision
+
+
 def compare(result, rows, p, audit=False):
     v.json_value(result, 16 * 1024 * 1024)
     v.fields(
@@ -343,13 +374,13 @@ def compare(result, rows, p, audit=False):
         ):
             if source in objective:
                 partial[target] = objective[source]
-        confidence = decide_acceptance(
+        confidence = _cached_acceptance(
             [
                 {"id": row["id"], "incumbent": row["baseline"], "candidate": row["candidate"]}
                 for row in cases
             ],
-            direction=objective["direction"],
-            parameters=gate_parameters(partial),
+            objective["direction"],
+            gate_parameters(partial),
         )
     if audit and "audit_method" in p:
         u = result.get("uncertainty")

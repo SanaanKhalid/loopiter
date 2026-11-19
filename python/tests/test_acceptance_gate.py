@@ -51,6 +51,29 @@ class AcceptanceGateTest(unittest.TestCase):
         self.assertFalse(noisy["accept"])
         guarded = decide_acceptance(pairs(4, 0, 1), parameters={**rule, "minimum_items": 10})
         self.assertEqual(guarded["reason"], "minimum_items")
+        forward = decide_acceptance(
+            [
+                {"id": "b", "incumbent": 0, "candidate": 1},
+                {"id": "a", "incumbent": 1, "candidate": 0},
+            ],
+            parameters=rule,
+        )
+        backward = decide_acceptance(
+            [
+                {"id": "a", "incumbent": 1, "candidate": 0},
+                {"id": "b", "incumbent": 0, "candidate": 1},
+            ],
+            parameters=rule,
+        )
+        self.assertEqual(forward, backward)
+        with self.assertRaises(ValueError):
+            decide_acceptance(
+                [
+                    {"id": "a", "incumbent": 0, "candidate": 1},
+                    {"id": "a", "incumbent": 1, "candidate": 0},
+                ],
+                parameters=rule,
+            )
 
     def test_compare_uses_the_confidence_rule_for_validation_and_audit(self):
         cases = [{"id": f"up-{i}", "baseline": 0, "candidate": 1} for i in range(8)]

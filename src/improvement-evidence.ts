@@ -18,7 +18,12 @@ import {
   object,
   timestamp,
 } from "./utils.js";
-import { decideAcceptance, gateParameters } from "./acceptance-gate.js";
+import {
+  decideAcceptance,
+  gateParameters,
+  MAX_BOOTSTRAP_SAMPLES,
+  type GateDecision,
+} from "./acceptance-gate.js";
 import { fields, target } from "./validation.js";
 
 export function validateSchema(schema: ChangeSchema): void {
@@ -189,6 +194,11 @@ export function validatePolicy(p: AutonomyPolicy): void {
   }
   if (p.objective.bootstrapSamples !== undefined) {
     integer(p.objective.bootstrapSamples, "bootstrapSamples", 100);
+    if (p.objective.bootstrapSamples > MAX_BOOTSTRAP_SAMPLES)
+      fail(
+        "invalid_policy",
+        `bootstrapSamples cannot exceed ${MAX_BOOTSTRAP_SAMPLES}.`,
+      );
   }
   if (p.objective.bootstrapSeed !== undefined) {
     finite(p.objective.bootstrapSeed, "bootstrapSeed");
@@ -248,6 +258,18 @@ export function validatePolicy(p: AutonomyPolicy): void {
     fields(p.auditMethod, ["name", "version"]);
     nonempty(p.auditMethod.name, "audit method");
     nonempty(p.auditMethod.version, "audit method version");
+  }
+  if (p.objective.acceptance === "confidence") {
+    if (p.rollout.mode !== "immediate")
+      fail(
+        "invalid_policy",
+        "Confidence acceptance requires immediate rollout. Canary observation still uses the fixed margin.",
+      );
+    if (p.auditMethod)
+      fail(
+        "invalid_policy",
+        "Confidence acceptance does not combine with a custom audit method.",
+      );
   }
 }
 /** Reject leakage; quarantine conflicting corrections and deduplicate episodes before scoring. */
@@ -363,6 +385,22 @@ export function passesGates(
         : metrics[g.metric]! <= g.value),
   );
 }
+const acceptanceCache = new Map<string, GateDecision>();
+
+function cachedAcceptance(
+  items: { id: string; incumbent: number; candidate: number }[],
+  direction: "maximize" | "minimize",
+  parameters: ReturnType<typeof gateParameters>,
+): GateDecision {
+  const key = hash({ items, direction, parameters });
+  const hit = acceptanceCache.get(key);
+  if (hit) return hit;
+  const decision = decideAcceptance({ items, direction, parameters });
+  if (acceptanceCache.size > 32) acceptanceCache.clear();
+  acceptanceCache.set(key, decision);
+  return decision;
+}
+
 export function compare(
   result: Comparison,
   rows: DatasetRow[],
@@ -406,14 +444,14 @@ export function compare(
     : -Infinity;
   const confidence =
     p.objective.acceptance === "confidence" && !(audit && p.auditMethod)
-      ? decideAcceptance({
-          items: result.cases.map((row) => ({
+      ? cachedAcceptance(
+          result.cases.map((row) => ({
             id: row.id,
             incumbent: row.baseline,
             candidate: row.candidate,
           })),
-          direction: p.objective.direction,
-          parameters: gateParameters({
+          p.objective.direction,
+          gateParameters({
             ...(p.objective.minimumEffect !== undefined
               ? { minimumEffect: p.objective.minimumEffect }
               : {}),
@@ -430,7 +468,7 @@ export function compare(
               ? { minimumItems: p.objective.minimumItems }
               : {}),
           }),
-        })
+        )
       : undefined;
   if (audit && p.auditMethod) {
     const u = result.uncertainty;

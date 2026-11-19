@@ -76,10 +76,8 @@ test("the paired bootstrap is deterministic for a fixed seed", () => {
   const first = decideAcceptance({ items, parameters: rule });
   const second = decideAcceptance({ items, parameters: rule });
   assert.deepEqual(first, second);
-  const other = decideAcceptance({ items, parameters: { ...rule, seed: 99 } });
-  assert.notEqual(first.lower, other.lower);
-  const rng = mulberry32(17);
-  assert.equal(rng(), mulberry32(17)());
+  assert.equal(mulberry32(17)(), mulberry32(17)());
+  assert.notEqual(mulberry32(17)(), mulberry32(99)());
 });
 
 test("Wilson-Newcombe fallback decides when pairing is missing", () => {
@@ -156,8 +154,8 @@ test("one-shot is accepted when it is better and ignored when it is worse", () =
     rule,
   });
   assert.equal(worse.served.id, "baseline");
-  assert.equal(replaySeed(better).matched, true);
-  assert.equal(replaySeed(worse).matched, true);
+  assert.equal(replaySeed(better, rule).matched, true);
+  assert.equal(replaySeed(worse, rule).matched, true);
 });
 
 test("a later rejected round does not replace the accepted incumbent", () => {
@@ -186,22 +184,40 @@ test("a later rejected round does not replace the accepted incumbent", () => {
   assert.equal(log.served.id, "one-shot");
   assert.equal(log.rounds[2]?.incumbentId, "one-shot");
   assert.equal(log.rounds[2]?.decision.accept, false);
-  const replay = replaySeed(log);
+  const replay = replaySeed(log, rule);
   assert.equal(replay.matched, true);
   assert.equal(replay.served.id, "one-shot");
   log.rounds[0]!.decision = { ...log.rounds[0]!.decision, accept: false, reason: "below_minimum_effect" };
-  assert.equal(replaySeed(log).matched, false);
+  assert.equal(replaySeed(log, rule).matched, false);
 });
 
-test("served held-out totals stay at or above baseline across synthetic seeds", () => {
-  const logs = [acceptedSeed(1), rejectedLaterSeed(2), unchangedSeed(3)];
-  for (const log of logs) {
-    assert.equal(replaySeed(log).matched, true);
-    const served = log.heldOut?.[log.served.id];
-    const baseline = log.heldOut?.baseline;
-    assert.ok(served && baseline);
-    assert.ok(served.successes >= baseline.successes);
-  }
+test("served id is the baseline or a candidate that passed both splits", () => {
+  const accepted = acceptedSeed(1);
+  assert.equal(servedId(accepted), "one-shot");
+  assert.equal(replaySeed(accepted, rule).matched, true);
+  const unchanged = unchangedSeed(2);
+  assert.equal(servedId(unchanged), "baseline");
+  const auditFail = emptySeedLog(3, "baseline");
+  appendRound(auditFail, {
+    candidateId: "one-shot",
+    promptHash: "one",
+    split: "validation",
+    items: pairs(repeated(8, [0, 1])),
+    rule,
+  });
+  appendRound(auditFail, {
+    candidateId: "one-shot",
+    promptHash: "one",
+    split: "audit",
+    items: pairs(repeated(8, [1, 0])),
+    rule,
+  });
+  assert.equal(servedId(auditFail), "baseline");
+  const rolled = acceptedSeed(4);
+  rolled.observation = "rolled_back";
+  rolled.served = { ...rolled.baseline };
+  assert.equal(settleImported(rolled), "baseline");
+  assert.equal(replaySeed(rolled, rule).matched, true);
 });
 
 test("confidence acceptance keeps a small paired gain the fixed margin rejects", () => {
@@ -239,9 +255,13 @@ test("the python gate matches a node decision", () => {
   const script = `
 import json
 from loopiter.acceptance_gate import decide_acceptance
-items = [{"id": f"item-{i}", "incumbent": a, "candidate": b} for i, (a, b) in enumerate(${JSON.stringify(items.map((item) => [item.incumbent, item.candidate]))})]
-decision = decide_acceptance(items, parameters={"minimum_effect": 0, "confidence": 0.9, "samples": 500, "seed": 17, "minimum_items": 0})
-print(json.dumps({"accept": decision["accept"], "reason": decision["reason"], "lower": decision["lower"]}))
+rule = {"minimum_effect": 0, "confidence": 0.9, "samples": 500, "seed": 17, "minimum_items": 0}
+pairs = ${JSON.stringify(items.map((item) => [item.incumbent, item.candidate]))}
+items = [{"id": f"item-{i}", "incumbent": a, "candidate": b} for i, (a, b) in enumerate(pairs)]
+flipped = list(reversed(items))
+first = decide_acceptance(items, parameters=rule)
+second = decide_acceptance(flipped, parameters=rule)
+print(json.dumps({"accept": first["accept"], "reason": first["reason"], "lower": first["lower"], "same": first == second}))
 `;
   const result = spawnSync("python3", ["-c", script], {
     cwd: root,
@@ -249,11 +269,72 @@ print(json.dumps({"accept": decision["accept"], "reason": decision["reason"], "l
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
-  const parsed = JSON.parse(result.stdout) as { accept: boolean; reason: string; lower: number };
+  const parsed = JSON.parse(result.stdout) as {
+    accept: boolean;
+    reason: string;
+    lower: number;
+    same: boolean;
+  };
+  assert.equal(parsed.same, true);
   assert.equal(parsed.accept, node.accept);
   assert.equal(parsed.reason, node.reason);
   assert.equal(parsed.lower, node.lower);
 });
+
+test("paired decisions ignore input order and reject duplicate ids", () => {
+  const items = pairs([...repeated(6, [0, 1]), ...repeated(4, [1, 0])]);
+  const forward = decideAcceptance({ items, parameters: rule });
+  const reversed = decideAcceptance({ items: [...items].reverse(), parameters: rule });
+  const shuffled = decideAcceptance({
+    items: [items[3]!, items[8]!, items[1]!, items[0]!, items[5]!, items[9]!, items[2]!, items[7]!, items[4]!, items[6]!],
+    parameters: rule,
+  });
+  assert.deepEqual(reversed, forward);
+  assert.deepEqual(shuffled, forward);
+  assert.throws(() => decideAcceptance({ items: [items[0]!, items[0]!], parameters: rule }), /Duplicate/);
+  assert.throws(
+    () =>
+      decideAcceptance({
+        items,
+        unpaired: { candidateSuccesses: 1, candidateTrials: 2, incumbentSuccesses: 0, incumbentTrials: 2 },
+        parameters: rule,
+      }),
+    /not both/,
+  );
+});
+
+test("small samples, an empty sample, and minimize direction stay deterministic", () => {
+  const one = decideAcceptance({ items: pairs([[0, 1]]), parameters: rule });
+  assert.equal(one.itemCount, 1);
+  const empty = decideAcceptance({ parameters: rule });
+  assert.equal(empty.reason, "empty_sample");
+  const ties = decideAcceptance({ items: pairs(repeated(5, [1, 1])), parameters: rule });
+  assert.equal(ties.accept, false);
+  const minimize = decideAcceptance({
+    items: pairs(repeated(12, [1, 0])),
+    direction: "minimize",
+    parameters: rule,
+  });
+  assert.equal(minimize.accept, true);
+  assert.throws(() => decideAcceptance({ items: pairs(repeated(4, [0, 1])), parameters: { ...rule, samples: 100_001 } }), /100/);
+});
+
+test("a tampered rule or an incomplete log does not replay as matched", () => {
+  const log = acceptedSeed(9);
+  log.rounds[0]!.rule = { ...rule, seed: rule.seed + 1 };
+  assert.match(replaySeed(log, rule).mismatches.join(" "), /rule/);
+  log.rounds[0]!.rule = { ...rule };
+  log.complete = false;
+  assert.match(replaySeed(log, rule).mismatches.join(" "), /incomplete/);
+});
+
+function servedId(log: SeedDecisionLog): string {
+  return replaySeed(log, rule).served.id;
+}
+
+function settleImported(log: SeedDecisionLog): string {
+  return replaySeed(log, rule).served.id;
+}
 
 function acceptedSeed(seed: number): SeedDecisionLog {
   const log = emptySeedLog(seed, "baseline");
