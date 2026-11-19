@@ -1,4 +1,6 @@
+import json
 import unittest
+from pathlib import Path
 
 from loopiter.acceptance_gate import decide_acceptance
 from loopiter.improvement_evidence import compare
@@ -74,6 +76,16 @@ class AcceptanceGateTest(unittest.TestCase):
                 ],
                 parameters=rule,
             )
+        fixture = json.loads(
+            Path(__file__)
+            .resolve()
+            .parents[2]
+            .joinpath("test/fixtures/acceptance-pairs.json")
+            .read_text()
+        )
+        shared = decide_acceptance(fixture, parameters=rule)
+        self.assertEqual(shared, decide_acceptance(list(reversed(fixture)), parameters=rule))
+        self.assertIsInstance(shared["lower"], float)
 
     def test_compare_uses_the_confidence_rule_for_validation_and_audit(self):
         cases = [{"id": f"up-{i}", "baseline": 0, "candidate": 1} for i in range(8)]

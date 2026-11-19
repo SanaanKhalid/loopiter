@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -14,9 +16,12 @@ import type { AutonomyPolicy, Comparison } from "../src/improvement-contracts.js
 import {
   appendRound,
   emptySeedLog,
+  readDecisionLog,
   replaySeed,
+  writeDecisionLog,
   type SeedDecisionLog,
 } from "../benchmarks/public/decisions.js";
+import { candidateIdFor } from "../benchmarks/public/loop.js";
 
 const rule: GateParameters = {
   minimumEffect: 0,
@@ -158,6 +163,28 @@ test("one-shot is accepted when it is better and ignored when it is worse", () =
   assert.equal(replaySeed(worse, rule).matched, true);
 });
 
+test("a later accepted round with a smaller effect does not replace the earlier one", () => {
+  const log = emptySeedLog(8, "baseline");
+  const strong = pairs(repeated(20, [0, 1]));
+  const weak = pairs([...repeated(4, [0, 1]), ...repeated(16, [1, 1])]);
+  appendRound(log, { candidateId: "early", promptHash: "early", split: "validation", items: strong, rule });
+  appendRound(log, { candidateId: "early", promptHash: "early", split: "audit", items: strong, rule });
+  appendRound(log, { candidateId: "later", promptHash: "later", split: "validation", items: weak, rule });
+  appendRound(log, { candidateId: "later", promptHash: "later", split: "audit", items: weak, rule });
+  assert.equal(log.served.id, "early");
+  assert.ok(log.rounds[1]!.decision.effect > log.rounds[3]!.decision.effect);
+  assert.equal(replaySeed(log, rule).matched, true);
+});
+
+test("each comparison keeps the id of the candidate that was scored", () => {
+  const known = [
+    { id: "first", promptHash: "aaa" },
+    { id: "second", promptHash: "bbb" },
+  ];
+  assert.equal(candidateIdFor("bbb", known), "second");
+  assert.notEqual(candidateIdFor("bbb", known), known[0]!.id);
+});
+
 test("a later rejected round does not replace the accepted incumbent", () => {
   const log = emptySeedLog(3, "baseline");
   appendRound(log, {
@@ -292,15 +319,13 @@ test("paired decisions ignore input order and reject duplicate ids", () => {
   assert.deepEqual(reversed, forward);
   assert.deepEqual(shuffled, forward);
   assert.throws(() => decideAcceptance({ items: [items[0]!, items[0]!], parameters: rule }), /Duplicate/);
-  assert.throws(
-    () =>
-      decideAcceptance({
-        items,
-        unpaired: { candidateSuccesses: 1, candidateTrials: 2, incumbentSuccesses: 0, incumbentTrials: 2 },
-        parameters: rule,
-      }),
-    /not both/,
-  );
+  const both = decideAcceptance({
+    items,
+    unpaired: { candidateSuccesses: 9, candidateTrials: 10, incumbentSuccesses: 1, incumbentTrials: 10 },
+    parameters: rule,
+  });
+  assert.equal(both.method, "paired-bootstrap");
+  assert.deepEqual(both, forward);
 });
 
 test("small samples, an empty sample, and minimize direction stay deterministic", () => {
@@ -317,6 +342,19 @@ test("small samples, an empty sample, and minimize direction stay deterministic"
   });
   assert.equal(minimize.accept, true);
   assert.throws(() => decideAcceptance({ items: pairs(repeated(4, [0, 1])), parameters: { ...rule, samples: 100_001 } }), /100/);
+});
+
+test("replay rejects a log whose rule is outside the documented bounds", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gate-log-"));
+  try {
+    const log = acceptedSeed(11);
+    log.complete = true;
+    log.rounds[0]!.rule = { ...rule, confidence: 2, samples: 100 };
+    writeDecisionLog(join(directory, "bad.json"), [log]);
+    assert.throws(() => readDecisionLog(join(directory, "bad.json")), /bounds/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("a tampered rule or an incomplete log does not replay as matched", () => {

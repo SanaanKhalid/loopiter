@@ -156,10 +156,10 @@ the cap.
 2. One-shot rewrite. The same propose call runs once and the result is served
    with no validation, audit, or observation gate.
 3. Autonomous controller. `ImprovementController` with `mode: "autonomous"` and
-   `selfImproving: true`. Validation and audit use the paired bootstrap gate
-   described in the benchmarks README. An accepted one-shot rewrite is the
-   incumbent that a later proposal has to beat. Production observation still
-   runs.
+   `selfImproving: true`. Validation and audit use the opt-in confidence rule
+   described in the benchmarks README. The product default keeps the fixed
+   margin. The served prompt is the accepted candidate with the highest paired
+   audit effect. Production observation still runs.
 
 The report records the served held-out score and the ungated proposal's
 held-out score, with seed bootstrap intervals. A harmful candidate is injected

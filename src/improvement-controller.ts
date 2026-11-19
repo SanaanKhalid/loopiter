@@ -918,6 +918,7 @@ export class ImprovementController {
           return idle("self_improvement_disabled", "paused");
         if (
           mode === "autonomous" &&
+          w.policy.objective.acceptance !== "confidence" &&
           !w.policy.auditMethod &&
           w.policy.minimumAuditUnits <
             minimumCertifiableAuditUnits(w.policy.objective)

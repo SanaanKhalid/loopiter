@@ -93,9 +93,9 @@ a dropped connection after the request was sent is charged the full ceiling.
 1. Frozen baseline.
 2. One-shot rewrite: one propose call, applied with no gates.
 3. Autonomous `ImprovementController` (`autonomous`, `selfImproving: true`).
-   Validation and audit use the paired bootstrap gate described in the
-   benchmarks README. An accepted one-shot rewrite is the incumbent that a
-   later proposal has to beat.
+   Validation and audit use the opt-in confidence rule described in the
+   benchmarks README. The product default keeps the fixed margin. The served
+   prompt is the accepted candidate with the highest paired audit effect.
 
 The report records the served held-out exact match and the ungated proposal's
 held-out exact match, with seed bootstrap intervals, plus mean token F1. The

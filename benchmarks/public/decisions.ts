@@ -107,22 +107,43 @@ export function appendRound(
   return round;
 }
 
-/** Incumbent after the last round that passed both validation and audit. */
+/**
+ * The served prompt is the accepted candidate with the highest paired effect
+ * on its audit round. Equal effects keep the earlier round, then the id in
+ * byte order. A rollback drops the latest accepted candidate.
+ */
 export function settleSeed(
   log: Pick<SeedDecisionLog, "baseline" | "rounds" | "observation">,
 ): PromptRef {
-  const steps: PromptRef[] = [{ ...log.baseline }];
   const validated = new Set<string>();
+  const accepted: { id: string; promptHash: string; effect: number; round: number }[] = [];
   for (const round of log.rounds) {
     if (round.split === "validation") {
       if (round.decision.accept) validated.add(round.candidateId);
       else validated.delete(round.candidateId);
     } else if (round.decision.accept && validated.has(round.candidateId)) {
-      steps.push({ id: round.candidateId, promptHash: round.promptHash });
+      accepted.push({
+        id: round.candidateId,
+        promptHash: round.promptHash,
+        effect: round.decision.effect,
+        round: round.round,
+      });
     }
   }
-  if (log.observation === "rolled_back" && steps.length > 1) steps.pop();
-  return steps[steps.length - 1]!;
+  if (log.observation === "rolled_back" && accepted.length > 0) {
+    let latest = 0;
+    for (let index = 1; index < accepted.length; index++)
+      if (accepted[index]!.round > accepted[latest]!.round) latest = index;
+    accepted.splice(latest, 1);
+  }
+  accepted.sort(
+    (a, b) =>
+      b.effect - a.effect ||
+      a.round - b.round ||
+      Buffer.compare(Buffer.from(a.id), Buffer.from(b.id)),
+  );
+  const best = accepted[0];
+  return best ? { id: best.id, promptHash: best.promptHash } : { ...log.baseline };
 }
 
 export interface ReplaySeed {
@@ -139,9 +160,12 @@ export function replaySeed(
 ): ReplaySeed {
   const mismatches: string[] = [];
   if (log.complete === false) mismatches.push(`seed ${log.seed} incomplete`);
-  let incumbent = { ...log.baseline };
-  const validated = new Set<string>();
-  for (const round of log.rounds) {
+  for (let index = 0; index < log.rounds.length; index++) {
+    const round = log.rounds[index]!;
+    const incumbent = settleSeed({
+      baseline: log.baseline,
+      rounds: log.rounds.slice(0, index),
+    });
     if (!sameRule(round.rule, expected))
       mismatches.push(`seed ${log.seed} round ${round.round} rule`);
     if (
@@ -162,12 +186,6 @@ export function replaySeed(
       again.effect !== round.decision.effect
     )
       mismatches.push(`seed ${log.seed} round ${round.round} decision`);
-    if (round.split === "validation") {
-      if (again.accept) validated.add(round.candidateId);
-      else validated.delete(round.candidateId);
-    } else if (again.accept && validated.has(round.candidateId)) {
-      incumbent = { id: round.candidateId, promptHash: round.promptHash };
-    }
   }
   const served = settleSeed(log);
   if (log.served.id !== served.id || log.served.promptHash !== served.promptHash)

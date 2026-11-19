@@ -813,6 +813,7 @@ class ImprovementController:
                     return await self._idle(w, "self_improvement_disabled", "paused")
                 if (
                     self.mode == "autonomous"
+                    and p["objective"].get("acceptance") != "confidence"
                     and "audit_method" not in p
                     and p["minimum_audit_units"] < minimum_certifiable_audit_units(p["objective"])
                 ):

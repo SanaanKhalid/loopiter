@@ -49,8 +49,7 @@ def decide_acceptance(
     _validate_parameters(rule)
     sign = 1 if direction == "maximize" else -1
     rows = items or []
-    if rows and unpaired:
-        raise ValueError("Pass paired items or unpaired counts, not both.")
+    # Paired items take precedence. Unpaired counts are used only when items is empty.
     if rows:
         return _decide_paired(rows, sign, rule)
     if unpaired:
@@ -95,16 +94,21 @@ def newcombe_interval(counts: dict[str, int], confidence: float = 0.9) -> dict[s
 
 
 def bootstrap_mean_interval(values: list[float], parameters: dict[str, Any]) -> dict[str, float]:
+    """Same draws as ``mulberry32``, kept in unsigned 32-bit words."""
     if not values:
         raise ValueError("Bootstrap needs at least one value.")
-    effect = sum(values) / len(values)
-    rng = mulberry32(parameters["seed"])
-    means = []
     width = len(values)
+    effect = sum(values) / width
+    state = parameters["seed"] & 0xFFFFFFFF
+    means = []
     for _sample in range(parameters["samples"]):
         total = 0.0
         for _index in range(width):
-            total += values[math.floor(rng() * width)]
+            state = (state + 0x6D2B79F5) & 0xFFFFFFFF
+            word = ((state ^ (state >> 15)) * (state | 1)) & 0xFFFFFFFF
+            mixed = ((word ^ (word >> 7)) * (word | 61)) & 0xFFFFFFFF
+            word = ((word + mixed) ^ word) & 0xFFFFFFFF
+            total += values[math.floor(((word ^ (word >> 14)) / 4294967296) * width)]
         means.append(total / width)
     means.sort()
     tail = (1 - parameters["confidence"]) / 2

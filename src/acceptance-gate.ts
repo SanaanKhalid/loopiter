@@ -87,8 +87,7 @@ export function decideAcceptance(input: {
   const direction = input.direction ?? "maximize";
   const sign = direction === "maximize" ? 1 : -1;
   const items = input.items ?? [];
-  if (items.length > 0 && input.unpaired)
-    throw new Error("Pass paired items or unpaired counts, not both.");
+  // Paired items take precedence. Unpaired counts are used only when no items are passed.
   if (items.length > 0) return decidePaired(items, sign, parameters);
   if (input.unpaired) return decideUnpaired(input.unpaired, sign, parameters);
   return {

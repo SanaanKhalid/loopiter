@@ -17,22 +17,23 @@ sorted by id before resampling. Validation and audit use that rule. A
 default is 0, so a very small paired sample can still accept. `compare()` also
 requires the policy's validation and audit unit counts.
 
-This benchmark rule is not the product default. Onboarding and other workflows
-stay on the fixed `minimumImprovement` margin unless a policy sets
-`objective.acceptance` to `confidence`. That setting is only valid for an
-immediate rollout without a custom audit method. Canary observation still uses
-the fixed margin.
+The benchmark opts in with `objective.acceptance: "confidence"`. That is
+intended. The product default, including onboarding, keeps the fixed
+`minimumImprovement` margin. `confidence` is valid only for an immediate
+rollout with no custom audit method. Canary promotion and production
+observation still use the fixed margin.
 
-The one-shot seed is scored with this interval and the split's unit count. It
-does not pass through the controller's latency guardrails or candidate ledger.
-The same audit rows are then used for the later controller candidate.
+Paired items take precedence when a caller also passes unpaired counts.
+Unpaired counts are the path for aggregate reports that have no item scores.
 
-If a one-shot rewrite exists, it is judged first against the frozen baseline.
-When it passes validation and audit, it becomes the incumbent. Later rounds
-have to beat that incumbent. The served prompt is the last candidate that
-passed both splits against the incumbent it faced. A rejected later round
-leaves that incumbent in place. A production rollback restores the previous
-incumbent.
+If a one-shot rewrite exists, it is the first controller candidate. Its audit
+rows are the first half of the audit split, sorted by id. The follow-up
+candidate is scored on the other half, so those rows are not reused. Both
+candidates go through the controller's unit counts, guardrails, and budget
+ledger. The served prompt is the accepted candidate with the highest paired
+effect on its audit round. An equal effect keeps the earlier round, then the
+id in byte order. A rejected round does not replace it. A production rollback
+drops the latest accepted candidate and serves the best one that remains.
 
 The harness writes a decision log beside a report when `--out` is set
 (`report.json` produces `report.decisions.json`). Each seed records, per
