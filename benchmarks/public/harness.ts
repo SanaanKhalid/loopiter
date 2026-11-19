@@ -11,6 +11,7 @@ import {
   PRODUCT_MINIMUM_IMPROVEMENT,
   observedGainRequired,
 } from "./constants.js";
+import { emptySeedLog, writeDecisionLog, type SeedDecisionLog } from "./decisions.js";
 import {
   leakedIds,
   mockRunner,
@@ -106,9 +107,11 @@ export async function runOfflineBenchmark<T extends PublicExample>(
   options: {
     seeds: number[];
     minimumImprovement?: number;
+    minimumEffect?: number;
     source?: "fixtures" | "cache";
     bootstrapSamples?: number;
     bootstrapSeed?: number;
+    decisionLogPath?: string;
   },
 ): Promise<OfflineReport> {
   const seeds = options.seeds;
@@ -121,12 +124,15 @@ export async function runOfflineBenchmark<T extends PublicExample>(
   const samples = options.bootstrapSamples ?? BOOTSTRAP_SAMPLES;
   const bootstrapSeed = options.bootstrapSeed ?? BOOTSTRAP_SEED;
   const perSeed = [];
+  const decisionLogs: SeedDecisionLog[] = [];
   for (const seed of seeds) {
     const split = buildSeededSplit({ pool: loaded.pool, heldOut: loaded.heldOut, seed, sizes });
     const runner = mockRunner(task);
     const heldOutIds = idsOf(split.heldOut);
     const baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut);
     const oneShot = await runOneShot({ task, split, runner, mode: "improve" });
+    const decisionLog = emptySeedLog(seed, task.baselinePrompt);
+    decisionLogs.push(decisionLog);
     const controller = await runController({
       task,
       split,
@@ -134,6 +140,9 @@ export async function runOfflineBenchmark<T extends PublicExample>(
       mode: "improve",
       observation: "honest",
       minimumImprovement,
+      ...(options.minimumEffect !== undefined ? { minimumEffect: options.minimumEffect } : {}),
+      oneShotFragment: oneShot.fragment,
+      decisionLog,
       batchSize: Math.max(split.validation.length, split.audit.length),
       observeChunk: split.production.length,
       latencyMs: 120_000,
@@ -149,8 +158,10 @@ export async function runOfflineBenchmark<T extends PublicExample>(
       throw new Error(`Held-out ids were exposed to the loop: ${leaked.join(", ")}`);
     perSeed.push({ seed, leakedIds: leaked, baseline, oneShot, controller, split });
   }
+  if (options.decisionLogPath) writeDecisionLog(options.decisionLogPath, decisionLogs);
   const regression = await runRegression(task, perSeed[0]!.split);
   const judgment = judgeRegression(regression);
+  const minimumEffect = options.minimumEffect ?? 0;
   const gain = observedGainRequired({
     auditRows: FULL_AUDIT_ROWS,
     minimumImprovement,
@@ -172,7 +183,7 @@ export async function runOfflineBenchmark<T extends PublicExample>(
       auditRows: FULL_AUDIT_ROWS,
       alpha: PRODUCT_ALPHA,
       observedGainRequired: gain,
-      note: caveat(minimumImprovement, gain),
+      note: caveat(minimumImprovement, gain, minimumEffect),
     },
     splits: {
       optimization: sizes.optimization,
@@ -318,13 +329,13 @@ export function renderMarkdown(report: OfflineReport): string {
   return lines.join("\n");
 }
 
-function caveat(minimumImprovement: number, required: number): string {
+function caveat(minimumImprovement: number, required: number, minimumEffect: number): string {
   const floor = describeAuditFloor({
     minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
     range: [0, 1],
     alpha: PRODUCT_ALPHA,
   });
-  return `The paired Hoeffding audit at ${FULL_AUDIT_ROWS} rows needs an observed gain above ${required.toFixed(3)} when minimumImprovement is ${minimumImprovement}. With the product default of ${PRODUCT_MINIMUM_IMPROVEMENT} that is about 19 percentage points, so a smaller real gain is rejected. ${floor}`;
+  return `Acceptance uses the lower bound of a two-sided paired bootstrap interval. A candidate is kept when that bound is above minimumEffect ${minimumEffect}. Validation and audit use the same rule, and an accepted one-shot rewrite becomes the incumbent later rounds must beat. The paired Hoeffding figure for ${FULL_AUDIT_ROWS} rows at minimumImprovement ${minimumImprovement} is an observed gain above ${required.toFixed(3)}. ${floor}`;
 }
 
 export function viewOf(rates: RateDraft[], samples: number, seed: number): ScoreView {

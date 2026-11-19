@@ -1209,7 +1209,11 @@ class ImprovementController:
                             + p["audit_method"]["version"]
                         )
                         if p.get("audit_method")
-                        else "Fixed-sample paired Hoeffding; independent units required.",
+                        else (
+                            "Paired bootstrap lower bound; independent units required."
+                            if p["objective"].get("acceptance") == "confidence"
+                            else "Fixed-sample paired Hoeffding; independent units required."
+                        ),
                     }
 
                 await self.loop.evaluate_candidate(

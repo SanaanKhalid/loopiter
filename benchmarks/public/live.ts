@@ -41,6 +41,7 @@ import {
 } from "./item-failures.js";
 import { PREDICT_NAME, PROPOSE_INSTRUCTIONS, PROPOSE_NAME } from "./instructions.js";
 import { deploymentOf, resolveLimits } from "./limits.js";
+import { emptySeedLog, writeDecisionLog, type SeedDecisionLog } from "./decisions.js";
 import { runController, runOneShot, scoreHeldOut, type RateDraft } from "./loop.js";
 import { buildSeededSplit, limitSplit } from "./splits.js";
 import type { BenchmarkTask, ModelRunner, PredictCall, PublicExample } from "./task.js";
@@ -66,6 +67,8 @@ export interface PublicLiveOptions {
   ledgerPath: string;
   limits: RequestLimits;
   minimumImprovement: number;
+  minimumEffect?: number;
+  decisionLogPath?: string;
   maxTokensPerMinute: number;
   maxRetryWaitMs: number;
   max429Retries: number;
@@ -216,6 +219,7 @@ export async function runLiveTask<T extends PublicExample>(
   const proposeTally = { calls: 0, refused: 0 };
   const runner = liveRunner(task, session, failures, proposeTally);
   const perSeed: PublicLiveReport["perSeed"] = [];
+  const decisionLogs: SeedDecisionLog[] = [];
   const heartbeat = startProgressTicker(120_000, () => session.emitProgress());
   const guard = createExitGuard(forceExit);
   const onInterrupt =
@@ -279,6 +283,8 @@ export async function runLiveTask<T extends PublicExample>(
         phase = "one-shot";
         oneShot = await runOneShot({ task, split, runner, mode: "improve" });
         phase = "controller";
+        const decisionLog = emptySeedLog(seed, task.baselinePrompt);
+        decisionLogs.push(decisionLog);
         controller = await runController({
           task,
           split,
@@ -286,6 +292,9 @@ export async function runLiveTask<T extends PublicExample>(
           mode: "improve",
           observation: "honest",
           minimumImprovement: options.minimumImprovement,
+          ...(options.minimumEffect !== undefined ? { minimumEffect: options.minimumEffect } : {}),
+          oneShotFragment: oneShot.fragment,
+          decisionLog,
           batchSize: 1,
           observeChunk: 2,
           latencyMs: session.requestTimeoutMs,
@@ -342,6 +351,8 @@ export async function runLiveTask<T extends PublicExample>(
   } catch (error) {
     failure = stoppedView(error, secrets);
   } finally {
+    if (options.decisionLogPath && decisionLogs.length)
+      writeDecisionLog(options.decisionLogPath, decisionLogs);
     heartbeat.stop();
     watchdog?.stop();
     if (onInterrupt) {

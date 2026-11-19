@@ -2,6 +2,7 @@
  * One-shot arm and the autonomous controller. Held-out rows are scored only
  * after those arms return, and only through the held-out type.
  */
+import { gateParameters, type GateItem, type GateParameters } from "../../src/acceptance-gate.js";
 import {
   FeedbackLoop,
   ImprovementController,
@@ -10,6 +11,13 @@ import {
   type DatasetRow,
   type TickResult,
 } from "../../src/index.js";
+import {
+  appendRound,
+  emptySeedLog,
+  promptHash,
+  settleSeed,
+  type SeedDecisionLog,
+} from "./decisions.js";
 import { longestExample, sizedReservations } from "./budget.js";
 import {
   CLOCK_START,
@@ -63,6 +71,7 @@ export interface ArmRun {
   detail: string | null;
   transitions: { state: string; reason: string }[];
   readIds: string[];
+  decisions: SeedDecisionLog | null;
 }
 
 export function mockRunner<T extends PublicExample>(task: BenchmarkTask<T>): ModelRunner<T> {
@@ -127,6 +136,7 @@ export async function runOneShot<T extends PublicExample>(input: {
     detail: null,
     transitions: [],
     readIds,
+    decisions: null,
   };
 }
 
@@ -137,6 +147,14 @@ export async function runController<T extends PublicExample>(input: {
   mode: "improve" | "harmful";
   observation: "honest" | "fail";
   minimumImprovement: number;
+  minimumEffect?: number;
+  confidence?: number;
+  bootstrapSamples?: number;
+  bootstrapSeed?: number;
+  minimumItems?: number;
+  /** When set, this rewrite is judged against the baseline before the controller loop. */
+  oneShotFragment?: string;
+  decisionLog?: SeedDecisionLog;
   batchSize: number;
   observeChunk: number;
   latencyMs: number;
@@ -183,11 +201,32 @@ export async function runController<T extends PublicExample>(input: {
   });
   const registry = new PromptRegistry(input.task.baselinePrompt);
   const baselineVersion = registry.version;
+  const rule = gateParameters({
+    ...(input.minimumEffect !== undefined ? { minimumEffect: input.minimumEffect } : {}),
+    ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
+    ...(input.bootstrapSamples !== undefined ? { samples: input.bootstrapSamples } : {}),
+    ...(input.bootstrapSeed !== undefined ? { seed: input.bootstrapSeed } : {}),
+    ...(input.minimumItems !== undefined ? { minimumItems: input.minimumItems } : {}),
+  });
+  const decisionLog = input.decisionLog ?? emptySeedLog(input.split.seed, input.task.baselinePrompt);
+  const recorded: { split: "validation" | "audit"; promptHash: string; items: GateItem[] }[] = [];
   let proposal: string | null = null;
   let observeCursor = 0;
   let observeWrong = 0;
   let observeScored = 0;
   try {
+    if (input.oneShotFragment)
+      await seedOneShot({
+        task: input.task,
+        split: input.split,
+        runner: input.runner,
+        fragment: input.oneShotFragment,
+        registry,
+        decisionLog,
+        rule,
+        readIds,
+        heldOut,
+      });
     const sizes = {
       optimization: input.split.optimization.length,
       validation: input.split.validation.length,
@@ -217,6 +256,11 @@ export async function runController<T extends PublicExample>(input: {
       taskId: input.task.id,
       promptCap: input.task.promptCap,
       minimumImprovement: input.minimumImprovement,
+      minimumEffect: rule.minimumEffect,
+      confidence: rule.confidence,
+      bootstrapSamples: rule.samples,
+      bootstrapSeed: rule.seed,
+      minimumItems: rule.minimumItems,
       sizes,
       latencyMs: input.latencyMs,
       predictReservation: reservations.predict,
@@ -348,6 +392,13 @@ export async function runController<T extends PublicExample>(input: {
         };
         return scored;
       },
+      onComparison: (comparison) => {
+        recorded.push({
+          split: comparison.split,
+          promptHash: promptHash(comparison.candidatePrompt),
+          items: comparison.items,
+        });
+      },
     });
     bound.workflow = workflow;
     const fingerprint = (await workflow.artifact(readContext())).configurationHash;
@@ -378,6 +429,20 @@ export async function runController<T extends PublicExample>(input: {
       throw new Error(
         `Loop did not finish: ${result?.state ?? "none"} (${result?.reason ?? "no tick"}).`,
       );
+    const candidateId = result.candidateIds[0] ?? "controller";
+    for (const comparison of recorded)
+      appendRound(decisionLog, {
+        candidateId,
+        promptHash: comparison.promptHash,
+        split: comparison.split,
+        items: comparison.items,
+        rule,
+      });
+    if (result.state === "rolled_back") decisionLog.observation = "rolled_back";
+    const settled = settleSeed(decisionLog);
+    if (settled.promptHash !== promptHash(registry.fragment()))
+      throw new Error("Served prompt does not match the acceptance log.");
+    decisionLog.served = settled;
     const served = registry.fragment();
     const held = await scoreHeldOut(input.task, input.runner, served, input.split.heldOut, {
       arm: "controller",
@@ -403,6 +468,7 @@ export async function runController<T extends PublicExample>(input: {
       detail: result.detail ?? null,
       transitions,
       readIds,
+      decisions: decisionLog,
     };
   } finally {
     await loop.close();
@@ -508,6 +574,88 @@ export function draftOf(scores: readonly RowScore[]): RateDraft {
     instructionStrict: strictTotal === 0 ? null : strictPasses / strictTotal,
     instructionLoose: looseTotal === 0 ? null : loosePasses / looseTotal,
   };
+}
+
+async function seedOneShot<T extends PublicExample>(input: {
+  task: BenchmarkTask<T>;
+  split: PublicSplit<T>;
+  runner: ModelRunner<T>;
+  fragment: string;
+  registry: PromptRegistry;
+  decisionLog: SeedDecisionLog;
+  rule: GateParameters;
+  readIds: string[];
+  heldOut: Set<string>;
+}): Promise<void> {
+  const hash = promptHash(input.fragment);
+  const validation = await pairedItems(
+    input.task,
+    input.runner,
+    input.task.baselinePrompt,
+    input.fragment,
+    input.split.validation,
+    "validation",
+    input.readIds,
+    input.heldOut,
+  );
+  const judged = appendRound(input.decisionLog, {
+    candidateId: "one-shot",
+    promptHash: hash,
+    split: "validation",
+    items: validation,
+    rule: input.rule,
+  });
+  if (!judged.decision.accept) return;
+  const audit = await pairedItems(
+    input.task,
+    input.runner,
+    input.task.baselinePrompt,
+    input.fragment,
+    input.split.audit,
+    "audit",
+    input.readIds,
+    input.heldOut,
+  );
+  const audited = appendRound(input.decisionLog, {
+    candidateId: "one-shot",
+    promptHash: hash,
+    split: "audit",
+    items: audit,
+    rule: input.rule,
+  });
+  if (audited.decision.accept) input.registry.serve(input.fragment);
+}
+
+async function pairedItems<T extends PublicExample>(
+  task: BenchmarkTask<T>,
+  runner: ModelRunner<T>,
+  incumbent: string,
+  candidate: string,
+  rows: readonly { example: T }[],
+  split: "validation" | "audit",
+  readIds: string[],
+  heldOut: Set<string>,
+): Promise<GateItem[]> {
+  const items: GateItem[] = [];
+  const planned = rows.length * 2;
+  for (const row of rows) {
+    if (heldOut.has(row.example.id))
+      throw new Error(`Held-out row ${row.example.id} reached the one-shot gate.`);
+    readIds.push(row.example.id);
+    const site = { arm: "one-shot" as const, split, planned };
+    runner.afterPredict?.();
+    const left = await runner.answer(incumbent, row.example, null, site);
+    runner.afterPredict?.();
+    const right = await runner.answer(candidate, row.example, null, site);
+    runner.afterPredict?.();
+    const [base, next] = await task.scoreMany([
+      { response: left.text, row: row.example },
+      { response: right.text, row: row.example },
+    ]);
+    if (!base || !next) throw new Error("Scorer dropped a row.");
+    items.push({ id: row.example.id, incumbent: primaryOf(base), candidate: primaryOf(next) });
+  }
+  return items;
 }
 
 export function leakedIds(readIds: readonly string[], heldOutIds: readonly string[]): string[] {

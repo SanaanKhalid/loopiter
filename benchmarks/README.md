@@ -2,8 +2,44 @@
 
 `kb-qa/` is the synthetic offline and live harness. `ifbench/` and `hotpotqa/`
 are public-dataset siblings. They reuse the kb-qa live-safety helpers and do
-not change that harness. Their READMEs describe the pins, arms, and the
-minimum-improvement caveat. Results are internal.
+not change that harness. Their READMEs describe the pins and the arms. Results
+are internal.
+
+## Public acceptance gate
+
+HotpotQA and IFBench keep a candidate when the lower bound of a two-sided
+paired bootstrap interval on (candidate − incumbent), over the same items, is
+above `minimumEffect`. The default effect is 0. The default confidence is
+0.90, the default resample count is 2000, and the resample seed is fixed so a
+log replays the same decision. Validation and audit use that rule. A
+`minimumItems` guard can require more items before the interval is used; the
+default leaves the guard off.
+
+If a one-shot rewrite exists, it is judged first against the frozen baseline.
+When it passes validation and audit, it becomes the incumbent. Later rounds
+have to beat that incumbent. A rejected later round leaves the incumbent in
+place. The served prompt is the incumbent after the last round that passed
+both splits. A production rollback restores the previous incumbent.
+
+The harness writes a decision log beside a report when `--out` is set
+(`report.json` produces `report.decisions.json`). Each seed records, per
+round, the candidate id, a prompt hash, the split, per-item scores for the
+candidate and the incumbent, the rule parameters, and the decision. The log
+does not contain prompt text.
+
+Replay that log with no model calls:
+
+```sh
+node dist/benchmarks/public/replay.js path/to/report.decisions.json
+```
+
+It prints the served candidate and the baseline for each seed, and exits
+non-zero if a recomputed decision differs from the log.
+
+`rescore.js` reads a saved aggregate report and prints Wilson and Newcombe
+bounds for baseline, one-shot, ungated, and served. That is an aggregate
+sanity check. It is not a replay, because those reports do not contain the
+per-item outcomes.
 
 # Offline benchmark
 

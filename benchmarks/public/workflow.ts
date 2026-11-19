@@ -61,6 +61,11 @@ export function createPromptWorkflow(input: {
     candidate: string,
     context: CallbackContext,
   ) => Promise<BatchCase>;
+  onComparison?: (comparison: {
+    split: "validation" | "audit";
+    candidatePrompt: string;
+    items: { id: string; incumbent: number; candidate: number }[];
+  }) => void;
 }): ImprovementWorkflow {
   const configuration = {
     model: input.modelId,
@@ -110,6 +115,15 @@ export function createPromptWorkflow(input: {
           ? 0
           : cases.reduce((sum, item) => sum + item.candidate, 0) / cases.length;
       const latencyMs = cases.reduce((max, item) => Math.max(max, item.latencyMs), 0);
+      input.onComparison?.({
+        split: evaluation.partition,
+        candidatePrompt: fragmentOf(evaluation.change),
+        items: cases.map((item) => ({
+          id: item.id,
+          incumbent: item.baseline,
+          candidate: item.candidate,
+        })),
+      });
       return {
         cases: cases.map((item) => ({
           id: item.id,

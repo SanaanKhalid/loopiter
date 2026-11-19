@@ -92,23 +92,23 @@ a dropped connection after the request was sent is charged the full ceiling.
 
 1. Frozen baseline.
 2. One-shot rewrite: one propose call, applied with no gates.
-3. Autonomous `ImprovementController` (`autonomous`, `selfImproving: true`)
-   with the real validation, audit, and observation gates.
+3. Autonomous `ImprovementController` (`autonomous`, `selfImproving: true`).
+   Validation and audit use the paired bootstrap gate described in the
+   benchmarks README. An accepted one-shot rewrite is the incumbent that a
+   later proposal has to beat.
 
 The report records the served held-out exact match and the ungated proposal's
 held-out exact match, with seed bootstrap intervals, plus mean token F1. The
 offline mock also injects a harmful candidate. The validation gate must reject
-it. That check keeps the product `minimumImprovement` of 0.05.
+it.
 
-## minimumImprovement
+## Acceptance
 
-`--minimum-improvement` defaults to 0.05 and is written on the report. It is
-not lowered silently.
-
-At 300 audit rows, alpha 0.05, and a score range of 0 to 1, the paired
-Hoeffding bound needs an observed gain of about 19 percentage points before it
-clears 0.05. A smaller real gain is rejected. The ungated score is still
-reported.
+`--minimum-improvement` defaults to 0.05 and is written on the report. The
+acceptance rule does not use that fixed margin. It keeps a candidate when the
+paired bootstrap lower bound is above `--minimum-effect` (default 0), at
+confidence 0.90. Audit uses the same rule. The ungated score is still reported.
+See the benchmarks README for the decision log and `replay.js`.
 
 ## Commands
 

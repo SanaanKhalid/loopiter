@@ -317,12 +317,12 @@ test("estimate prints a per-arm plan for both datasets", () => {
   });
   assert.equal(ifbench.arms.baseline.length, 1500);
   assert.equal(ifbench.arms["one-shot"].length, 2255);
-  assert.equal(ifbench.arms.controller.length, 9005);
+  assert.equal(ifbench.arms.controller.length, 13505);
   assert.equal(hotpot.arms.baseline.length, 1500);
   assert.equal(hotpot.arms["one-shot"].length, 1505);
-  assert.equal(hotpot.arms.controller.length, 8255);
-  assert.match(combined.stdout, /calls: 9005/);
-  assert.match(combined.stdout, /calls: 8255/);
+  assert.equal(hotpot.arms.controller.length, 12755);
+  assert.match(combined.stdout, /calls: 13505/);
+  assert.match(combined.stdout, /calls: 12755/);
   assert.match(combined.stdout, /Predict max output tokens: 8192/);
   assert.match(combined.stdout, /Predict max output tokens: 2048/);
   for (const script of ["../ifbench/run.js", "../hotpotqa/run.js"]) {
@@ -430,7 +430,8 @@ async function assertRegression<T extends PublicExample>(task: BenchmarkTask<T>)
   assert.equal(report.perSeed[0]?.leakedIds.length, 0);
   assert.equal(report.perSeed[0]?.oneShot.gates, "none");
   assert.notEqual(report.perSeed[0]?.oneShot.version, report.perSeed[0]?.oneShot.baselineVersion);
-  assert.equal(report.perSeed[0]?.controller.state, "completed");
+  assert.notEqual(report.perSeed[0]?.controller.version, report.perSeed[0]?.controller.baselineVersion);
+  assert.ok(report.perSeed[0]!.controller.served.rate >= report.perSeed[0]!.baseline.rate);
   assert.equal(report.arms.oneShot.gates, "none");
   assert.equal(report.arms.controller.gates, "improvement-controller");
   assert.ok(report.arms.controller.ungated);

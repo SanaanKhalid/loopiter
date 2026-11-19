@@ -18,6 +18,7 @@ import {
   object,
   timestamp,
 } from "./utils.js";
+import { decideAcceptance, gateParameters } from "./acceptance-gate.js";
 import { fields, target } from "./validation.js";
 
 export function validateSchema(schema: ChangeSchema): void {
@@ -159,6 +160,12 @@ export function validatePolicy(p: AutonomyPolicy): void {
     "minimumImprovement",
     "range",
     "alpha",
+    "acceptance",
+    "minimumEffect",
+    "confidence",
+    "bootstrapSamples",
+    "bootstrapSeed",
+    "minimumItems",
   ]);
   nonempty(p.objective.metric, "objective");
   enumeration(p.objective.direction, ["maximize", "minimize"], "direction");
@@ -171,6 +178,25 @@ export function validatePolicy(p: AutonomyPolicy): void {
   finite(p.objective.alpha, "alpha");
   if (p.objective.alpha <= 0 || p.objective.alpha >= 1)
     fail("invalid_policy", "alpha must be between 0 and 1.");
+  if (p.objective.acceptance !== undefined)
+    enumeration(p.objective.acceptance, ["confidence"], "acceptance");
+  if (p.objective.minimumEffect !== undefined)
+    finite(p.objective.minimumEffect, "minimumEffect");
+  if (p.objective.confidence !== undefined) {
+    finite(p.objective.confidence, "confidence");
+    if (p.objective.confidence <= 0 || p.objective.confidence >= 1)
+      fail("invalid_policy", "confidence must be between 0 and 1.");
+  }
+  if (p.objective.bootstrapSamples !== undefined) {
+    integer(p.objective.bootstrapSamples, "bootstrapSamples", 100);
+  }
+  if (p.objective.bootstrapSeed !== undefined) {
+    finite(p.objective.bootstrapSeed, "bootstrapSeed");
+    if (!Number.isSafeInteger(p.objective.bootstrapSeed))
+      fail("invalid_policy", "bootstrapSeed must be an integer.");
+  }
+  if (p.objective.minimumItems !== undefined)
+    integer(p.objective.minimumItems, "minimumItems", 0);
   gates(p.guardrails);
   gates(p.observation?.guardrails);
   if (!Array.isArray(p.trustedSources) || !p.trustedSources.length)
@@ -378,6 +404,34 @@ export function compare(
     ? improvement -
       (hi - lo) * Math.sqrt((2 * Math.log(1 / p.objective.alpha)) / n)
     : -Infinity;
+  const confidence =
+    p.objective.acceptance === "confidence" && !(audit && p.auditMethod)
+      ? decideAcceptance({
+          items: result.cases.map((row) => ({
+            id: row.id,
+            incumbent: row.baseline,
+            candidate: row.candidate,
+          })),
+          direction: p.objective.direction,
+          parameters: gateParameters({
+            ...(p.objective.minimumEffect !== undefined
+              ? { minimumEffect: p.objective.minimumEffect }
+              : {}),
+            ...(p.objective.confidence !== undefined
+              ? { confidence: p.objective.confidence }
+              : {}),
+            ...(p.objective.bootstrapSamples !== undefined
+              ? { samples: p.objective.bootstrapSamples }
+              : {}),
+            ...(p.objective.bootstrapSeed !== undefined
+              ? { seed: p.objective.bootstrapSeed }
+              : {}),
+            ...(p.objective.minimumItems !== undefined
+              ? { minimumItems: p.objective.minimumItems }
+              : {}),
+          }),
+        })
+      : undefined;
   if (audit && p.auditMethod) {
     const u = result.uncertainty;
     fields(u, ["method", "version", "lowerBound", "assumptionsValid"]);
@@ -398,17 +452,21 @@ export function compare(
       );
     lower = u.lowerBound;
   }
+  const marginPassed = confidence
+    ? confidence.accept
+    : (audit ? lower : improvement) > p.objective.minimumImprovement;
   const passed =
     n > 0 &&
     n >= (audit ? p.minimumAuditUnits : p.minimumValidationUnits) &&
     passesGates(result.metrics, p.guardrails) &&
-    (audit ? lower : improvement) > p.objective.minimumImprovement;
+    marginPassed;
+  const reportedLower = confidence ? confidence.lower : Number.isFinite(lower) ? lower : null;
   return {
     passed,
     baseline: n ? a / n : 0,
     candidate: n ? b / n : 0,
     improvement,
-    lower: Number.isFinite(lower) ? lower : null,
+    lower: reportedLower,
     sampleCount: n,
   };
 }

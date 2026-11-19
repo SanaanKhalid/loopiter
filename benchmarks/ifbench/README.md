@@ -156,24 +156,22 @@ the cap.
 2. One-shot rewrite. The same propose call runs once and the result is served
    with no validation, audit, or observation gate.
 3. Autonomous controller. `ImprovementController` with `mode: "autonomous"` and
-   `selfImproving: true`. Validation, the paired Hoeffding audit, and
-   production observation all run.
+   `selfImproving: true`. Validation and audit use the paired bootstrap gate
+   described in the benchmarks README. An accepted one-shot rewrite is the
+   incumbent that a later proposal has to beat. Production observation still
+   runs.
 
 The report records the served held-out score and the ungated proposal's
 held-out score, with seed bootstrap intervals. A harmful candidate is injected
-in the offline mock. The validation gate must reject it. That check uses the
-product `minimumImprovement` of 0.05 even when the comparison flag is different.
+in the offline mock. The validation gate must reject it.
 
-## minimumImprovement
+## Acceptance
 
-The flag `--minimum-improvement` defaults to 0.05, the product onboarding
-value. It is stored on the report. It is not lowered in code.
-
-At 300 audit rows, alpha 0.05, and a score range of 0 to 1, the paired
-Hoeffding lower bound needs an observed gain of about 19 percentage points
-before it clears 0.05. A smaller real gain is rejected and the served artifact
-stays the baseline. The ungated score still shows what the proposal would have
-scored.
+The flag `--minimum-improvement` defaults to 0.05 and is stored on the report.
+The acceptance rule does not use that fixed margin. It keeps a candidate when
+the paired bootstrap lower bound is above `--minimum-effect` (default 0), at
+confidence 0.90. Audit uses the same rule. The ungated score is still reported.
+See the benchmarks README for the decision log and `replay.js`.
 
 ## Commands
 
