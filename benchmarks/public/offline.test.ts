@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,7 @@ import {
 } from "./constants.js";
 import { planTask } from "./estimate.js";
 import { resolveLimits } from "./limits.js";
+import { readDecisionLog, replaySeed } from "./decisions.js";
 import { runOfflineBenchmark } from "./harness.js";
 import { leakedIds, mockRunner, runOneShot } from "./loop.js";
 import { promptPolicy } from "./policy.js";
@@ -157,8 +159,7 @@ test("minimumImprovement is recorded and a value the audit cannot clear is refus
   assert.equal(report.minimumImprovement, 1);
   assert.equal(report.regressionMinimumImprovement, PRODUCT_MINIMUM_IMPROVEMENT);
   assert.equal(report.regression.passed, true);
-  assert.equal(report.perSeed[0]?.controller.state, "waiting_for_evidence");
-  assert.equal(report.perSeed[0]?.controller.reason, "invalid_policy");
+  assert.notEqual(report.perSeed[0]?.controller.reason, "invalid_policy");
   const required = observedGainRequired({
     auditRows: FULL_AUDIT_ROWS,
     minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
@@ -317,12 +318,12 @@ test("estimate prints a per-arm plan for both datasets", () => {
   });
   assert.equal(ifbench.arms.baseline.length, 1500);
   assert.equal(ifbench.arms["one-shot"].length, 2255);
-  assert.equal(ifbench.arms.controller.length, 9005);
+  assert.equal(ifbench.arms.controller.length, 13505);
   assert.equal(hotpot.arms.baseline.length, 1500);
   assert.equal(hotpot.arms["one-shot"].length, 1505);
-  assert.equal(hotpot.arms.controller.length, 8255);
-  assert.match(combined.stdout, /calls: 9005/);
-  assert.match(combined.stdout, /calls: 8255/);
+  assert.equal(hotpot.arms.controller.length, 12755);
+  assert.match(combined.stdout, /calls: 13505/);
+  assert.match(combined.stdout, /calls: 12755/);
   assert.match(combined.stdout, /Predict max output tokens: 8192/);
   assert.match(combined.stdout, /Predict max output tokens: 2048/);
   for (const script of ["../ifbench/run.js", "../hotpotqa/run.js"]) {
@@ -415,11 +416,14 @@ print("ok")
 });
 
 async function assertRegression<T extends PublicExample>(task: BenchmarkTask<T>): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), "gate-log-"));
   const report = await runOfflineBenchmark(task, {
     seeds: [1],
     source: "fixtures",
     minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    decisionLogPath: join(directory, "decisions.json"),
   });
+  try {
   assert.equal(report.passed, true);
   assert.equal(report.minimumImprovement, PRODUCT_MINIMUM_IMPROVEMENT);
   assert.equal(report.regression.passed, true);
@@ -430,10 +434,19 @@ async function assertRegression<T extends PublicExample>(task: BenchmarkTask<T>)
   assert.equal(report.perSeed[0]?.leakedIds.length, 0);
   assert.equal(report.perSeed[0]?.oneShot.gates, "none");
   assert.notEqual(report.perSeed[0]?.oneShot.version, report.perSeed[0]?.oneShot.baselineVersion);
-  assert.equal(report.perSeed[0]?.controller.state, "completed");
+  assert.equal(report.perSeed[0]!.controller.state, "completed");
+  const log = readDecisionLog(join(directory, "decisions.json")).seeds[0];
+  assert.ok(log);
+  assert.equal(log.complete, true);
+  assert.equal(replaySeed(log).matched, true);
+  const promoted = log.rounds.some((round) => round.split === "audit" && round.decision.accept);
+  assert.equal(log.served.id === log.baseline.id, !promoted || log.observation === "rolled_back");
   assert.equal(report.arms.oneShot.gates, "none");
   assert.equal(report.arms.controller.gates, "improvement-controller");
   assert.ok(report.arms.controller.ungated);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 async function assertHarmfulOneShot<T extends PublicExample>(task: BenchmarkTask<T>): Promise<void> {

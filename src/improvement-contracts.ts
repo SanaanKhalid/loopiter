@@ -53,6 +53,16 @@ export interface AutonomyPolicy {
     minimumImprovement: number;
     range: [number, number];
     alpha: number;
+    /** `confidence` replaces the fixed margin with a paired bootstrap lower bound. */
+    acceptance?: "confidence";
+    /** Lower bound must be strictly above this. Default 0 when acceptance is confidence. */
+    minimumEffect?: number;
+    /** Two-sided interval level. Default 0.90 when acceptance is confidence. */
+    confidence?: number;
+    bootstrapSamples?: number;
+    bootstrapSeed?: number;
+    /** Extra item-count guard. 0 leaves it off. */
+    minimumItems?: number;
   };
   guardrails: MetricGate[];
   trustedSources: string[];

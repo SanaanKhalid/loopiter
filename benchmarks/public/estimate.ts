@@ -84,6 +84,10 @@ export function planTask<T extends PublicExample>(
     pushPredict(arms.controller, "controller", "validation", seed, input.sizes.validation, predictCandidate, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "audit", seed, input.sizes.audit, predictBaseline, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "audit", seed, input.sizes.audit, predictCandidate, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "validation", seed, input.sizes.validation, predictBaseline, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "validation", seed, input.sizes.validation, predictCandidate, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "audit", seed, input.sizes.audit, predictBaseline, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "audit", seed, input.sizes.audit, predictCandidate, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "production", seed, input.sizes.production, predictCandidate, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "held-out-served", seed, input.sizes.heldOut, predictCandidate, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "held-out-ungated", seed, input.sizes.heldOut, predictCandidate, input.limits.predictMaxOutputTokens);

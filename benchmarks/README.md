@@ -2,8 +2,58 @@
 
 `kb-qa/` is the synthetic offline and live harness. `ifbench/` and `hotpotqa/`
 are public-dataset siblings. They reuse the kb-qa live-safety helpers and do
-not change that harness. Their READMEs describe the pins, arms, and the
-minimum-improvement caveat. Results are internal.
+not change that harness. Their READMEs describe the pins and the arms. Results
+are internal.
+
+## Public acceptance gate
+
+HotpotQA and IFBench keep a candidate when the lower bound of a two-sided
+paired bootstrap interval on (candidate − incumbent), over the same items, is
+above `minimumEffect`. The default effect is 0. The default confidence is
+0.90, which uses the same cutoff as a one-sided 95% bound. The default resample
+count is 2000, the maximum is 100000, and the resample seed is fixed. Items are
+sorted by id before resampling. Validation and audit use that rule. A
+`minimumItems` guard can require more items before the interval is used; the
+default is 0, so a very small paired sample can still accept. `compare()` also
+requires the policy's validation and audit unit counts.
+
+The benchmark opts in with `objective.acceptance: "confidence"`. That is
+intended. The product default, including onboarding, keeps the fixed
+`minimumImprovement` margin. `confidence` is valid only for an immediate
+rollout with no custom audit method. Canary promotion and production
+observation still use the fixed margin.
+
+Paired items take precedence when a caller also passes unpaired counts.
+Unpaired counts are the path for aggregate reports that have no item scores.
+
+If a one-shot rewrite exists, it is the first controller candidate. Its audit
+rows are the first half of the audit split, sorted by id. The follow-up
+candidate is scored on the other half, so those rows are not reused. Both
+candidates go through the controller's unit counts, guardrails, and budget
+ledger. The served prompt is the accepted candidate with the highest paired
+effect on its audit round. An equal effect keeps the earlier round, then the
+id in byte order. A rejected round does not replace it. A production rollback
+drops the latest accepted candidate and serves the best one that remains.
+
+The harness writes a decision log beside a report when `--out` is set
+(`report.json` produces `report.decisions.json`). Each seed records, per
+round, the candidate id, a prompt hash, the split, per-item scores for the
+candidate and the incumbent, the rule parameters, and the decision. The log
+does not contain prompt text.
+
+Replay that log with no model calls:
+
+```sh
+node dist/benchmarks/public/replay.js path/to/report.decisions.json
+```
+
+It prints the served candidate and the baseline for each seed, and exits
+non-zero if a recomputed decision differs from the log.
+
+`rescore.js` reads a saved aggregate report and prints Wilson and Newcombe
+bounds for baseline, one-shot, ungated, and served. That is an aggregate
+sanity check. It is not a replay, because those reports do not contain the
+per-item outcomes.
 
 # Offline benchmark
 

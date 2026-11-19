@@ -18,6 +18,12 @@ import {
   object,
   timestamp,
 } from "./utils.js";
+import {
+  decideAcceptance,
+  gateParameters,
+  MAX_BOOTSTRAP_SAMPLES,
+  type GateDecision,
+} from "./acceptance-gate.js";
 import { fields, target } from "./validation.js";
 
 export function validateSchema(schema: ChangeSchema): void {
@@ -159,6 +165,12 @@ export function validatePolicy(p: AutonomyPolicy): void {
     "minimumImprovement",
     "range",
     "alpha",
+    "acceptance",
+    "minimumEffect",
+    "confidence",
+    "bootstrapSamples",
+    "bootstrapSeed",
+    "minimumItems",
   ]);
   nonempty(p.objective.metric, "objective");
   enumeration(p.objective.direction, ["maximize", "minimize"], "direction");
@@ -171,6 +183,30 @@ export function validatePolicy(p: AutonomyPolicy): void {
   finite(p.objective.alpha, "alpha");
   if (p.objective.alpha <= 0 || p.objective.alpha >= 1)
     fail("invalid_policy", "alpha must be between 0 and 1.");
+  if (p.objective.acceptance !== undefined)
+    enumeration(p.objective.acceptance, ["confidence"], "acceptance");
+  if (p.objective.minimumEffect !== undefined)
+    finite(p.objective.minimumEffect, "minimumEffect");
+  if (p.objective.confidence !== undefined) {
+    finite(p.objective.confidence, "confidence");
+    if (p.objective.confidence <= 0 || p.objective.confidence >= 1)
+      fail("invalid_policy", "confidence must be between 0 and 1.");
+  }
+  if (p.objective.bootstrapSamples !== undefined) {
+    integer(p.objective.bootstrapSamples, "bootstrapSamples", 100);
+    if (p.objective.bootstrapSamples > MAX_BOOTSTRAP_SAMPLES)
+      fail(
+        "invalid_policy",
+        `bootstrapSamples cannot exceed ${MAX_BOOTSTRAP_SAMPLES}.`,
+      );
+  }
+  if (p.objective.bootstrapSeed !== undefined) {
+    finite(p.objective.bootstrapSeed, "bootstrapSeed");
+    if (!Number.isSafeInteger(p.objective.bootstrapSeed))
+      fail("invalid_policy", "bootstrapSeed must be an integer.");
+  }
+  if (p.objective.minimumItems !== undefined)
+    integer(p.objective.minimumItems, "minimumItems", 0);
   gates(p.guardrails);
   gates(p.observation?.guardrails);
   if (!Array.isArray(p.trustedSources) || !p.trustedSources.length)
@@ -222,6 +258,18 @@ export function validatePolicy(p: AutonomyPolicy): void {
     fields(p.auditMethod, ["name", "version"]);
     nonempty(p.auditMethod.name, "audit method");
     nonempty(p.auditMethod.version, "audit method version");
+  }
+  if (p.objective.acceptance === "confidence") {
+    if (p.rollout.mode !== "immediate")
+      fail(
+        "invalid_policy",
+        "Confidence acceptance requires immediate rollout. Canary observation still uses the fixed margin.",
+      );
+    if (p.auditMethod)
+      fail(
+        "invalid_policy",
+        "Confidence acceptance does not combine with a custom audit method.",
+      );
   }
 }
 /** Reject leakage; quarantine conflicting corrections and deduplicate episodes before scoring. */
@@ -337,6 +385,22 @@ export function passesGates(
         : metrics[g.metric]! <= g.value),
   );
 }
+const acceptanceCache = new Map<string, GateDecision>();
+
+function cachedAcceptance(
+  items: { id: string; incumbent: number; candidate: number }[],
+  direction: "maximize" | "minimize",
+  parameters: ReturnType<typeof gateParameters>,
+): GateDecision {
+  const key = hash({ items, direction, parameters });
+  const hit = acceptanceCache.get(key);
+  if (hit) return hit;
+  const decision = decideAcceptance({ items, direction, parameters });
+  if (acceptanceCache.size > 32) acceptanceCache.clear();
+  acceptanceCache.set(key, decision);
+  return decision;
+}
+
 export function compare(
   result: Comparison,
   rows: DatasetRow[],
@@ -378,6 +442,34 @@ export function compare(
     ? improvement -
       (hi - lo) * Math.sqrt((2 * Math.log(1 / p.objective.alpha)) / n)
     : -Infinity;
+  const confidence =
+    p.objective.acceptance === "confidence" && !(audit && p.auditMethod)
+      ? cachedAcceptance(
+          result.cases.map((row) => ({
+            id: row.id,
+            incumbent: row.baseline,
+            candidate: row.candidate,
+          })),
+          p.objective.direction,
+          gateParameters({
+            ...(p.objective.minimumEffect !== undefined
+              ? { minimumEffect: p.objective.minimumEffect }
+              : {}),
+            ...(p.objective.confidence !== undefined
+              ? { confidence: p.objective.confidence }
+              : {}),
+            ...(p.objective.bootstrapSamples !== undefined
+              ? { samples: p.objective.bootstrapSamples }
+              : {}),
+            ...(p.objective.bootstrapSeed !== undefined
+              ? { seed: p.objective.bootstrapSeed }
+              : {}),
+            ...(p.objective.minimumItems !== undefined
+              ? { minimumItems: p.objective.minimumItems }
+              : {}),
+          }),
+        )
+      : undefined;
   if (audit && p.auditMethod) {
     const u = result.uncertainty;
     fields(u, ["method", "version", "lowerBound", "assumptionsValid"]);
@@ -398,17 +490,21 @@ export function compare(
       );
     lower = u.lowerBound;
   }
+  const marginPassed = confidence
+    ? confidence.accept
+    : (audit ? lower : improvement) > p.objective.minimumImprovement;
   const passed =
     n > 0 &&
     n >= (audit ? p.minimumAuditUnits : p.minimumValidationUnits) &&
     passesGates(result.metrics, p.guardrails) &&
-    (audit ? lower : improvement) > p.objective.minimumImprovement;
+    marginPassed;
+  const reportedLower = confidence ? confidence.lower : Number.isFinite(lower) ? lower : null;
   return {
     passed,
     baseline: n ? a / n : 0,
     candidate: n ? b / n : 0,
     improvement,
-    lower: Number.isFinite(lower) ? lower : null,
+    lower: reportedLower,
     sampleCount: n,
   };
 }

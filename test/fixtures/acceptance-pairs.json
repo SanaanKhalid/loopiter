@@ -1,0 +1,6 @@
+[
+  {"id": "m", "incumbent": 0, "candidate": 1},
+  {"id": "a", "incumbent": 1, "candidate": 0},
+  {"id": "c", "incumbent": 1, "candidate": 1},
+  {"id": "b", "incumbent": 0, "candidate": 0}
+]

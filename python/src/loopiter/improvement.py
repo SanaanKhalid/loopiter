@@ -813,6 +813,7 @@ class ImprovementController:
                     return await self._idle(w, "self_improvement_disabled", "paused")
                 if (
                     self.mode == "autonomous"
+                    and p["objective"].get("acceptance") != "confidence"
                     and "audit_method" not in p
                     and p["minimum_audit_units"] < minimum_certifiable_audit_units(p["objective"])
                 ):
@@ -1209,7 +1210,11 @@ class ImprovementController:
                             + p["audit_method"]["version"]
                         )
                         if p.get("audit_method")
-                        else "Fixed-sample paired Hoeffding; independent units required.",
+                        else (
+                            "Paired bootstrap lower bound; independent units required."
+                            if p["objective"].get("acceptance") == "confidence"
+                            else "Fixed-sample paired Hoeffding; independent units required."
+                        ),
                     }
 
                 await self.loop.evaluate_candidate(

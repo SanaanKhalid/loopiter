@@ -7,6 +7,7 @@ import {
   redactSecrets,
 } from "../kb-qa/live.js";
 import { PRODUCT_MINIMUM_IMPROVEMENT } from "./constants.js";
+import { decisionsBeside } from "./decisions.js";
 import { renderTaskEstimate } from "./estimate.js";
 import { renderMarkdown, runOfflineBenchmark } from "./harness.js";
 import { renderItemFailureSummary } from "./item-failures.js";
@@ -46,13 +47,20 @@ export async function cliMain<T extends PublicExample>(task: BenchmarkTask<T>): 
     process.exit(2);
   }
   const minimumImprovement = readMinimumImprovement();
+  const minimumEffect = readMinimumEffect();
   const seeds = seedList(integerOption("--seeds", 5), integerOption("--seed-start", 1));
   const source = process.argv.includes("--fixtures") ? "fixtures" : "cache";
   try {
-    const report = await runOfflineBenchmark(task, { seeds, minimumImprovement, source });
+    const out = process.argv.includes("--out") ? option("--out") : "";
+    const report = await runOfflineBenchmark(task, {
+      seeds,
+      minimumImprovement,
+      ...(minimumEffect === undefined ? {} : { minimumEffect }),
+      source,
+      ...(out ? { decisionLogPath: decisionsBeside(out) } : {}),
+    });
     const json = `${JSON.stringify(report, null, 2)}\n`;
     const markdown = renderMarkdown(report);
-    const out = process.argv.includes("--out") ? option("--out") : "";
     if (out) {
       await writeFile(out, json);
       const markdownPath = out.endsWith(".json") ? out.replace(/\.json$/, ".md") : `${out}.md`;
@@ -96,10 +104,15 @@ async function runLiveCli<T extends PublicExample>(task: BenchmarkTask<T>): Prom
       stopAtWarn: process.argv.includes("--stop-at-warn"),
       ledgerPath,
       minimumImprovement: readMinimumImprovement(),
+      ...(readMinimumEffect() === undefined ? {} : { minimumEffect: readMinimumEffect() }),
     });
     secret = live.apiKey;
     const loaded = await task.loadCache();
-    const report = await runLiveTask(task, { ...live, reportPath: out, handleSignals: true }, loaded);
+    const report = await runLiveTask(
+      task,
+      { ...live, reportPath: out, decisionLogPath: decisionsBeside(out), handleSignals: true },
+      loaded,
+    );
     const json = `${JSON.stringify(report, null, 2)}\n`;
     if (secret && json.includes(secret))
       throw new LiveGateError("Refusing to write a report that contains a credential.");
@@ -124,6 +137,13 @@ async function boundedWrite(path: string, body: string): Promise<void> {
   const temporary = `${path}.${process.pid}.report.tmp`;
   await writeFile(temporary, body, { mode: 0o600 });
   await rename(temporary, path);
+}
+
+function readMinimumEffect(): number | undefined {
+  if (!process.argv.includes("--minimum-effect")) return undefined;
+  const value = Number(option("--minimum-effect"));
+  if (!Number.isFinite(value)) throw new Error("--minimum-effect must be a finite number.");
+  return value;
 }
 
 function readMinimumImprovement(): number {

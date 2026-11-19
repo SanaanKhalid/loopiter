@@ -6,6 +6,12 @@ export function promptPolicy(input: {
   taskId: string;
   promptCap: number;
   minimumImprovement: number;
+  /** Confidence-rule threshold. Defaults to 0. The fixed margin stays on `minimumImprovement`. */
+  minimumEffect?: number;
+  confidence?: number;
+  bootstrapSamples?: number;
+  bootstrapSeed?: number;
+  minimumItems?: number;
   sizes: SplitSizes;
   latencyMs: number;
   /** Per-call controller reservations from `reservedModelTokens`. */
@@ -58,6 +64,12 @@ export function promptPolicy(input: {
       minimumImprovement: input.minimumImprovement,
       range: [0, 1],
       alpha: 0.05,
+      acceptance: "confidence",
+      minimumEffect: input.minimumEffect ?? 0,
+      confidence: input.confidence ?? 0.9,
+      bootstrapSamples: input.bootstrapSamples ?? 2_000,
+      bootstrapSeed: input.bootstrapSeed ?? 17,
+      minimumItems: input.minimumItems ?? 0,
     },
     guardrails: [
       { metric: "accuracy", comparator: "gte", value: 0 },

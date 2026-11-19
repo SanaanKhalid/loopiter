@@ -156,24 +156,23 @@ the cap.
 2. One-shot rewrite. The same propose call runs once and the result is served
    with no validation, audit, or observation gate.
 3. Autonomous controller. `ImprovementController` with `mode: "autonomous"` and
-   `selfImproving: true`. Validation, the paired Hoeffding audit, and
-   production observation all run.
+   `selfImproving: true`. Validation and audit use the opt-in confidence rule
+   described in the benchmarks README. The product default keeps the fixed
+   margin. The served prompt is the accepted candidate with the highest paired
+   audit effect. Production observation still runs.
 
 The report records the served held-out score and the ungated proposal's
 held-out score, with seed bootstrap intervals. A harmful candidate is injected
-in the offline mock. The validation gate must reject it. That check uses the
-product `minimumImprovement` of 0.05 even when the comparison flag is different.
+in the offline mock. The validation gate must reject it.
 
-## minimumImprovement
+## Acceptance
 
-The flag `--minimum-improvement` defaults to 0.05, the product onboarding
-value. It is stored on the report. It is not lowered in code.
-
-At 300 audit rows, alpha 0.05, and a score range of 0 to 1, the paired
-Hoeffding lower bound needs an observed gain of about 19 percentage points
-before it clears 0.05. A smaller real gain is rejected and the served artifact
-stays the baseline. The ungated score still shows what the proposal would have
-scored.
+The flag `--minimum-improvement` defaults to 0.05 and is stored on the report.
+Benchmark acceptance is a paired bootstrap lower bound above `--minimum-effect`
+(default 0), at confidence 0.90. That is separate from the product default,
+which still uses the fixed margin. Audit uses the same benchmark rule. The
+ungated score is still reported. See the benchmarks README for the decision
+log and `replay.js`.
 
 ## Commands
 

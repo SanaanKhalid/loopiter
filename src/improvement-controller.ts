@@ -918,6 +918,7 @@ export class ImprovementController {
           return idle("self_improvement_disabled", "paused");
         if (
           mode === "autonomous" &&
+          w.policy.objective.acceptance !== "confidence" &&
           !w.policy.auditMethod &&
           w.policy.minimumAuditUnits <
             minimumCertifiableAuditUnits(w.policy.objective)
@@ -1313,7 +1314,9 @@ export class ImprovementController {
               metrics: auditMetrics,
               notes: w.policy.auditMethod
                 ? `Trusted application audit: ${w.policy.auditMethod.name}@${w.policy.auditMethod.version}`
-                : "Fixed-sample paired Hoeffding; independent units required.",
+                : w.policy.objective.acceptance === "confidence"
+                  ? "Paired bootstrap lower bound; independent units required."
+                  : "Fixed-sample paired Hoeffding; independent units required.",
             }),
           );
         const audited = (await this.loop.getCandidate(cid))!;

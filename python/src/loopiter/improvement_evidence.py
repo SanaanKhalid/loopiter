@@ -8,6 +8,7 @@ import math
 from copy import deepcopy
 
 from . import _validation as v
+from .acceptance_gate import MAX_BOOTSTRAP_SAMPLES, decide_acceptance, gate_parameters
 
 
 def validate_schema(schema):
@@ -116,7 +117,19 @@ def validate_policy(p):
     o = p["objective"]
     v.fields(
         o,
-        ["metric", "direction", "minimum_improvement", "range", "alpha"],
+        [
+            "metric",
+            "direction",
+            "minimum_improvement",
+            "range",
+            "alpha",
+            "acceptance",
+            "minimum_effect",
+            "confidence",
+            "bootstrap_samples",
+            "bootstrap_seed",
+            "minimum_items",
+        ],
         ("metric", "direction", "minimum_improvement", "range", "alpha"),
     )
     v.nonempty(o["metric"], "objective")
@@ -129,6 +142,26 @@ def validate_policy(p):
     v.finite(o["alpha"], "alpha")
     if o["range"][1] <= o["range"][0] or not 0 < o["alpha"] < 1:
         v.fail("invalid_policy", "Invalid range/alpha.")
+    if "acceptance" in o:
+        v.enum(o["acceptance"], ["confidence"], "acceptance")
+    if "minimum_effect" in o:
+        v.finite(o["minimum_effect"], "minimum effect")
+    if "confidence" in o:
+        v.finite(o["confidence"], "confidence")
+        if not 0 < o["confidence"] < 1:
+            v.fail("invalid_policy", "confidence must be between 0 and 1.")
+    if "bootstrap_samples" in o:
+        v.integer(o["bootstrap_samples"], "bootstrap samples", 100)
+        if o["bootstrap_samples"] > MAX_BOOTSTRAP_SAMPLES:
+            v.fail(
+                "invalid_policy",
+                f"bootstrap samples cannot exceed {MAX_BOOTSTRAP_SAMPLES}.",
+            )
+    if "bootstrap_seed" in o:
+        if type(o["bootstrap_seed"]) is not int or isinstance(o["bootstrap_seed"], bool):
+            v.fail("invalid_policy", "bootstrap seed must be an integer.")
+    if "minimum_items" in o:
+        v.integer(o["minimum_items"], "minimum items", 0)
     _gates(p["guardrails"])
     if type(p["trusted_sources"]) is not list or not p["trusted_sources"]:
         v.fail("invalid_policy", "Trusted sources required.")
@@ -193,6 +226,17 @@ def validate_policy(p):
         v.fields(p["audit_method"], ["name", "version"], ("name", "version"))
         v.nonempty(p["audit_method"]["name"], "audit method")
         v.nonempty(p["audit_method"]["version"], "audit method version")
+    if p["objective"].get("acceptance") == "confidence":
+        if p["rollout"]["mode"] != "immediate":
+            v.fail(
+                "invalid_policy",
+                "Confidence acceptance requires immediate rollout. Canary observation still uses the fixed margin.",
+            )
+        if "audit_method" in p:
+            v.fail(
+                "invalid_policy",
+                "Confidence acceptance does not combine with a custom audit method.",
+            )
 
 
 def prepare_dataset(raw, policy, now):
@@ -271,6 +315,21 @@ def passes_gates(metrics, rules):
     )
 
 
+_ACCEPTANCE_CACHE: dict[str, dict] = {}
+
+
+def _cached_acceptance(items, direction, parameters):
+    key = v.fingerprint({"items": items, "direction": direction, "parameters": parameters})
+    cached = _ACCEPTANCE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    decision = decide_acceptance(items, direction=direction, parameters=parameters)
+    if len(_ACCEPTANCE_CACHE) > 32:
+        _ACCEPTANCE_CACHE.clear()
+    _ACCEPTANCE_CACHE[key] = decision
+    return decision
+
+
 def compare(result, rows, p, audit=False):
     v.json_value(result, 16 * 1024 * 1024)
     v.fields(
@@ -302,6 +361,27 @@ def compare(result, rows, p, audit=False):
         if n
         else None
     )
+    objective = p["objective"]
+    confidence = None
+    if objective.get("acceptance") == "confidence" and not (audit and "audit_method" in p):
+        partial = {}
+        for source, target in (
+            ("minimum_effect", "minimum_effect"),
+            ("confidence", "confidence"),
+            ("bootstrap_samples", "samples"),
+            ("bootstrap_seed", "seed"),
+            ("minimum_items", "minimum_items"),
+        ):
+            if source in objective:
+                partial[target] = objective[source]
+        confidence = _cached_acceptance(
+            [
+                {"id": row["id"], "incumbent": row["baseline"], "candidate": row["candidate"]}
+                for row in cases
+            ],
+            objective["direction"],
+            gate_parameters(partial),
+        )
     if audit and "audit_method" in p:
         u = result.get("uncertainty")
         v.fields(
@@ -319,18 +399,26 @@ def compare(result, rows, p, audit=False):
         if not -(hi - lo) <= u["lower_bound"] <= improvement:
             v.fail("invalid_evaluation", "Custom lower bound inconsistent with observed effect.")
         lower = u["lower_bound"]
+    if confidence:
+        margin_passed = bool(n) and confidence["accept"]
+        reported_lower = confidence["lower"]
+    else:
+        margin_passed = (
+            bool(n) and (lower if audit else improvement) > p["objective"]["minimum_improvement"]
+        )
+        reported_lower = lower
     passed = bool(
         n
         and n >= p["minimum_audit_units" if audit else "minimum_validation_units"]
         and passes_gates(result["metrics"], p["guardrails"])
-        and (lower if audit else improvement) > p["objective"]["minimum_improvement"]
+        and margin_passed
     )
     return {
         "passed": passed,
         "baseline": a / n if n else 0,
         "candidate": b / n if n else 0,
         "improvement": improvement,
-        "lower": lower,
+        "lower": reported_lower,
         "sample_count": n,
     }
 

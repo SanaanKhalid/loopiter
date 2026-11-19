@@ -2,6 +2,8 @@
  * One-shot arm and the autonomous controller. Held-out rows are scored only
  * after those arms return, and only through the held-out type.
  */
+import { hash } from "../../src/utils.js";
+import { gateParameters, type GateItem, type GateParameters } from "../../src/acceptance-gate.js";
 import {
   FeedbackLoop,
   ImprovementController,
@@ -10,6 +12,13 @@ import {
   type DatasetRow,
   type TickResult,
 } from "../../src/index.js";
+import {
+  appendRound,
+  emptySeedLog,
+  promptHash,
+  settleSeed,
+  type SeedDecisionLog,
+} from "./decisions.js";
 import { longestExample, sizedReservations } from "./budget.js";
 import {
   CLOCK_START,
@@ -63,6 +72,7 @@ export interface ArmRun {
   detail: string | null;
   transitions: { state: string; reason: string }[];
   readIds: string[];
+  decisions: SeedDecisionLog | null;
 }
 
 export function mockRunner<T extends PublicExample>(task: BenchmarkTask<T>): ModelRunner<T> {
@@ -127,6 +137,7 @@ export async function runOneShot<T extends PublicExample>(input: {
     detail: null,
     transitions: [],
     readIds,
+    decisions: null,
   };
 }
 
@@ -137,6 +148,22 @@ export async function runController<T extends PublicExample>(input: {
   mode: "improve" | "harmful";
   observation: "honest" | "fail";
   minimumImprovement: number;
+  minimumEffect?: number;
+  confidence?: number;
+  bootstrapSamples?: number;
+  bootstrapSeed?: number;
+  minimumItems?: number;
+  /** When set, this rewrite is judged against the baseline before the controller loop. */
+  oneShotFragment?: string;
+  /** Controller proposal is this fragment. Used for the one-shot gate run. */
+  fixedFragment?: string;
+  /** Audit rows for this run. Disjoint from the other candidate's audit rows. */
+  auditRows?: PublicSplit<T>["audit"];
+  /** Registry starts here. The reported baseline stays the task baseline. */
+  initialPrompt?: string;
+  /** Leave the served-prompt check to the caller that combines phases. */
+  deferServedCheck?: boolean;
+  decisionLog?: SeedDecisionLog;
   batchSize: number;
   observeChunk: number;
   latencyMs: number;
@@ -147,6 +174,7 @@ export async function runController<T extends PublicExample>(input: {
   proposeMaxOutputTokens?: number;
   timeouts?: { callbackTimeoutMs: number; tickTimeoutMs: number };
 }): Promise<ArmRun> {
+  if (input.oneShotFragment && !input.fixedFragment) return runOneShotThenController(input);
   const readIds: string[] = [];
   const watch = (rows: readonly { id: string }[]) => {
     for (const row of rows) {
@@ -181,17 +209,28 @@ export async function runController<T extends PublicExample>(input: {
     maximumPayloadBytes: 16_777_216,
     ...(input.timeouts ? { callbackTimeoutMs: input.timeouts.callbackTimeoutMs } : {}),
   });
-  const registry = new PromptRegistry(input.task.baselinePrompt);
-  const baselineVersion = registry.version;
+  const registry = new PromptRegistry(input.initialPrompt ?? input.task.baselinePrompt);
+  const baselineVersion = new PromptRegistry(input.task.baselinePrompt).version;
+  const rule = gateParameters({
+    ...(input.minimumEffect !== undefined ? { minimumEffect: input.minimumEffect } : {}),
+    ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
+    ...(input.bootstrapSamples !== undefined ? { samples: input.bootstrapSamples } : {}),
+    ...(input.bootstrapSeed !== undefined ? { seed: input.bootstrapSeed } : {}),
+    ...(input.minimumItems !== undefined ? { minimumItems: input.minimumItems } : {}),
+  });
+  const decisionLog = input.decisionLog ?? emptySeedLog(input.split.seed, input.task.baselinePrompt);
+  decisionLog.complete = false;
+  const recorded: { split: "validation" | "audit"; promptHash: string; items: GateItem[] }[] = [];
   let proposal: string | null = null;
   let observeCursor = 0;
   let observeWrong = 0;
   let observeScored = 0;
   try {
+    const auditSource = input.auditRows ?? input.split.audit;
     const sizes = {
       optimization: input.split.optimization.length,
       validation: input.split.validation.length,
-      audit: input.split.audit.length,
+      audit: auditSource.length,
       production: input.split.production.length,
       heldOut: input.split.heldOut.length,
     };
@@ -217,6 +256,11 @@ export async function runController<T extends PublicExample>(input: {
       taskId: input.task.id,
       promptCap: input.task.promptCap,
       minimumImprovement: input.minimumImprovement,
+      minimumEffect: rule.minimumEffect,
+      confidence: rule.confidence,
+      bootstrapSamples: rule.samples,
+      bootstrapSeed: rule.seed,
+      minimumItems: rule.minimumItems,
       sizes,
       latencyMs: input.latencyMs,
       predictReservation: reservations.predict,
@@ -248,7 +292,7 @@ export async function runController<T extends PublicExample>(input: {
       dataset: async () => {
         const optimization = input.split.optimization.map(datasetRow);
         const validation = input.split.validation.map(datasetRow);
-        const audit = input.split.audit.map(datasetRow);
+        const audit = auditSource.map(datasetRow);
         watch(optimization);
         watch(validation);
         watch(audit);
@@ -305,6 +349,10 @@ export async function runController<T extends PublicExample>(input: {
         };
       },
       propose: async (examples, context) => {
+        if (input.fixedFragment) {
+          proposal = input.fixedFragment;
+          return input.fixedFragment;
+        }
         watch(examples);
         const rows = examples.map((row) => exampleOf(pool, row.id));
         const marks = rows.map((row) => {
@@ -314,7 +362,12 @@ export async function runController<T extends PublicExample>(input: {
         });
         const fragment = assertWithinCap(
           await input.runner.propose(
-            { current: input.task.baselinePrompt, rows, feedback: marks, mode: input.mode },
+            {
+              current: input.initialPrompt ?? input.task.baselinePrompt,
+              rows,
+              feedback: marks,
+              mode: input.mode,
+            },
             context,
           ),
           input.task.promptCap,
@@ -348,6 +401,13 @@ export async function runController<T extends PublicExample>(input: {
         };
         return scored;
       },
+      onComparison: (comparison) => {
+        recorded.push({
+          split: comparison.split,
+          promptHash: promptHash(comparison.candidatePrompt),
+          items: comparison.items,
+        });
+      },
     });
     bound.workflow = workflow;
     const fingerprint = (await workflow.artifact(readContext())).configurationHash;
@@ -378,6 +438,30 @@ export async function runController<T extends PublicExample>(input: {
       throw new Error(
         `Loop did not finish: ${result?.state ?? "none"} (${result?.reason ?? "no tick"}).`,
       );
+    const candidateIds = new Map<string, string>();
+    for (const id of result.candidateIds) {
+      const candidate = await loop.getCandidate(id);
+      if (!candidate) continue;
+      candidateIds.set(promptHash(fragmentOf(candidate.proposedChange)), id);
+    }
+    for (const comparison of recorded) {
+      const candidateId = candidateIdFor(comparison.promptHash, [...candidateIds].map(([promptHash, id]) => ({ id, promptHash })));
+      appendRound(decisionLog, {
+        candidateId,
+        promptHash: comparison.promptHash,
+        split: comparison.split,
+        items: comparison.items,
+        rule,
+      });
+    }
+    if (result.state === "rolled_back") decisionLog.observation = "rolled_back";
+    const settled = settleSeed(decisionLog);
+    if (!input.deferServedCheck) {
+      if (settled.promptHash !== promptHash(registry.fragment()))
+        throw new Error("Served prompt does not match the acceptance log.");
+      decisionLog.complete = true;
+    }
+    decisionLog.served = settled;
     const served = registry.fragment();
     const held = await scoreHeldOut(input.task, input.runner, served, input.split.heldOut, {
       arm: "controller",
@@ -403,6 +487,7 @@ export async function runController<T extends PublicExample>(input: {
       detail: result.detail ?? null,
       transitions,
       readIds,
+      decisions: decisionLog,
     };
   } finally {
     await loop.close();
@@ -508,6 +593,85 @@ export function draftOf(scores: readonly RowScore[]): RateDraft {
     instructionStrict: strictTotal === 0 ? null : strictPasses / strictTotal,
     instructionLoose: looseTotal === 0 ? null : loosePasses / looseTotal,
   };
+}
+
+async function runOneShotThenController<T extends PublicExample>(
+  input: Parameters<typeof runController<T>>[0],
+): Promise<ArmRun> {
+  const [shotAudit, restAudit] = splitAudit(input.split.audit);
+  if (shotAudit.length === 0 || restAudit.length === 0)
+    throw new Error("Audit rows must split into two non-empty sets.");
+  const fragment = input.oneShotFragment;
+  if (!fragment) throw new Error("One-shot fragment is required.");
+  const decisionLog = input.decisionLog ?? emptySeedLog(input.split.seed, input.task.baselinePrompt);
+  const { oneShotFragment: _fragment, ...rest } = input;
+  const seeded = await runController({
+    ...rest,
+    fixedFragment: fragment,
+    auditRows: shotAudit,
+    decisionLog,
+    deferServedCheck: true,
+    scenario: `${input.scenario}/one-shot-gate`,
+  });
+  const follow = await runController({
+    ...rest,
+    initialPrompt: seeded.fragment,
+    auditRows: restAudit,
+    decisionLog,
+    deferServedCheck: true,
+    scenario: `${input.scenario}/follow`,
+  });
+  const prompts = new Map<string, string>([
+    [promptHash(input.task.baselinePrompt), input.task.baselinePrompt],
+    [promptHash(seeded.fragment), seeded.fragment],
+    [promptHash(follow.fragment), follow.fragment],
+  ]);
+  const settled = settleSeed(decisionLog);
+  const served = prompts.get(settled.promptHash);
+  if (!served) throw new Error("Served prompt does not match the acceptance log.");
+  decisionLog.served = settled;
+  decisionLog.complete = true;
+  const kept =
+    follow.state === "rolled_back"
+      ? "rolled_back"
+      : seeded.state === "completed" || follow.state === "completed"
+        ? "completed"
+        : follow.state;
+  const heldOut =
+    served === follow.fragment
+      ? follow.heldOut
+      : await scoreHeldOut(input.task, input.runner, served, input.split.heldOut, {
+          arm: "controller",
+          split: "held-out-served",
+          planned: input.split.heldOut.length,
+        });
+  return {
+    ...follow,
+    fragment: served,
+    version: hash({ fragment: served }),
+    baselineVersion: seeded.baselineVersion,
+    heldOut,
+    state: kept,
+    reason: kept === "completed" && follow.state !== "completed" ? seeded.reason : follow.reason,
+    transitions: [...seeded.transitions, ...follow.transitions],
+    readIds: [...seeded.readIds, ...follow.readIds],
+    decisions: decisionLog,
+  };
+}
+
+function splitAudit<T extends { example: { id: string } }>(rows: readonly T[]): [T[], T[]] {
+  const ordered = [...rows].sort((a, b) =>
+    Buffer.compare(Buffer.from(a.example.id), Buffer.from(b.example.id)),
+  );
+  const mid = Math.ceil(ordered.length / 2);
+  return [ordered.slice(0, mid), ordered.slice(mid)];
+}
+
+export function candidateIdFor(
+  hashed: string,
+  known: readonly { id: string; promptHash: string }[],
+): string {
+  return known.find((row) => row.promptHash === hashed)?.id ?? `prompt:${hashed.slice(0, 12)}`;
 }
 
 export function leakedIds(readIds: readonly string[], heldOutIds: readonly string[]): string[] {
