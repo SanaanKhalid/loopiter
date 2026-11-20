@@ -1,3 +1,4 @@
+import { routeLastModified } from './last-modified';
 import { postPath, type Post } from './posts';
 import {
   absoluteUrl,
@@ -13,6 +14,32 @@ const websiteId = `${siteUrl}/#website`;
 const softwareId = `${siteUrl}/#software`;
 
 const packageUrls = [npmPackageUrl, pypiPackageUrl];
+
+const loopiterOrg = {
+  '@type': 'Organization',
+  name: siteName,
+  url: siteUrl,
+} as const;
+
+function publishedInstant(date: string): string {
+  return date.includes('T') ? date : `${date}T00:00:00.000Z`;
+}
+
+function blogPosting(post: Post, dateModified: string) {
+  const url = absoluteUrl(postPath(post.slug));
+  return {
+    '@type': 'BlogPosting',
+    headline: post.title,
+    description: post.description,
+    datePublished: publishedInstant(post.date),
+    dateModified,
+    inLanguage: 'en',
+    mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+    url,
+    author: loopiterOrg,
+    publisher: loopiterOrg,
+  };
+}
 
 const softwareDescription =
   'A lightweight, model-agnostic feedback loop for production AI systems. MIT-licensed TypeScript and Python libraries that capture executions and feedback, evaluate immutable candidates, and coordinate deployment or rollback through application-owned adapters. A fresh self-hosted init records autonomous mode and self-improving on. The worker runs unless --disable or LOOPITER_DISABLE=1 is set, and follows plan.mode unless --mode is set. On main, unreleased, constructing ImprovementController without a mode is autonomous with self-improving on. Mode recommend stores proposals without applying them. Mode observe inspects evidence without proposing. --disable and LOOPITER_DISABLE=1 only pause and store no proposal. That default is not in the published 0.3.0 alphas.';
@@ -73,13 +100,9 @@ export function blogJsonLd(items: readonly Post[]) {
     url: absoluteUrl('/blog'),
     inLanguage: 'en',
     publisher: { '@id': organizationId },
-    blogPost: items.map((post) => ({
-      '@type': 'BlogPosting',
-      headline: post.title,
-      description: post.description,
-      datePublished: post.date,
-      url: absoluteUrl(postPath(post.slug)),
-    })),
+    blogPost: items.map((post) =>
+      blogPosting(post, routeLastModified(postPath(post.slug), post.date)),
+    ),
   };
 }
 
@@ -87,17 +110,8 @@ export function articleJsonLd(post: Post, dateModified: string) {
   const url = absoluteUrl(postPath(post.slug));
   return {
     '@context': 'https://schema.org',
-    '@type': 'Article',
-    '@id': `${url}#article`,
-    headline: post.title,
-    description: post.description,
-    datePublished: post.date,
-    dateModified,
-    inLanguage: 'en',
-    mainEntityOfPage: url,
-    url,
-    author: { '@type': 'Organization', name: siteName, url: siteUrl },
-    publisher: { '@type': 'Organization', name: siteName, url: siteUrl },
+    '@id': `${url}#blogposting`,
+    ...blogPosting(post, dateModified),
     isPartOf: {
       '@type': 'Blog',
       name: 'Loopiter blog',
