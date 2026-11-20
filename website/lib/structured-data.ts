@@ -15,12 +15,6 @@ const softwareId = `${siteUrl}/#software`;
 
 const packageUrls = [npmPackageUrl, pypiPackageUrl];
 
-const loopiterOrg = {
-  '@type': 'Organization',
-  name: siteName,
-  url: siteUrl,
-} as const;
-
 function publishedInstant(date: string): string {
   return date.includes('T') ? date : `${date}T00:00:00.000Z`;
 }
@@ -36,8 +30,8 @@ function blogPosting(post: Post, dateModified: string) {
     inLanguage: 'en',
     mainEntityOfPage: { '@type': 'WebPage', '@id': url },
     url,
-    author: loopiterOrg,
-    publisher: loopiterOrg,
+    author: { '@id': organizationId },
+    publisher: { '@id': organizationId },
   };
 }
 
