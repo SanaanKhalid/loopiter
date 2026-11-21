@@ -22,7 +22,7 @@ from . import _validation as v
 from .acceptance_gate import load_retention_ledger, next_best_ever, remember_retention_decision
 from .client import FeedbackLoop, _callback
 from .eval_lock import read_eval_lock, verify_eval_lock
-from .feedback import apply_feedback_cursor, is_promotion
+from .feedback import is_promotion, promote_feedback_cursor, read_feedback_head
 from .improvement_evidence import (
     compare,
     minimum_certifiable_audit_units,
@@ -590,12 +590,14 @@ class ImprovementController:
                         next_lock["retention"] = retained
                     await self._put(tx, "coordination", self._target(w), next_lock)
             if is_promotion(data["state"], data["reason"]):
-                await apply_feedback_cursor(
-                    tx, self.loop.namespace, self.loop.now(), "promote", rid
-                )
-            if data["state"] == "rolled_back":
-                await apply_feedback_cursor(
-                    tx, self.loop.namespace, self.loop.now(), "rollback", rid
+                seen = data.get("feedback_seen") or {"id": None, "recorded_at": None}
+                await promote_feedback_cursor(
+                    tx,
+                    self.loop.namespace,
+                    self.loop.now(),
+                    self._target(w),
+                    rid,
+                    seen,
                 )
             return self._parse(row)
 
@@ -619,7 +621,12 @@ class ImprovementController:
                     return deepcopy(old["data"]["result"])
                 v.fail("ambiguous_callback", "Callback previously dispatched; not replayed.")
             await admit_model_call(
-                tx, self.loop.namespace, w.policy.get("caps"), self.loop.now(), kind
+                tx,
+                self.loop.namespace,
+                w.policy.get("caps"),
+                self.loop.now(),
+                kind,
+                self._target(w),
             )
             await self._put(
                 tx,
@@ -926,7 +933,7 @@ class ImprovementController:
                     return await self._idle(w, "insufficient_evidence")
                 async with self._tx() as tx:
                     blocked = await cap_block(
-                        tx, w.policy.get("caps"), self.loop.now(), "propose:0"
+                        tx, w.policy.get("caps"), self.loop.now(), "propose:0", self._target(w)
                     )
                 if blocked:
                     return await self._idle(w, blocked)
@@ -977,6 +984,7 @@ class ImprovementController:
                         "previous_outcomes": deepcopy(data.get("previous_outcomes", [])),
                         "configuration": self._configuration(w),
                         "operation_ids": [],
+                        "feedback_seen": await read_feedback_head(tx, self._target(w)),
                     }
                     run = await self._put(tx, "runs", rid, d)
                     await self._put(
@@ -1126,6 +1134,8 @@ class ImprovementController:
                         "policy_changed",
                         "budget_cap",
                         "daily_run_cap",
+                        "invalid_state",
+                        "cap_conflict",
                     ):
                         state = "failed"
                     patch = {"state": state, "reason": code}

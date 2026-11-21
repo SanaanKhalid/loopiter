@@ -24,7 +24,8 @@ import {
 import { Registry } from "./helpers.js";
 import { assignCohort, validateChange } from "../src/index.js";
 import { JsonFileStore } from "../src/stores/json-file.js";
-import { hash } from "../src/utils.js";
+import { hash, fail } from "../src/utils.js";
+import { feedbackCursorId, targetScope } from "../src/feedback.js";
 
 const failureDetailProbes = JSON.parse(
   await readFile(
@@ -1961,16 +1962,23 @@ test("a sanitizer failure records a fixed message and not the raw text", async (
 
 test("a promoted run consumes feedback and a cap stops before a model call", async () => {
   const x = setup();
+  const target = x.workflow.policy.target;
+  const scope = targetScope(target);
   const answerId = servedAnswerId({ namespace: "test", answer: "billing" });
   const saved = await x.loop.recordFeedback({
     answerId,
+    target,
     rating: { kind: "thumbs", value: "up" },
   });
   let result = await x.controller().tick("classification");
+  const later = await x.loop.recordFeedback({
+    answerId,
+    target,
+    edit: "after the run started",
+  });
   for (
     let i = 0;
-    i < 8 &&
-    !["completed", "no_improvement", "rolled_back"].includes(result.state);
+    i < 8 && !["completed", "no_improvement", "rolled_back"].includes(result.state);
     i++
   ) {
     if (result.state === "observing") x.advance();
@@ -1978,10 +1986,18 @@ test("a promoted run consumes feedback and a cap stops before a model call", asy
   }
   assert.equal(result.state, "completed");
   const cursor = await x.loop.store.transaction("test", (tx) =>
-    tx.get("coordination", "feedback-cursor"),
+    tx.get("coordination", feedbackCursorId(scope)),
   );
   assert.equal(cursor?.data.position, saved.id);
+  assert.notEqual(cursor?.data.position, later.id);
   assert.equal(cursor?.data.promotionId, result.runId);
+  const run = (await x.controller().getRun(result.runId!))!;
+  await x.loop.rollbackCandidate(run.data.selectedId!, { adapter: x.registry });
+  const rewound = await x.loop.store.transaction("test", (tx) =>
+    tx.get("coordination", feedbackCursorId(scope)),
+  );
+  assert.equal(rewound?.data.position, null);
+  assert.equal(rewound?.data.promotionId, null);
 
   const capped = setup();
   capped.workflow.policy.caps = { runsPerDay: 0, monthlyBudget: 1, callCost: 1 };
@@ -2008,4 +2024,58 @@ test("a promoted run consumes feedback and a cap stops before a model call", asy
     selfImproving: true,
   }).tick("classification");
   assert.equal(seen.reason, "observation_only");
+
+  const conflicted = setup();
+  conflicted.workflow.policy.caps = { monthlyBudget: 10, callCost: 1 };
+  let proposed = 0;
+  conflicted.workflow.propose = async () => {
+    proposed += 1;
+    return [{ score: 1 }];
+  };
+  const inner = conflicted.loop.store.transaction.bind(conflicted.loop.store);
+  conflicted.loop.store.transaction = (namespace, operation) =>
+    inner(namespace, async (tx) => {
+      const insert = tx.insert.bind(tx);
+      const replace = tx.replace.bind(tx);
+      tx.insert = async (kind, record) => {
+        if (kind === "coordination" && record.id.startsWith("cap-")) fail("conflict", "injected");
+        return insert(kind, record);
+      };
+      tx.replace = async (kind, record, expected) => {
+        if (kind === "coordination" && record.id.startsWith("cap-")) fail("conflict", "injected");
+        return replace(kind, record, expected);
+      };
+      return operation(tx);
+    });
+  const paused = await conflicted.controller().tick("classification");
+  assert.equal(paused.reason, "cap_conflict");
+  assert.notEqual(paused.state, "failed");
+  assert.equal(proposed, 0);
+  const spent = await conflicted.loop.store.transaction("test", (tx) =>
+    tx.get("coordination", `cap-spend:${targetScope(conflicted.workflow.policy.target)}:2026-02`),
+  );
+  assert.equal(spent, undefined);
+
+  const corrupt = setup();
+  corrupt.workflow.policy.caps = { monthlyBudget: 10, callCost: 1 };
+  let blocked = 0;
+  corrupt.workflow.propose = async () => {
+    blocked += 1;
+    return [{ score: 1 }];
+  };
+  await corrupt.loop.store.transaction("test", (tx) =>
+    tx.insert("coordination", {
+      id: `cap-spend:${targetScope(corrupt.workflow.policy.target)}:2026-02`,
+      namespace: "test",
+      revision: 1,
+      createdAt: "2026-02-01T00:00:00.000Z",
+      updatedAt: "2026-02-01T00:00:00.000Z",
+      format: 1,
+      data: { amount: "999" },
+    }),
+  );
+  const stopped = await corrupt.controller().tick("classification");
+  assert.equal(stopped.reason, "invalid_state");
+  assert.equal(blocked, 0);
+  assert.equal(stopped.runId, null);
 });

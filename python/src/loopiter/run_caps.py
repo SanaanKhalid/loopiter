@@ -1,5 +1,7 @@
 """Optional monthly currency budget and UTC runs-per-day, charged before a model call."""
 
+import math
+
 from . import _validation as v
 
 
@@ -28,19 +30,46 @@ def _parts(now):
     return now[:7], now[:10]
 
 
-async def cap_block(tx, caps, now, kind):
+def _amount(data):
+    if data is None:
+        return 0
+    if "amount" not in data:
+        v.fail("invalid_state", "Cap spend is missing amount.")
+    value = data["amount"]
+    if (
+        isinstance(value, bool)
+        or type(value) not in (int, float)
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        v.fail("invalid_state", "Cap spend amount must be a finite number >= 0.")
+    return value
+
+
+def _count(data):
+    if data is None:
+        return 0
+    if "count" not in data:
+        v.fail("invalid_state", "Cap run count is missing count.")
+    value = data["count"]
+    if type(value) is not int or value < 0:
+        v.fail("invalid_state", "Cap run count must be an integer >= 0.")
+    return value
+
+
+async def cap_block(tx, caps, now, kind, scope):
     if not caps or not is_model_operation(kind):
         return None
     month, day = _parts(now)
     if "runs_per_day" in caps and counts_as_run(kind):
-        row = await tx.get("coordination", "cap-runs:" + day)
-        runs = row["data"].get("count", 0) if row else 0
+        row = await tx.get("coordination", f"cap-runs:{scope}:{day}")
+        runs = _count(row["data"] if row else None)
         if runs >= caps["runs_per_day"]:
             return "daily_run_cap"
     cost = caps.get("call_cost", 0)
     if "monthly_budget" in caps:
-        row = await tx.get("coordination", "cap-spend:" + month)
-        spent = row["data"].get("amount", 0) if row else 0
+        row = await tx.get("coordination", f"cap-spend:{scope}:{month}")
+        spent = _amount(row["data"] if row else None)
         if spent + cost > caps["monthly_budget"]:
             return "budget_cap"
     return None
@@ -56,24 +85,34 @@ async def _write(tx, namespace, now, key, data):
             "format": 1,
             "data": data,
         }
-        await tx.replace("coordination", row, old["revision"])
+        try:
+            await tx.replace("coordination", row, old["revision"])
+        except Exception as exc:
+            if getattr(exc, "code", None) == "conflict":
+                v.fail("cap_conflict", "Cap counter changed; no spend.")
+            raise
     else:
-        await tx.insert(
-            "coordination",
-            {
-                "id": key,
-                "namespace": namespace,
-                "revision": 1,
-                "created_at": now,
-                "updated_at": now,
-                "format": 1,
-                "data": data,
-            },
-        )
+        try:
+            await tx.insert(
+                "coordination",
+                {
+                    "id": key,
+                    "namespace": namespace,
+                    "revision": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                    "format": 1,
+                    "data": data,
+                },
+            )
+        except Exception as exc:
+            if getattr(exc, "code", None) == "conflict":
+                v.fail("cap_conflict", "Cap counter changed; no spend.")
+            raise
 
 
-async def admit_model_call(tx, namespace, caps, now, kind):
-    block = await cap_block(tx, caps, now, kind)
+async def admit_model_call(tx, namespace, caps, now, kind, scope):
+    block = await cap_block(tx, caps, now, kind, scope)
     if block == "budget_cap":
         v.fail("budget_cap", "Monthly budget reached.")
     if block == "daily_run_cap":
@@ -82,12 +121,12 @@ async def admit_model_call(tx, namespace, caps, now, kind):
         return
     month, day = _parts(now)
     if "monthly_budget" in caps:
-        key = "cap-spend:" + month
+        key = f"cap-spend:{scope}:{month}"
         row = await tx.get("coordination", key)
-        spent = row["data"].get("amount", 0) if row else 0
+        spent = _amount(row["data"] if row else None)
         await _write(tx, namespace, now, key, {"amount": spent + caps.get("call_cost", 0)})
     if "runs_per_day" in caps and counts_as_run(kind):
-        key = "cap-runs:" + day
+        key = f"cap-runs:{scope}:{day}"
         row = await tx.get("coordination", key)
-        runs = row["data"].get("count", 0) if row else 0
+        runs = _count(row["data"] if row else None)
         await _write(tx, namespace, now, key, {"count": runs + 1})

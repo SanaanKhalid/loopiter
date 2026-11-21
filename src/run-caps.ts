@@ -40,13 +40,21 @@ function utcParts(now: string): { month: string; day: string } {
 }
 
 function amount(data: JsonObject | undefined): number {
-  const value = data?.amount;
-  return typeof value === "number" ? value : 0;
+  if (!data) return 0;
+  if (!Object.hasOwn(data, "amount")) fail("invalid_state", "Cap spend is missing amount.");
+  const value = data.amount;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+    fail("invalid_state", "Cap spend amount must be a finite number >= 0.");
+  return value;
 }
 
 function count(data: JsonObject | undefined): number {
-  const value = data?.count;
-  return typeof value === "number" ? value : 0;
+  if (!data) return 0;
+  if (!Object.hasOwn(data, "count")) fail("invalid_state", "Cap run count is missing count.");
+  const value = data.count;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
+    fail("invalid_state", "Cap run count must be an integer >= 0.");
+  return value;
 }
 
 async function readData(
@@ -63,16 +71,17 @@ export async function capBlock(
   caps: RunCaps | undefined,
   now: string,
   kind: string,
+  scope: string,
 ): Promise<"budget_cap" | "daily_run_cap" | undefined> {
   if (!caps || !isModelOperation(kind)) return undefined;
   const { month, day } = utcParts(now);
   if (caps.runsPerDay !== undefined && countsAsRun(kind)) {
-    const runs = count(await readData(tx, `cap-runs:${day}`));
+    const runs = count(await readData(tx, `cap-runs:${scope}:${day}`));
     if (runs >= caps.runsPerDay) return "daily_run_cap";
   }
   const cost = caps.callCost ?? 0;
   if (caps.monthlyBudget !== undefined) {
-    const spent = amount(await readData(tx, `cap-spend:${month}`));
+    const spent = amount(await readData(tx, `cap-spend:${scope}:${month}`));
     if (spent + cost > caps.monthlyBudget) return "budget_cap";
   }
   return undefined;
@@ -95,8 +104,14 @@ async function writeData(
     format: 1,
     data,
   };
-  if (old) await tx.replace("coordination", row, old.revision);
-  else await tx.insert("coordination", row);
+  try {
+    if (old) await tx.replace("coordination", row, old.revision);
+    else await tx.insert("coordination", row);
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "conflict")
+      fail("cap_conflict", "Cap counter changed; no spend.");
+    throw error;
+  }
 }
 
 /** Charge a model call before it runs. Throws budget_cap or daily_run_cap with no write. */
@@ -106,19 +121,20 @@ export async function admitModelCall(
   caps: RunCaps | undefined,
   now: string,
   kind: string,
+  scope: string,
 ): Promise<void> {
-  const block = await capBlock(tx, caps, now, kind);
+  const block = await capBlock(tx, caps, now, kind, scope);
   if (block === "budget_cap") fail("budget_cap", "Monthly budget reached.");
   if (block === "daily_run_cap") fail("daily_run_cap", "Daily run cap reached.");
   if (!caps || !isModelOperation(kind)) return;
   const { month, day } = utcParts(now);
   if (caps.monthlyBudget !== undefined) {
-    const id = `cap-spend:${month}`;
+    const id = `cap-spend:${scope}:${month}`;
     const spent = amount(await readData(tx, id));
     await writeData(tx, namespace, now, id, { amount: spent + (caps.callCost ?? 0) });
   }
   if (caps.runsPerDay !== undefined && countsAsRun(kind)) {
-    const id = `cap-runs:${day}`;
+    const id = `cap-runs:${scope}:${day}`;
     const runs = count(await readData(tx, id));
     await writeData(tx, namespace, now, id, { count: runs + 1 });
   }

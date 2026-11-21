@@ -12,6 +12,41 @@
         "artifactVersion": "prompt-v3"
       },
       "id": "ans_c0ad4630219fa2fa1821ce44d5e943001eae2bd51d20b369c93637de36386a1c"
+    },
+    {
+      "input": { "namespace": "app", "answer": "café" },
+      "id": "ans_1dd6abe42e268e1b0c7af7563b8e1cebd55dca43b5d5f7ecff1002898662ba3b"
+    },
+    {
+      "input": { "namespace": "app", "answer": "café" },
+      "id": "ans_de634189deaf4dc72965e06da2fa473ad51b95d80896a42881bd8af2d8a235fe"
+    },
+    {
+      "input": { "namespace": "app", "answer": "paid 😀" },
+      "id": "ans_fae4d3da710d4d22ce0db87c13e555d5f9c6e89e3219172d5804118605351011"
+    },
+    {
+      "input": { "namespace": "app", "answer": "发票已付" },
+      "id": "ans_bc5ddcacc4d191c439638b968bf21bae010f8714e762f067104923eaca7d0e4c"
+    },
+    {
+      "input": { "namespace": "app", "answer": "مدفوع" },
+      "id": "ans_95603c6feed6fb22219bc7d529afcc6799e1f88397469396198f7c67121a0223"
     }
+  ],
+  "feedback": [
+    {
+      "input": {
+        "answerId": "ans_x",
+        "target": { "kind": "prompt", "key": "clé" },
+        "rating": { "kind": "thumbs", "value": "up" },
+        "note": "café 😀"
+      },
+      "id": "feedback:903e7e6e3c4ea94ff99f3a5a92ab45903b6e7a00077e57cd3ef08a76b4540b5c"
+    }
+  ],
+  "text": [
+    { "field": "note", "unit": "😀", "accept": 4000, "reject": 4001 },
+    { "field": "note", "text": "\u0085", "reject": true }
   ]
 }

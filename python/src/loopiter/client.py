@@ -9,7 +9,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from . import _validation as v
-from .feedback import feedback_input, persist_feedback
+from .feedback import feedback_input, persist_feedback, rewind_promoted_cursor
 from .store import FeedbackStore, StoreTransaction, page_options
 
 Record = v.Record
@@ -704,6 +704,12 @@ class FeedbackLoop:
                         v.fail("conflict", "Active candidate changed during rollback.")
                     updated["status"] = "rolled_back"
                     updated["rollback_receipt"] = receipt
+                    await rewind_promoted_cursor(
+                        tx,
+                        self.namespace,
+                        self.now(),
+                        {"id": candidate["id"], "target": candidate["target"]},
+                    )
                     updated_state.pop("active_candidate_id", None)
                     if attempt.get("restore_candidate_id"):
                         restore = await self._read(

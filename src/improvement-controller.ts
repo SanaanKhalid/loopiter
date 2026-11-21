@@ -37,7 +37,7 @@ import {
   validatePolicy,
 } from "./improvement-evidence.js";
 import { readEvalLock, verifyEvalLock } from "./eval-lock.js";
-import { applyFeedbackCursor, isPromotion } from "./feedback.js";
+import { isPromotion, promoteFeedbackCursor, readFeedbackHead } from "./feedback.js";
 import { admitModelCall, capBlock } from "./run-caps.js";
 
 function evalLockSplits(
@@ -672,20 +672,13 @@ export class ImprovementController {
         }
       }
       if (isPromotion(data.state, data.reason))
-        await applyFeedbackCursor(
+        await promoteFeedbackCursor(
           tx,
           this.loop.namespace,
           this.loop.now(),
-          "promote",
+          this.targetKey(this.workflow(data.workflowId)),
           runId,
-        );
-      if (data.state === "rolled_back")
-        await applyFeedbackCursor(
-          tx,
-          this.loop.namespace,
-          this.loop.now(),
-          "rollback",
-          runId,
+          data.feedbackSeen ?? { id: null, recordedAt: null },
         );
       return this.parse(row);
     });
@@ -736,6 +729,7 @@ export class ImprovementController {
         w.policy.caps,
         this.loop.now(),
         kind,
+        this.targetKey(w),
       );
       await this.put(tx, "operations", operationId, {
         runId: run.id,
@@ -1052,7 +1046,7 @@ export class ImprovementController {
         )
           return idle("insufficient_evidence");
         const blocked = await this.loop.store.transaction(this.loop.namespace, (tx) =>
-          capBlock(tx, w.policy.caps, this.loop.now(), "propose:0"),
+          capBlock(tx, w.policy.caps, this.loop.now(), "propose:0", this.targetKey(w)),
         );
         if (blocked) return idle(blocked);
         const definitionHash = this.definitions.get(w.id)!,
@@ -1105,6 +1099,7 @@ export class ImprovementController {
               leaseUntil: this.loop.now(),
               configuration: this.configuration(w),
               operationIds: [],
+              feedbackSeen: await readFeedbackHead(tx, this.targetKey(w)),
               previousOutcomes: (target?.data.previousOutcomes ?? []) as {
                 state: string;
                 reason: string;
@@ -1910,9 +1905,14 @@ export class ImprovementController {
             ["deploying", "rolling_back", "reconciliation_required"].includes(
               current.data.state,
             );
-          const pause = ["paused", "policy_changed", "budget_cap", "daily_run_cap"].includes(
-            code,
-          );
+          const pause = [
+            "paused",
+            "policy_changed",
+            "budget_cap",
+            "daily_run_cap",
+            "invalid_state",
+            "cap_conflict",
+          ].includes(code);
           // Observation failure must never restart the deployment/observation clock.
           run = await this.save(
             rid,

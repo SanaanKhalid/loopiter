@@ -1,13 +1,20 @@
-"""Served-answer ids, feedback records, and the improvement cursor."""
+"""Served-answer ids, per-target feedback, and the improvement cursor."""
 
+import hashlib
 import re
 from copy import deepcopy
 
 from . import _validation as v
+from .eval_lock import canonical_json
 
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+BLANK = set(
+    "\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
 ANSWER_FIELDS = ["namespace", "answer", "episodeId", "artifactVersion"]
-FEEDBACK_FIELDS = ["answerId", "rating", "edit", "note"]
+FEEDBACK_FIELDS = ["answerId", "target", "rating", "edit", "note"]
 LIMITS = {
     "namespace": 200,
     "answer": 100_000,
@@ -16,23 +23,49 @@ LIMITS = {
     "answerId": 80,
     "edit": 100_000,
     "note": 4_000,
+    "targetKind": 64,
+    "targetKey": 200,
 }
-FEEDBACK_CURSOR_ID = "feedback-cursor"
+
+
+def _points(value: str) -> int:
+    return len(value)
+
+
+def _blank(value: str) -> bool:
+    return value == "" or all(character in BLANK for character in value)
 
 
 def _text(value, name, limit):
     if type(value) is not str:
         v.fail("invalid_input", f"{name} must be text.")
-    v.nonempty(value, name)
-    if len(value) > limit:
-        v.fail("invalid_input", f"{name} exceeds {limit} characters.")
     if CONTROL.search(value):
         v.fail("invalid_input", f"{name} contains a control character.")
+    if _blank(value):
+        v.fail("invalid_input", f"{name} must be nonempty text.")
+    if _points(value) > limit:
+        v.fail("invalid_input", f"{name} exceeds {limit} code points.")
     return value
 
 
+def _digest(value) -> str:
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def target_scope(target) -> str:
+    return "target:" + v.fingerprint(target)
+
+
+def feedback_cursor_id(scope: str) -> str:
+    return "feedback-cursor:" + scope
+
+
+def feedback_head_id(scope: str) -> str:
+    return "feedback-head:" + scope
+
+
 def served_answer_id(value):
-    """Stable id. Canonical keys match Node: namespace, answer, episodeId, artifactVersion."""
+    """Stable id. Canonical JSON matches the eval-set lock, including non-ASCII text."""
     v.fields(value, ANSWER_FIELDS, ("namespace", "answer"))
     canonical = {
         "namespace": _text(value["namespace"], "namespace", LIMITS["namespace"]),
@@ -44,7 +77,7 @@ def served_answer_id(value):
         canonical["artifactVersion"] = _text(
             value["artifactVersion"], "artifactVersion", LIMITS["artifactVersion"]
         )
-    return "ans_" + v.fingerprint(canonical)
+    return "ans_" + _digest(canonical)
 
 
 def _rating(value):
@@ -62,9 +95,20 @@ def _rating(value):
     raise AssertionError("unreachable")
 
 
+def _target(value):
+    v.fields(value, ["kind", "key"], ("kind", "key"))
+    return {
+        "kind": _text(value["kind"], "target.kind", LIMITS["targetKind"]),
+        "key": _text(value["key"], "target.key", LIMITS["targetKey"]),
+    }
+
+
 def feedback_input(value):
-    v.fields(value, FEEDBACK_FIELDS, ("answerId",))
-    parsed = {"answerId": _text(value["answerId"], "answerId", LIMITS["answerId"])}
+    v.fields(value, FEEDBACK_FIELDS, ("answerId", "target"))
+    parsed = {
+        "answerId": _text(value["answerId"], "answerId", LIMITS["answerId"]),
+        "target": _target(value["target"]),
+    }
     if "rating" in value:
         parsed["rating"] = _rating(value["rating"])
     if "edit" in value:
@@ -77,35 +121,103 @@ def feedback_input(value):
 
 
 def feedback_record_id(parsed):
-    canonical = {"answerId": parsed["answerId"]}
+    canonical = {
+        "answerId": parsed["answerId"],
+        "target": {"kind": parsed["target"]["kind"], "key": parsed["target"]["key"]},
+    }
     if "rating" in parsed:
         canonical["rating"] = parsed["rating"]
     if "edit" in parsed:
         canonical["edit"] = parsed["edit"]
     if "note" in parsed:
         canonical["note"] = parsed["note"]
-    return "feedback:" + v.fingerprint(canonical)
+    return "feedback:" + _digest(canonical)
 
 
 def empty_feedback_cursor():
-    return {"position": None, "previous": None, "promotion_id": None}
+    return {
+        "position": None,
+        "position_at": None,
+        "previous": None,
+        "previous_at": None,
+        "promotion_id": None,
+    }
 
 
-def _ordered(rows):
-    return sorted(rows, key=lambda row: (row["recorded_at"], row["id"]))
+def _nullable(value, name):
+    if value is None:
+        return None
+    if type(value) is not str or _blank(value):
+        v.fail("invalid_state", f"{name} must be a string or null.")
+    return value
 
 
-def advance_feedback_cursor(cursor, rows, promotion_id):
-    v.nonempty(promotion_id, "promotion_id")
+def _stored_fields(data, allowed):
+    if type(data) is not dict:
+        v.fail("invalid_state", "Stored feedback record is malformed.")
+    if set(data) - set(allowed) or set(allowed) - set(data):
+        v.fail("invalid_state", "Stored feedback record has unknown or missing fields.")
+
+
+def read_cursor(data):
+    if not data:
+        return empty_feedback_cursor()
+    _stored_fields(
+        data,
+        ["kind", "position", "position_at", "previous", "previous_at", "promotion_id"],
+    )
+    if data["kind"] != "feedback-cursor":
+        v.fail("invalid_state", "Feedback cursor kind is wrong.")
+    position = _nullable(data["position"], "position")
+    previous = _nullable(data["previous"], "previous")
+    promotion_id = _nullable(data["promotion_id"], "promotion_id")
+    position_at = _nullable(data["position_at"], "position_at")
+    previous_at = _nullable(data["previous_at"], "previous_at")
+    if position_at is not None:
+        v.timestamp(position_at, "position_at")
+    if previous_at is not None:
+        v.timestamp(previous_at, "previous_at")
+    if (position is None) != (position_at is None):
+        v.fail("invalid_state", "Feedback cursor position is incomplete.")
+    if (previous is None) != (previous_at is None):
+        v.fail("invalid_state", "Feedback cursor previous position is incomplete.")
+    return {
+        "position": position,
+        "position_at": position_at,
+        "previous": previous,
+        "previous_at": previous_at,
+        "promotion_id": promotion_id,
+    }
+
+
+def _later(nxt, current):
+    if not nxt["id"] or not nxt["recorded_at"]:
+        return False
+    if not current["id"] or not current["recorded_at"]:
+        return True
+    if nxt["recorded_at"] != current["recorded_at"]:
+        return nxt["recorded_at"] > current["recorded_at"]
+    return nxt["id"] > current["id"]
+
+
+def advance_feedback_cursor(cursor, seen, promotion_id):
+    if type(promotion_id) is not str or _blank(promotion_id):
+        v.fail("invalid_input", "promotion_id must be nonempty text.")
     if cursor["promotion_id"] == promotion_id:
         return cursor
-    ordered = _ordered(rows)
-    if not ordered:
-        return cursor
-    latest = ordered[-1]
+    current = {"id": cursor["position"], "recorded_at": cursor["position_at"]}
+    if not _later(seen, current):
+        return {
+            **cursor,
+            "previous": cursor["position"],
+            "previous_at": cursor["position_at"],
+            "promotion_id": promotion_id,
+        }
     return {
-        "position": latest["id"],
+        "position": seen["id"],
+        "position_at": seen["recorded_at"],
         "previous": cursor["position"],
+        "previous_at": cursor["position_at"],
         "promotion_id": promotion_id,
     }
 
@@ -113,25 +225,17 @@ def advance_feedback_cursor(cursor, rows, promotion_id):
 def rewind_feedback_cursor(cursor, promotion_id):
     if cursor["promotion_id"] != promotion_id:
         return cursor
-    return {"position": cursor["previous"], "previous": None, "promotion_id": None}
+    return {
+        "position": cursor["previous"],
+        "position_at": cursor["previous_at"],
+        "previous": None,
+        "previous_at": None,
+        "promotion_id": None,
+    }
 
 
 def _same(left, right):
-    return (
-        left["position"] == right["position"]
-        and left["previous"] == right["previous"]
-        and left["promotion_id"] == right["promotion_id"]
-    )
-
-
-def _read_cursor(data):
-    if not data:
-        return empty_feedback_cursor()
-    return {
-        "position": data["position"] if type(data.get("position")) is str else None,
-        "previous": data["previous"] if type(data.get("previous")) is str else None,
-        "promotion_id": data["promotion_id"] if type(data.get("promotion_id")) is str else None,
-    }
+    return all(left[key] == right[key] for key in left)
 
 
 def is_promotion(state, reason):
@@ -139,16 +243,6 @@ def is_promotion(state, reason):
         "offline_pass_and_production_limits_met_not_causal_proof",
         "canary_promoted",
     )
-
-
-async def _list_all(tx, collection):
-    rows, cursor = [], None
-    while True:
-        page = await tx.list(collection, limit=1000, cursor=cursor)
-        rows.extend(page["items"])
-        cursor = page.get("next_cursor")
-        if not cursor:
-            return rows
 
 
 async def _write(tx, namespace, now, key, data):
@@ -178,12 +272,69 @@ async def _write(tx, namespace, now, key, data):
         )
 
 
+def _cursor_data(cursor):
+    return {
+        "kind": "feedback-cursor",
+        "position": cursor["position"],
+        "position_at": cursor["position_at"],
+        "previous": cursor["previous"],
+        "previous_at": cursor["previous_at"],
+        "promotion_id": cursor["promotion_id"],
+    }
+
+
+async def read_feedback_head(tx, scope):
+    row = await tx.get("coordination", feedback_head_id(scope))
+    if not row:
+        return {"id": None, "recorded_at": None}
+    data = row["data"]
+    _stored_fields(data, ["kind", "id", "recorded_at"])
+    if data["kind"] != "feedback-head":
+        v.fail("invalid_state", "Feedback head kind is wrong.")
+    if type(data["id"]) is not str or type(data["recorded_at"]) is not str:
+        v.fail("invalid_state", "Feedback head is malformed.")
+    v.timestamp(data["recorded_at"], "recorded_at")
+    return {"id": data["id"], "recorded_at": data["recorded_at"]}
+
+
+async def promote_feedback_cursor(tx, namespace, now, scope, promotion_id, seen):
+    key = feedback_cursor_id(scope)
+    current = await tx.get("coordination", key)
+    cursor = read_cursor(current["data"] if current else None)
+    nxt = advance_feedback_cursor(cursor, seen, promotion_id)
+    if not _same(cursor, nxt):
+        await _write(tx, namespace, now, key, _cursor_data(nxt))
+    return nxt
+
+
+async def rewind_promoted_cursor(tx, namespace, now, candidate):
+    scope = target_scope(candidate["target"])
+    key = feedback_cursor_id(scope)
+    current = await tx.get("coordination", key)
+    cursor = read_cursor(current["data"] if current else None)
+    if not cursor["promotion_id"]:
+        return cursor
+    run = await tx.get("runs", cursor["promotion_id"])
+    selected = run["data"].get("selected_id") if run else None
+    if selected != candidate["id"]:
+        return cursor
+    nxt = rewind_feedback_cursor(cursor, cursor["promotion_id"])
+    if not _same(cursor, nxt):
+        await _write(tx, namespace, now, key, _cursor_data(nxt))
+    return nxt
+
+
 async def persist_feedback(tx, namespace, now, parsed):
     key = feedback_record_id(parsed)
     existing = await tx.get("coordination", key)
     if existing:
         return {"id": key, "recorded_at": existing["data"]["recorded_at"]}
-    data = {"kind": "feedback", "answer_id": parsed["answerId"], "recorded_at": now}
+    data = {
+        "kind": "feedback",
+        "answer_id": parsed["answerId"],
+        "target": parsed["target"],
+        "recorded_at": now,
+    }
     if "rating" in parsed:
         data["rating"] = parsed["rating"]
     if "edit" in parsed:
@@ -191,34 +342,15 @@ async def persist_feedback(tx, namespace, now, parsed):
     if "note" in parsed:
         data["note"] = parsed["note"]
     await _write(tx, namespace, now, key, data)
-    return {"id": key, "recorded_at": now}
-
-
-async def apply_feedback_cursor(tx, namespace, now, action, promotion_id):
-    rows = await _list_all(tx, "coordination")
-    current = next((row for row in rows if row["id"] == FEEDBACK_CURSOR_ID), None)
-    cursor = _read_cursor(current["data"] if current else None)
-    feedback = [
-        {"id": row["id"], "recorded_at": row["data"]["recorded_at"]}
-        for row in rows
-        if row["data"].get("kind") == "feedback" and type(row["data"].get("recorded_at")) is str
-    ]
-    nxt = (
-        advance_feedback_cursor(cursor, feedback, promotion_id)
-        if action == "promote"
-        else rewind_feedback_cursor(cursor, promotion_id)
-    )
-    if not _same(cursor, nxt):
+    scope = target_scope(parsed["target"])
+    head = await read_feedback_head(tx, scope)
+    point = {"id": key, "recorded_at": now}
+    if _later(point, head):
         await _write(
             tx,
             namespace,
             now,
-            FEEDBACK_CURSOR_ID,
-            {
-                "kind": "feedback-cursor",
-                "position": nxt["position"],
-                "previous": nxt["previous"],
-                "promotion_id": nxt["promotion_id"],
-            },
+            feedback_head_id(scope),
+            {"kind": "feedback-head", "id": key, "recorded_at": now},
         )
-    return nxt
+    return point

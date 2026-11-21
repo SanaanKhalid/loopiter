@@ -537,7 +537,7 @@ function unsafeIntegerToken(token: string): boolean {
   return digits > SAFE_INTEGER_MAX;
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   return encodeJson(jsonValue(value), new Set());
 }
 
