@@ -37,6 +37,8 @@ import {
   validatePolicy,
 } from "./improvement-evidence.js";
 import { readEvalLock, verifyEvalLock } from "./eval-lock.js";
+import { applyFeedbackCursor, isPromotion } from "./feedback.js";
+import { admitModelCall, capBlock } from "./run-caps.js";
 
 function evalLockSplits(
   splits: readonly ("validation" | "audit")[] | undefined,
@@ -669,6 +671,22 @@ export class ImprovementController {
           await this.put(tx, "coordination", key, nextLock);
         }
       }
+      if (isPromotion(data.state, data.reason))
+        await applyFeedbackCursor(
+          tx,
+          this.loop.namespace,
+          this.loop.now(),
+          "promote",
+          runId,
+        );
+      if (data.state === "rolled_back")
+        await applyFeedbackCursor(
+          tx,
+          this.loop.namespace,
+          this.loop.now(),
+          "rollback",
+          runId,
+        );
       return this.parse(row);
     });
   }
@@ -712,6 +730,13 @@ export class ImprovementController {
           "Callback was dispatched previously; not replayed.",
         );
       }
+      await admitModelCall(
+        tx,
+        this.loop.namespace,
+        w.policy.caps,
+        this.loop.now(),
+        kind,
+      );
       await this.put(tx, "operations", operationId, {
         runId: run.id,
         kind,
@@ -1026,6 +1051,10 @@ export class ImprovementController {
           dataset.audit.length < w.policy.minimumAuditUnits
         )
           return idle("insufficient_evidence");
+        const blocked = await this.loop.store.transaction(this.loop.namespace, (tx) =>
+          capBlock(tx, w.policy.caps, this.loop.now(), "propose:0"),
+        );
+        if (blocked) return idle(blocked);
         const definitionHash = this.definitions.get(w.id)!,
           decisionKey = hash({
             namespace: this.loop.namespace,
@@ -1881,7 +1910,9 @@ export class ImprovementController {
             ["deploying", "rolling_back", "reconciliation_required"].includes(
               current.data.state,
             );
-          const pause = ["paused", "policy_changed"].includes(code);
+          const pause = ["paused", "policy_changed", "budget_cap", "daily_run_cap"].includes(
+            code,
+          );
           // Observation failure must never restart the deployment/observation clock.
           run = await this.save(
             rid,

@@ -239,6 +239,12 @@ Verify exits nonzero when the suite drifts. Leakage exits nonzero when any id ov
 
 Pass `requireEvalLock: { lock }` (`require_eval_lock={"lock": lock}` in Python) to `ImprovementController` to check the loaded validation and audit rows against that lock after the dataset is read and before a model or evaluator call. Leaving that option unset leaves the check disabled.
 
+## Served answers and feedback
+
+`servedAnswerId` (`served_answer_id` in Python) is a stable id for one answer an agent serves. The canonical inputs are `namespace`, `answer`, and the optional `episodeId` and `artifactVersion`. The same inputs produce the same `ans_` id in both SDKs. `recordFeedback` / `record_feedback` stores a rating and/or a corrected edit for that id, with an optional note. A numeric rating is from 0 to 1. A thumbs rating is `up` or `down`. Unknown fields, over-long text, and control characters are rejected. The same input stored again returns the existing record.
+
+The feedback cursor moves forward only when a candidate is promoted, and returns to its previous position when that promotion is rolled back. Both updates are stored in the same transaction as the promotion or rollback. Optional policy `caps` (`monthlyBudget` and `callCost`, and `runsPerDay`; `monthly_budget`, `call_cost`, and `runs_per_day` in Python) are checked before a model call. A tick that does not call a model does not count as a run. A monthly cap uses UTC months. A daily cap uses UTC days. Reaching a cap returns `budget_cap` or `daily_run_cap` and does not spend.
+
 ## Reliability boundary
 
 Evaluation and approval reference exact content, evidence and evaluator versions.

@@ -47,6 +47,7 @@ import {
 } from "./validation.js";
 import { analyze } from "./analyzer.js";
 import { pageOptions, collections } from "./stores/in-memory.js";
+import { feedbackInput, persistFeedback } from "./feedback.js";
 export interface FeedbackLoopOptions {
   store: FeedbackStore;
   namespace: string;
@@ -289,6 +290,13 @@ export class FeedbackLoop {
       await tx.insert("signals", row);
       return row;
     });
+  }
+  /** Record a rating and/or corrected edit for a served answer id. Identical input is idempotent. */
+  async recordFeedback(raw: unknown): Promise<{ id: string; recordedAt: string }> {
+    const input = feedbackInput(raw);
+    return this.store.transaction(this.namespace, (tx) =>
+      persistFeedback(tx, this.namespace, this.now(), input),
+    );
   }
   analyze(options: AnalyzeOptions): Promise<Finding[]> {
     return analyze(this, options);

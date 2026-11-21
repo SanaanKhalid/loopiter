@@ -11,6 +11,7 @@ import {
   ImprovementController,
   improvementWorkDisabled,
   failureDetailText,
+  servedAnswerId,
   prepareDataset,
   compare,
   minimumCertifiableAuditUnits,
@@ -1956,4 +1957,55 @@ test("a sanitizer failure records a fixed message and not the raw text", async (
   assert.equal(JSON.stringify(result).includes(secret), false);
   const stored = (await controller.getRun(result.runId!))?.data.detail;
   assert.equal(stored, "[detail unavailable]");
+});
+
+test("a promoted run consumes feedback and a cap stops before a model call", async () => {
+  const x = setup();
+  const answerId = servedAnswerId({ namespace: "test", answer: "billing" });
+  const saved = await x.loop.recordFeedback({
+    answerId,
+    rating: { kind: "thumbs", value: "up" },
+  });
+  let result = await x.controller().tick("classification");
+  for (
+    let i = 0;
+    i < 8 &&
+    !["completed", "no_improvement", "rolled_back"].includes(result.state);
+    i++
+  ) {
+    if (result.state === "observing") x.advance();
+    result = await x.controller().tick("classification");
+  }
+  assert.equal(result.state, "completed");
+  const cursor = await x.loop.store.transaction("test", (tx) =>
+    tx.get("coordination", "feedback-cursor"),
+  );
+  assert.equal(cursor?.data.position, saved.id);
+  assert.equal(cursor?.data.promotionId, result.runId);
+
+  const capped = setup();
+  capped.workflow.policy.caps = { runsPerDay: 0, monthlyBudget: 1, callCost: 1 };
+  let calls = 0;
+  capped.workflow.propose = async () => {
+    calls += 1;
+    return [{ score: 1 }];
+  };
+  const idle = await capped.controller().tick("classification");
+  assert.equal(idle.reason, "daily_run_cap");
+  assert.equal(calls, 0);
+  assert.equal(idle.runId, null);
+
+  const month = setup();
+  month.workflow.policy.caps = { monthlyBudget: 0, callCost: 1 };
+  month.workflow.propose = async () => [{ score: 1 }];
+  assert.equal((await month.controller().tick("classification")).reason, "budget_cap");
+
+  const watching = setup();
+  watching.workflow.policy.caps = { runsPerDay: 0, monthlyBudget: 0, callCost: 1 };
+  const seen = await new ImprovementController(watching.loop, {
+    workflows: [watching.workflow],
+    mode: "observe",
+    selfImproving: true,
+  }).tick("classification");
+  assert.equal(seen.reason, "observation_only");
 });

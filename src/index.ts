@@ -1,4 +1,5 @@
 export * from "./contracts.js";
+export * from "./feedback.js";
 export * from "./eval-lock.js";
 export * from "./store.js";
 export * from "./feedback-loop.js";

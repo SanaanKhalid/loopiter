@@ -70,6 +70,12 @@ Read the installed guide with `python -m loopiter guide`, and reference code wit
 `loopiter.starters`; importing the core never imports providers or starts work.
 These commands require the onboarding build, not the previously published alpha.
 
+## Served answers and feedback
+
+`served_answer_id` hashes `namespace`, `answer`, and the optional `episodeId` and `artifactVersion`. Those key names match the Node helper, so the same inputs produce the same `ans_` id. `record_feedback` stores a rating and/or a corrected edit for that id, plus an optional note. A numeric rating is from 0 to 1. A thumbs rating is `up` or `down`. Unknown fields, over-long text, and control characters are rejected. Repeating the same input returns the existing record.
+
+The feedback cursor advances only when a candidate is promoted and rewinds when that promotion is rolled back, in the same store transaction. Optional policy `caps` with `monthly_budget`, `call_cost`, and `runs_per_day` are checked before a model call. A tick that does not call a model does not count as a run. The month and the day are UTC. A reached cap returns `budget_cap` or `daily_run_cap` and does not spend.
+
 ## Eval lock and leakage
 
 `lock_eval_set` checksums an eval set: items sorted by UTF-8 id, stable object-key order, SHA-256 over each id, input, and expected output, plus the item count and scheme version. `verify_eval_lock` refuses an added, removed, or edited item and reports those counts without the item contents. `check_eval_leakage` reports exact id overlap and content-hash overlap after Unicode NFC and whitespace collapsing. Leading and trailing characters are removed only when they belong to that same whitespace set. It lists up to 20 overlapping ids and the full count. The default fields are `input` and `expected`. Pass `require_eval_lock={"lock": lock}` to check the loaded validation and audit rows against that lock after the dataset is read and before a model or evaluator call. Leave it unset and the controller does not perform that check.

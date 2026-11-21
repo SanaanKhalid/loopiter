@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -18,11 +18,18 @@ function run(command, args, cwd) {
 }
 try {
   // pack invokes prepack: a clean checkout must not rely on stale dist output.
+  await mkdir(join(root, "dist/src"), { recursive: true });
+  await writeFile(join(root, "dist/src/failure-detail-rules.json"), "{\"stale\":true}\n");
   run("npm", ["pack", "--pack-destination", temporary], root);
   const tarballs = (await readdir(temporary)).filter((name) =>
     name.endsWith(".tgz"),
   );
   assert.equal(tarballs.length, 1);
+  const packed = spawnSync("tar", ["-tzf", join(temporary, tarballs[0])], {
+    encoding: "utf8",
+  });
+  if (packed.status !== 0) throw new Error(packed.stderr);
+  assert.doesNotMatch(packed.stdout, /failure-detail-rules\.json/);
   await writeFile(
     join(temporary, "package.json"),
     JSON.stringify({

@@ -42,6 +42,7 @@ Optional synchronous `deployments_enabled()` must return a boolean; returning
 | `record_execution(**input)` | Execution record; insert-only and idempotent for identical caller ID/input |
 | `complete_execution(id, expected_revision=..., **updates)` | Updated execution; revision-checked output, metadata and completion update |
 | `record_signal(**input)` | Signal record scoped to an execution or episode; source verification is application-owned |
+| `record_feedback(**input)` | Rating and/or corrected edit for a served answer id |
 | `get_execution(id)` | Execution dictionary or `None` |
 | `get_candidate(id)` | Candidate dictionary or `None` |
 | `list(collection, limit=100, cursor=None, window=None)` | Page with `items` and an optional `next_cursor`; maximum page size 1,000 |

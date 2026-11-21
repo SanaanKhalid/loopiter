@@ -22,6 +22,7 @@ from . import _validation as v
 from .acceptance_gate import load_retention_ledger, next_best_ever, remember_retention_decision
 from .client import FeedbackLoop, _callback
 from .eval_lock import read_eval_lock, verify_eval_lock
+from .feedback import apply_feedback_cursor, is_promotion
 from .improvement_evidence import (
     compare,
     minimum_certifiable_audit_units,
@@ -31,6 +32,7 @@ from .improvement_evidence import (
     validate_change,
     validate_policy,
 )
+from .run_caps import admit_model_call, cap_block
 
 TERMINAL = {"completed", "no_improvement", "failed", "timed_out", "rolled_back"}
 _DISABLE_OFF = {"0", "false", "no", "off"}
@@ -587,6 +589,14 @@ class ImprovementController:
                     if retained is not None:
                         next_lock["retention"] = retained
                     await self._put(tx, "coordination", self._target(w), next_lock)
+            if is_promotion(data["state"], data["reason"]):
+                await apply_feedback_cursor(
+                    tx, self.loop.namespace, self.loop.now(), "promote", rid
+                )
+            if data["state"] == "rolled_back":
+                await apply_feedback_cursor(
+                    tx, self.loop.namespace, self.loop.now(), "rollback", rid
+                )
             return self._parse(row)
 
     async def _operation(self, run, owner, kind, fn, recovery=False):
@@ -608,6 +618,9 @@ class ImprovementController:
                         v.fail("integrity_error", "Completed callback has no durable result.")
                     return deepcopy(old["data"]["result"])
                 v.fail("ambiguous_callback", "Callback previously dispatched; not replayed.")
+            await admit_model_call(
+                tx, self.loop.namespace, w.policy.get("caps"), self.loop.now(), kind
+            )
             await self._put(
                 tx,
                 "operations",
@@ -911,6 +924,12 @@ class ImprovementController:
                     ]
                 ):
                     return await self._idle(w, "insufficient_evidence")
+                async with self._tx() as tx:
+                    blocked = await cap_block(
+                        tx, w.policy.get("caps"), self.loop.now(), "propose:0"
+                    )
+                if blocked:
+                    return await self._idle(w, blocked)
                 definition = self.definitions[w.id]
                 decision = v.fingerprint(
                     {
@@ -1102,7 +1121,12 @@ class ImprovementController:
                         "reconciliation_required",
                     ):
                         state = "reconciliation_required"
-                    elif state != "observing" and code not in ("paused", "policy_changed"):
+                    elif state != "observing" and code not in (
+                        "paused",
+                        "policy_changed",
+                        "budget_cap",
+                        "daily_run_cap",
+                    ):
                         state = "failed"
                     patch = {"state": state, "reason": code}
                     if detail:

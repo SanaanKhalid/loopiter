@@ -18,6 +18,8 @@ must be a non-empty string. Defaults: payload 262,144 bytes, callback 120,000 ms
 | recordExecution(input) | Insert-only capture, idempotent identical caller ID |
 | completeExecution(id,input,expectedRevision) | CAS output/metadata/completedAt update |
 | recordSignal(input) | Insert-only scoped signal with verified-by-application source |
+| recordFeedback(input) | Rating and/or corrected edit for a served answer id |
+| servedAnswerId(input) | Stable id for one served answer |
 | getExecution(id), getCandidate(id) | Scoped reads, undefined if absent |
 | list(collection,pageOptions) | Scoped page, default 100 / max 1,000 |
 | analyze(options) | Bounded evidence snapshot and descriptive findings |

@@ -1,0 +1,17 @@
+{
+  "cases": [
+    {
+      "input": { "namespace": "app", "answer": "The invoice is paid." },
+      "id": "ans_79d70417b5aec41d88d072095cb4235276d57460fbae0ab89adf366f0cb12551"
+    },
+    {
+      "input": {
+        "namespace": "app",
+        "answer": "The invoice is paid.",
+        "episodeId": "ticket-1",
+        "artifactVersion": "prompt-v3"
+      },
+      "id": "ans_c0ad4630219fa2fa1821ce44d5e943001eae2bd51d20b369c93637de36386a1c"
+    }
+  ]
+}

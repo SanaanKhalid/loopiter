@@ -87,7 +87,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "generate:failure-detail-rules": "node scripts/generate-failure-detail-rules.mjs",
-    "prepack": "npm run build",
+    "prepack": "node scripts/clean-dist.mjs && npm run build",
     "starter": "npm run build && node dist/examples/prompt-improvement/cli.js",
     "test:postgres": "npm run build && node --test dist/test/postgres.test.js",
     "test:mock-support": "npm run build && node scripts/mock-support.mjs",

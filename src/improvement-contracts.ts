@@ -93,6 +93,12 @@ export interface AutonomyPolicy {
   outcomeMaturityMs: number;
   maximumRows: number;
   daily: { modelRequests: number; tokens: number; deployments: number };
+  /** Optional currency and run limits. Absent means those limits are off. */
+  caps?: {
+    monthlyBudget?: number;
+    callCost?: number;
+    runsPerDay?: number;
+  };
   callbackReservation: { modelRequests: number; tokens: number };
   cooldownMs: number;
   rollout: { mode: "immediate" | "canary" };
