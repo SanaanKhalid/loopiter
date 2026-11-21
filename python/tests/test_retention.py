@@ -115,14 +115,14 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(shuffled["outcome"], regressed["outcome"])
 
     def test_best_ever_updates_only_when_higher(self):
-        current = next_best_ever(current=None, candidate_id="first", items=scores(0.8))
+        current = next_best_ever(current=None, candidate_id="first", items=scores(0.5))
         self.assertEqual(current["id"], "first")
-        self.assertEqual(current["score"], 0.8)
-        kept = next_best_ever(current=current, candidate_id="lower", items=scores(0.7))
+        self.assertEqual(current["score"], 0.5)
+        kept = next_best_ever(current=current, candidate_id="lower", items=scores(0.25))
         self.assertEqual(kept["id"], "first")
-        tied = next_best_ever(current=current, candidate_id="tied", items=scores(0.8))
+        tied = next_best_ever(current=current, candidate_id="tied", items=scores(0.5))
         self.assertEqual(tied["id"], "first")
-        raised = next_best_ever(current=current, candidate_id="higher", items=scores(0.95))
+        raised = next_best_ever(current=current, candidate_id="higher", items=scores(0.75))
         self.assertEqual(raised["id"], "higher")
         minimized = next_best_ever(
             current={"id": "high", "score": 0.4, "items": scores(0.4)},

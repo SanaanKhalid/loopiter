@@ -444,7 +444,7 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_retention_blocks_regression_and_survives_rollback(self):
-        self._ready([0.8], 0.05)
+        self._ready([0.5], 0.05)
         controller = self.controller()
         first = await self._finish(controller)
         self.assertEqual(first["state"], "completed", first)
@@ -456,7 +456,7 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(opened["data"]["retention"]["margin"])
         self.assertIsNone(opened["data"]["retention"]["items"])
         ledger = await self._ledger()
-        self.assertEqual(ledger["best_ever"]["score"], 0.8)
+        self.assertEqual(ledger["best_ever"]["score"], 0.5)
         self.assertEqual(ledger["best_ever"]["id"], opened["data"]["selected_id"])
         self.assertIsNone(ledger["decisions"][-1]["items"])
 
@@ -472,18 +472,18 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ledger["decisions"][-1]["outcome"], "retention_regression")
         self.assertLess(ledger["decisions"][-1]["lower"], -0.05)
 
-        self._ready([0.7], 0.3)
-        await self._seed_best(0.9)
+        self._ready([0.5], 0.5)
+        await self._seed_best(0.75)
         within = await self._finish(self.controller())
         self.assertEqual(within["state"], "completed", within)
         self.assertEqual(self.registry.calls, 1)
         ledger = await self._ledger()
         self.assertEqual(ledger["best_ever"]["id"], "seeded")
-        self.assertEqual(ledger["best_ever"]["score"], 0.9)
+        self.assertEqual(ledger["best_ever"]["score"], 0.75)
         self.assertEqual(ledger["decisions"][-1]["outcome"], "pass")
 
-        self._ready([0.95], 0.05, 0.5)
-        await self._seed_best(0.4)
+        self._ready([1], 0.05, 0.5)
+        await self._seed_best(0.5)
         controller = self.controller()
         rising = await controller.tick("classification")
         for _ in range(8):
@@ -494,7 +494,7 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         promoted = await controller.get_run(rising["run_id"])
         ledger = await self._ledger()
         self.assertEqual(ledger["best_ever"]["id"], promoted["data"]["selected_id"])
-        self.assertEqual(ledger["best_ever"]["score"], 0.95)
+        self.assertEqual(ledger["best_ever"]["score"], 1)
         self.now += timedelta(hours=2)
         rolled = await controller.tick("classification")
         for _ in range(4):
@@ -503,7 +503,7 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             rolled = await controller.tick("classification")
         self.assertEqual(rolled["state"], "rolled_back", rolled)
         after = await self._ledger()
-        self.assertEqual(after["best_ever"]["score"], 0.95)
+        self.assertEqual(after["best_ever"]["score"], 1)
         self.assertEqual(after["best_ever"]["id"], promoted["data"]["selected_id"])
 
         self._ready([0.4], 0.05)
