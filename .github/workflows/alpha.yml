@@ -190,3 +190,11 @@ jobs:
         env:
           LOOPITER_BENCH_PRICE_INPUT_PER_1M: "1"
           LOOPITER_BENCH_PRICE_OUTPUT_PER_1M: "2"
+      - run: node dist/src/cli.js eval verify benchmarks/hotpotqa/fixtures.eval.json --lock benchmarks/hotpotqa/fixtures.eval.lock.json
+      - run: node dist/src/cli.js eval verify benchmarks/ifbench/fixtures.eval.json --lock benchmarks/ifbench/fixtures.eval.lock.json
+      - run: node dist/src/cli.js eval leakage --train benchmarks/hotpotqa/fixtures.train.json --eval benchmarks/hotpotqa/fixtures.eval.json
+      - run: node dist/src/cli.js eval leakage --train benchmarks/ifbench/fixtures.train.json --eval benchmarks/ifbench/fixtures.eval.json
+      - run: PYTHONPATH=python/src python -m loopiter eval verify benchmarks/hotpotqa/fixtures.eval.json --lock benchmarks/hotpotqa/fixtures.eval.lock.json
+      - run: PYTHONPATH=python/src python -m loopiter eval verify benchmarks/ifbench/fixtures.eval.json --lock benchmarks/ifbench/fixtures.eval.lock.json
+      - run: PYTHONPATH=python/src python -m loopiter eval leakage --train benchmarks/hotpotqa/fixtures.train.json --eval benchmarks/hotpotqa/fixtures.eval.json
+      - run: PYTHONPATH=python/src python -m loopiter eval leakage --train benchmarks/ifbench/fixtures.train.json --eval benchmarks/ifbench/fixtures.eval.json

@@ -74,6 +74,25 @@ bounds for baseline, one-shot, ungated, and served. That is an aggregate
 sanity check. It is not a replay, because those reports do not contain the
 per-item outcomes.
 
+## Eval lock
+
+HotpotQA and IFBench each commit a lock for the fixture eval split, next to
+the fixture train and eval files. Those files are produced from the fixture
+builders in this repository. The offline harness checks the lock after it
+loads the fixtures and before it scores anything. A drifted fixture split
+stops the process there.
+
+The full pinned rows are not stored in the repository. Cache load checks
+`pinned-eval.lock.json` when that file is present and stops before returning
+the rows if the loaded eval split differs. A run that uses the current pinned
+cache keeps working when that file is absent. The check does not change the
+call plan, the reservations, or the budget.
+
+CI runs `loopiter eval verify` and `loopiter eval leakage` on the fixture
+files, and the same commands through `python -m loopiter`. Leakage compares
+the fixture train file with the fixture eval file. Verify exits nonzero on
+drift. Leakage exits nonzero on overlap.
+
 # Offline benchmark
 
 Phase 0 compares a **frozen baseline** (no improvement) with an **autonomous candidate**

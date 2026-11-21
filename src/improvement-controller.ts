@@ -11,6 +11,7 @@ import type {
   AutonomyPolicy,
   CallbackContext,
   Comparison,
+  DatasetSnapshot,
   ImprovementControllerOptions,
   ImprovementRun,
   ImprovementRunData,
@@ -35,6 +36,20 @@ import {
   validateChange,
   validatePolicy,
 } from "./improvement-evidence.js";
+import { readEvalLock, verifyEvalLock } from "./eval-lock.js";
+
+function evalLockSplits(
+  splits: readonly ("validation" | "audit")[] | undefined,
+): readonly ("validation" | "audit")[] {
+  const selected = splits ?? ["validation", "audit"];
+  if (
+    selected.length === 0 ||
+    selected.some((split) => split !== "validation" && split !== "audit") ||
+    new Set(selected).size !== selected.length
+  )
+    fail("invalid_input", "requireEvalLock splits must be validation or audit.");
+  return selected;
+}
 import { redactCapture } from "./integrations/privacy.js";
 import failureDetailRuleFile from "./failure-detail-rules.json" with { type: "json" };
 import {
@@ -307,6 +322,27 @@ export class ImprovementController {
         }),
       );
     }
+    if (options.requireEvalLock !== undefined) {
+      readEvalLock(options.requireEvalLock.lock);
+      evalLockSplits(options.requireEvalLock.splits);
+    }
+  }
+  private assertRequiredEvalLock(dataset: DatasetSnapshot): void {
+    const required = this.options.requireEvalLock;
+    if (!required) return;
+    const items = evalLockSplits(required.splits).flatMap((split) =>
+      dataset[split].map((row) => ({
+        id: row.id,
+        input: row.input,
+        expected: row.label,
+      })),
+    );
+    const report = verifyEvalLock({ items }, required.lock);
+    if (!report.ok)
+      fail(
+        "eval_lock_drift",
+        `Eval lock drift added ${report.added} removed ${report.removed} changed ${report.changed}.`,
+      );
   }
   private workflow(key: string) {
     return (
@@ -982,6 +1018,7 @@ export class ImprovementController {
           w.policy,
           this.loop.now(),
         );
+        this.assertRequiredEvalLock(dataset);
         if (mode === "observe") return idle("observation_only");
         if (
           dataset.optimization.length < w.policy.minimumNewUnits ||

@@ -1,10 +1,14 @@
 import { FIXTURE_SIZES, FULL_SIZES, PROMPT_CAP, SMOKE_ROWS } from "../public/constants.js";
 import { fragmentSchema, textSchema } from "../public/instructions.js";
 import { scriptedAnswer } from "../public/propose.js";
-import type { JsonValue } from "../../src/index.js";
 import type { BenchmarkTask, InstructionMark, RowScore } from "../public/task.js";
 import { loadIfbenchCache } from "./cache.js";
-import { ifbenchFixtures, type IfExample } from "./fixtures.js";
+import {
+  ifbenchDatasetInput,
+  ifbenchDatasetLabel,
+  ifbenchFixtures,
+  type IfExample,
+} from "./fixtures.js";
 import { IFBENCH_PROMPT_VERSION, IFBENCH_SYSTEM_PROMPT } from "./prompt.js";
 import { selectProposeExamples } from "../public/propose-bound.js";
 import { scoreWithVerifiers } from "./score.js";
@@ -27,14 +31,8 @@ export const ifbenchTask: BenchmarkTask<IfExample> = {
   fixtures: ifbenchFixtures,
   loadCache: loadIfbenchCache,
   userText: (row) => row.prompt,
-  datasetInput: (row) => ({ text: row.prompt }),
-  datasetLabel: (row) =>
-    JSON.parse(
-      JSON.stringify({
-        instructionIdList: row.instructionIdList,
-        kwargs: row.kwargs,
-      }),
-    ) as JsonValue,
+  datasetInput: ifbenchDatasetInput,
+  datasetLabel: ifbenchDatasetLabel,
   mockAnswer: (prompt, row) => scriptedAnswer(prompt, row.baselinePass, passText(row), FAIL_TEXT),
   scoreMany: async (items) => scoreItems(items),
   predictPayload: (row) => JSON.stringify({ task: row.prompt }),

@@ -1,10 +1,15 @@
 import { FIXTURE_SIZES, FULL_SIZES, PROMPT_CAP, SMOKE_ROWS } from "../public/constants.js";
 import { fragmentSchema, textSchema } from "../public/instructions.js";
 import { scriptedAnswer } from "../public/propose.js";
-import type { JsonValue } from "../../src/index.js";
 import type { BenchmarkTask, RowScore } from "../public/task.js";
 import { loadHotpotCache } from "./cache.js";
-import { hotpotFixtures, type HotpotExample, type Paragraph } from "./fixtures.js";
+import {
+  hotpotDatasetInput,
+  hotpotDatasetLabel,
+  hotpotFixtures,
+  type HotpotExample,
+  type Paragraph,
+} from "./fixtures.js";
 import { exactMatch, tokenF1 } from "./normalize.js";
 import { HOTPOT_PROMPT_VERSION, HOTPOT_SYSTEM_PROMPT } from "./prompt.js";
 import { selectProposeExamples } from "../public/propose-bound.js";
@@ -27,14 +32,8 @@ export const hotpotTask: BenchmarkTask<HotpotExample> = {
   fixtures: hotpotFixtures,
   loadCache: loadHotpotCache,
   userText: (row) => row.question,
-  datasetInput: (row) =>
-    JSON.parse(
-      JSON.stringify({
-        text: row.question,
-        paragraphs: row.paragraphs,
-      }),
-    ) as JsonValue,
-  datasetLabel: (row) => row.answer,
+  datasetInput: hotpotDatasetInput,
+  datasetLabel: hotpotDatasetLabel,
   mockAnswer: (prompt, row) => scriptedAnswer(prompt, row.baselinePass, row.answer, FAIL_TEXT),
   scoreMany: async (items) => items.map((item) => scoreOne(item.response, item.row.answer)),
   predictPayload: (row) =>

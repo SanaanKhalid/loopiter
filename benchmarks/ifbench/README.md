@@ -25,6 +25,11 @@ per seed. The five seeds are 1 through 5. Sizes are optimization 150,
 validation 150, audit 300, production observation 150, and the official test
 set as held-out.
 
+The fixture eval split has a committed lock, `fixtures.eval.lock.json`, checked
+before a fixture run. Cache load checks `pinned-eval.lock.json` when that file
+is present and stops before any model call if the loaded eval split differs.
+See the benchmarks README.
+
 ## Fetch
 
 The fetch script writes a gitignored cache. It does not run in CI (`CI=true`

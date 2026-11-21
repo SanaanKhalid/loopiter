@@ -11,6 +11,7 @@ from .acceptance_gate import (
 )
 from .client import DeploymentAdapter, FeedbackLoop
 from .cohorts import assign_cohort
+from .eval_lock import check_eval_leakage, lock_eval_set, verify_eval_lock
 from .improvement import (
     CallbackContext,
     ImprovementController,
@@ -40,13 +41,16 @@ __all__ = [
     "CallbackContext",
     "ImprovementController",
     "ImprovementWorkflow",
+    "check_eval_leakage",
     "compare",
     "decide_retention",
     "empty_retention_ledger",
-    "minimum_certifiable_audit_units",
     "load_retention_ledger",
+    "lock_eval_set",
+    "minimum_certifiable_audit_units",
     "next_best_ever",
     "not_measured_retention",
+    "verify_eval_lock",
     "prepare_dataset",
     "promotion_retention",
     "remember_retention_decision",

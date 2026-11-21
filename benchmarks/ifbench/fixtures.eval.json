@@ -1,0 +1,220 @@
+{
+  "items": [
+    {
+      "id": "held-0",
+      "input": {
+        "text": "Fixture held-0. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-1",
+      "input": {
+        "text": "Fixture held-1. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-2",
+      "input": {
+        "text": "Fixture held-2. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-3",
+      "input": {
+        "text": "Fixture held-3. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-4",
+      "input": {
+        "text": "Fixture held-4. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-5",
+      "input": {
+        "text": "Fixture held-5. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-6",
+      "input": {
+        "text": "Fixture held-6. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-7",
+      "input": {
+        "text": "Fixture held-7. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-8",
+      "input": {
+        "text": "Fixture held-8. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-9",
+      "input": {
+        "text": "Fixture held-9. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-10",
+      "input": {
+        "text": "Fixture held-10. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "held-11",
+      "input": {
+        "text": "Fixture held-11. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

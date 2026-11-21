@@ -1,4 +1,5 @@
 /** Tiny synthetic distractor rows. They are not the HotpotQA release. */
+import type { JsonValue } from "../../src/index.js";
 import { FIXTURE_SIZES } from "../public/constants.js";
 import { HOTPOT_PARAGRAPHS } from "./pins.js";
 
@@ -42,6 +43,19 @@ export function hotpotFixtures(): { pool: HotpotExample[]; heldOut: HotpotExampl
     row(`held-${index}`, index % 2 === 0 ? "Paris" : "Lima", index % 6 === 0),
   );
   return { pool, heldOut };
+}
+
+export function hotpotDatasetInput(row: HotpotExample): JsonValue {
+  return JSON.parse(
+    JSON.stringify({
+      text: row.question,
+      paragraphs: row.paragraphs,
+    }),
+  ) as JsonValue;
+}
+
+export function hotpotDatasetLabel(row: HotpotExample): JsonValue {
+  return row.answer;
 }
 
 export function row(id: string, answer: string, baselinePass: boolean): HotpotExample {

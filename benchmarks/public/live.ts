@@ -51,6 +51,7 @@ import {
   splitSizes,
   type SplitSizes,
 } from "./splits.js";
+import { guardEvalSuite, suiteFromTask } from "./eval-lock.js";
 import type { BenchmarkTask, ModelRunner, PredictCall, PublicExample } from "./task.js";
 
 const directMeter = async <T>(
@@ -87,6 +88,8 @@ export interface PublicLiveOptions {
   fetch?: typeof fetch;
   reportPath?: string;
   handleSignals?: boolean;
+  /** When set, verify this eval lock before any model call. */
+  evalLockPath?: string;
 }
 
 export interface PublicLiveReport {
@@ -200,6 +203,8 @@ export async function runLiveTask<T extends PublicExample>(
   options: PublicLiveOptions,
   loaded: { pool: T[]; heldOut: T[] },
 ): Promise<PublicLiveReport> {
+  if (options.evalLockPath)
+    guardEvalSuite(suiteFromTask(task, loaded.heldOut), options.evalLockPath);
   const sizes = options.sizes ?? task.fullSizes;
   assertPoolCoversSeeds({
     pool: loaded.pool,

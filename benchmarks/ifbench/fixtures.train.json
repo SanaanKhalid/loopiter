@@ -1,0 +1,580 @@
+{
+  "items": [
+    {
+      "id": "pool-0",
+      "input": {
+        "text": "Fixture pool-0. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-1",
+      "input": {
+        "text": "Fixture pool-1. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-2",
+      "input": {
+        "text": "Fixture pool-2. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-3",
+      "input": {
+        "text": "Fixture pool-3. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-4",
+      "input": {
+        "text": "Fixture pool-4. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-5",
+      "input": {
+        "text": "Fixture pool-5. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-6",
+      "input": {
+        "text": "Fixture pool-6. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-7",
+      "input": {
+        "text": "Fixture pool-7. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-8",
+      "input": {
+        "text": "Fixture pool-8. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-9",
+      "input": {
+        "text": "Fixture pool-9. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-10",
+      "input": {
+        "text": "Fixture pool-10. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-11",
+      "input": {
+        "text": "Fixture pool-11. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-12",
+      "input": {
+        "text": "Fixture pool-12. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-13",
+      "input": {
+        "text": "Fixture pool-13. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-14",
+      "input": {
+        "text": "Fixture pool-14. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-15",
+      "input": {
+        "text": "Fixture pool-15. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-16",
+      "input": {
+        "text": "Fixture pool-16. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-17",
+      "input": {
+        "text": "Fixture pool-17. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-18",
+      "input": {
+        "text": "Fixture pool-18. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-19",
+      "input": {
+        "text": "Fixture pool-19. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-20",
+      "input": {
+        "text": "Fixture pool-20. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-21",
+      "input": {
+        "text": "Fixture pool-21. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-22",
+      "input": {
+        "text": "Fixture pool-22. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-23",
+      "input": {
+        "text": "Fixture pool-23. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-24",
+      "input": {
+        "text": "Fixture pool-24. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-25",
+      "input": {
+        "text": "Fixture pool-25. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-26",
+      "input": {
+        "text": "Fixture pool-26. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-27",
+      "input": {
+        "text": "Fixture pool-27. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-28",
+      "input": {
+        "text": "Fixture pool-28. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-29",
+      "input": {
+        "text": "Fixture pool-29. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-30",
+      "input": {
+        "text": "Fixture pool-30. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "pool-31",
+      "input": {
+        "text": "Fixture pool-31. Include every required keyword."
+      },
+      "expected": {
+        "instructionIdList": [
+          "keywords:existence"
+        ],
+        "kwargs": [
+          {
+            "keywords": [
+              "quartz"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
