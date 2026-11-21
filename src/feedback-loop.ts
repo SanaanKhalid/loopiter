@@ -47,6 +47,7 @@ import {
 } from "./validation.js";
 import { analyze } from "./analyzer.js";
 import { pageOptions, collections } from "./stores/in-memory.js";
+import { feedbackInput, persistFeedback, rewindPromotedCursor } from "./feedback.js";
 export interface FeedbackLoopOptions {
   store: FeedbackStore;
   namespace: string;
@@ -289,6 +290,13 @@ export class FeedbackLoop {
       await tx.insert("signals", row);
       return row;
     });
+  }
+  /** Record a rating and/or corrected edit for a served answer id. Identical input is idempotent. */
+  async recordFeedback(raw: unknown): Promise<{ id: string; recordedAt: string }> {
+    const input = feedbackInput(raw);
+    return this.store.transaction(this.namespace, (tx) =>
+      persistFeedback(tx, this.namespace, this.now(), input),
+    );
   }
   analyze(options: AnalyzeOptions): Promise<Finding[]> {
     return analyze(this, options);
@@ -815,6 +823,10 @@ export class FeedbackLoop {
         } else {
           nextCandidate.status = "rolled_back";
           nextCandidate.rollbackReceipt = clone(receipt);
+          await rewindPromotedCursor(tx, this.namespace, this.now(), {
+            id: candidate.id,
+            target: { kind: candidate.target.kind, key: candidate.target.key },
+          });
           delete nextState.activeCandidateId;
           if (current.restoreCandidateId) {
             const restore = await this.require(

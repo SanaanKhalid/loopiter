@@ -12,6 +12,7 @@ from .acceptance_gate import (
 from .client import DeploymentAdapter, FeedbackLoop
 from .cohorts import assign_cohort
 from .eval_lock import check_eval_leakage, lock_eval_set, verify_eval_lock
+from .feedback import served_answer_id
 from .improvement import (
     CallbackContext,
     ImprovementController,
@@ -37,6 +38,7 @@ __all__ = [
     "LoopiterError",
     "StoreTransaction",
     "fingerprint",
+    "served_answer_id",
     "assign_cohort",
     "CallbackContext",
     "ImprovementController",

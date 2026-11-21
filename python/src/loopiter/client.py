@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from . import _validation as v
+from .feedback import feedback_input, persist_feedback, rewind_promoted_cursor
 from .store import FeedbackStore, StoreTransaction, page_options
 
 Record = v.Record
@@ -262,6 +263,12 @@ class FeedbackLoop:
                 if "episode_id" in data and data["episode_id"] != execution.get("episode_id"):
                     v.fail("invalid_input", "Signal and execution episodes differ.")
             return await self._insert_input(tx, "signals", row)
+
+    async def record_feedback(self, **input_) -> Record:
+        """Record a rating and/or corrected edit for a served answer id. Identical input is idempotent."""
+        parsed = feedback_input(input_)
+        async with self.store.transaction(self.namespace) as tx:
+            return await persist_feedback(tx, self.namespace, self.now(), parsed)
 
     async def create_candidate(self, **input_) -> Record:
         v.candidate_input(input_)
@@ -697,6 +704,12 @@ class FeedbackLoop:
                         v.fail("conflict", "Active candidate changed during rollback.")
                     updated["status"] = "rolled_back"
                     updated["rollback_receipt"] = receipt
+                    await rewind_promoted_cursor(
+                        tx,
+                        self.namespace,
+                        self.now(),
+                        {"id": candidate["id"], "target": candidate["target"]},
+                    )
                     updated_state.pop("active_candidate_id", None)
                     if attempt.get("restore_candidate_id"):
                         restore = await self._read(

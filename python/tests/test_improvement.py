@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -22,7 +23,10 @@ from loopiter import (
     InMemoryStore,
     LoopiterError,
     assign_cohort,
+    served_answer_id,
 )
+from loopiter._validation import fail
+from loopiter.feedback import feedback_cursor_id, target_scope
 from loopiter.improvement import failure_detail_text
 from loopiter.improvement_evidence import (
     compare,
@@ -708,6 +712,131 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         row = next(item for item in page["items"] if item["id"] == "workflow:classification")
         self.assertEqual(row["data"]["mode"], "autonomous")
         self.assertIs(row["data"]["self_improving"], True)
+
+    async def test_promoted_run_consumes_seen_feedback_and_rollback_rewinds(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        target = self.workflow.policy["target"]
+        scope = target_scope(target)
+        answer_id = served_answer_id({"namespace": "test", "answer": "billing"})
+        saved = await self.loop.record_feedback(
+            answerId=answer_id, target=target, rating={"kind": "thumbs", "value": "up"}
+        )
+        result = await self.controller().tick("classification")
+        later = await self.loop.record_feedback(
+            answerId=answer_id, target=target, edit="after the run started"
+        )
+        for _ in range(8):
+            if result["state"] in ("completed", "no_improvement", "rolled_back"):
+                break
+            if result["state"] == "observing":
+                self.now += timedelta(hours=2)
+            result = await self.controller().tick("classification")
+        self.assertEqual(result["state"], "completed")
+        async with self.loop.store.transaction("test") as tx:
+            cursor = await tx.get("coordination", feedback_cursor_id(scope))
+        self.assertEqual(cursor["data"]["position"], saved["id"])
+        self.assertNotEqual(cursor["data"]["position"], later["id"])
+        self.assertEqual(cursor["data"]["promotion_id"], result["run_id"])
+        run = await self.controller().get_run(result["run_id"])
+        await self.loop.rollback_candidate(run["data"]["selected_id"], self.registry)
+        async with self.loop.store.transaction("test") as tx:
+            rewound = await tx.get("coordination", feedback_cursor_id(scope))
+        self.assertIsNone(rewound["data"]["position"])
+        self.assertIsNone(rewound["data"]["promotion_id"])
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.workflow.policy["caps"] = {"runs_per_day": 0, "monthly_budget": 1, "call_cost": 1}
+        calls = {"n": 0}
+
+        async def propose(*_):
+            calls["n"] += 1
+            return [{"score": 1}]
+
+        self.workflow = replace(self.workflow, propose=propose)
+        idle = await self.controller().tick("classification")
+        self.assertEqual(idle["reason"], "daily_run_cap")
+        self.assertEqual(calls["n"], 0)
+        self.assertIsNone(idle["run_id"])
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.workflow.policy["caps"] = {"monthly_budget": 0, "call_cost": 1}
+        self.assertEqual((await self.controller().tick("classification"))["reason"], "budget_cap")
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.workflow.policy["caps"] = {"runs_per_day": 0, "monthly_budget": 0, "call_cost": 1}
+        watching = ImprovementController(
+            self.loop, workflows=[self.workflow], mode="observe", self_improving=True
+        )
+        self.assertEqual((await watching.tick("classification"))["reason"], "observation_only")
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.workflow.policy["caps"] = {"monthly_budget": 10, "call_cost": 1}
+        proposed = {"n": 0}
+
+        async def counting(*_):
+            proposed["n"] += 1
+            return [{"score": 1}]
+
+        self.workflow = replace(self.workflow, propose=counting)
+        original = self.loop.store.transaction
+
+        @asynccontextmanager
+        async def transaction(namespace):
+            async with original(namespace) as tx:
+                insert, replace_row = tx.insert, tx.replace
+
+                async def wrapped_insert(collection, row):
+                    if collection == "coordination" and str(row["id"]).startswith("cap-"):
+                        fail("conflict", "injected")
+                    return await insert(collection, row)
+
+                async def wrapped_replace(collection, row, expected):
+                    if collection == "coordination" and str(row["id"]).startswith("cap-"):
+                        fail("conflict", "injected")
+                    return await replace_row(collection, row, expected)
+
+                tx.insert = wrapped_insert
+                tx.replace = wrapped_replace
+                yield tx
+
+        self.loop.store.transaction = transaction
+        paused = await self.controller().tick("classification")
+        self.assertEqual(paused["reason"], "cap_conflict")
+        self.assertNotEqual(paused["state"], "failed")
+        self.assertEqual(proposed["n"], 0)
+        async with self.loop.store.transaction("test") as tx:
+            spent = await tx.get(
+                "coordination",
+                "cap-spend:" + target_scope(self.workflow.policy["target"]) + ":2026-02",
+            )
+        self.assertIsNone(spent)
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.workflow.policy["caps"] = {"monthly_budget": 10, "call_cost": 1}
+        blocked = {"n": 0}
+
+        async def blocked_propose(*_):
+            blocked["n"] += 1
+            return [{"score": 1}]
+
+        self.workflow = replace(self.workflow, propose=blocked_propose)
+        async with self.loop.store.transaction("test") as tx:
+            await tx.insert(
+                "coordination",
+                {
+                    "id": "cap-spend:" + target_scope(self.workflow.policy["target"]) + ":2026-02",
+                    "namespace": "test",
+                    "revision": 1,
+                    "created_at": "2026-02-01T00:00:00.000Z",
+                    "updated_at": "2026-02-01T00:00:00.000Z",
+                    "format": 1,
+                    "data": {"amount": "999"},
+                },
+            )
+        stopped = await self.controller().tick("classification")
+        self.assertEqual(stopped["reason"], "invalid_state")
+        self.assertEqual(blocked["n"], 0)
+        self.assertIsNone(stopped["run_id"])
 
     async def test_recommend_mode_stores_a_proposal_and_never_applies(self):
         self.setup_workflow(FIXTURES["scenarios"][0])

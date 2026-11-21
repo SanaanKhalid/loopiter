@@ -93,6 +93,12 @@ export interface AutonomyPolicy {
   outcomeMaturityMs: number;
   maximumRows: number;
   daily: { modelRequests: number; tokens: number; deployments: number };
+  /** Optional currency and run limits. Absent means those limits are off. */
+  caps?: {
+    monthlyBudget?: number;
+    callCost?: number;
+    runsPerDay?: number;
+  };
   callbackReservation: { modelRequests: number; tokens: number };
   cooldownMs: number;
   rollout: { mode: "immediate" | "canary" };
@@ -277,6 +283,8 @@ export interface ImprovementRunData {
   stepTimeouts?: number;
   /** Redacted, truncated text from a failed callback. Absent on a clean tick. */
   detail?: string;
+  /** Feedback high-water mark copied when the run starts. Promotion does not pass it. */
+  feedbackSeen?: { id: string | null; recordedAt: string | null; seq: number | null };
   /**
    * Retention check recorded when a candidate would be promoted.
    * Absent when the policy omits retention. Nulls, never 0, when not measured.

@@ -7,6 +7,7 @@ import type {
   MetricGate,
 } from "./improvement-contracts.js";
 import type { JsonValue } from "./contracts.js";
+import { validateCaps } from "./run-caps.js";
 import {
   enumeration,
   fail,
@@ -149,6 +150,7 @@ export function validatePolicy(p: AutonomyPolicy): void {
     "outcomeMaturityMs",
     "maximumRows",
     "daily",
+    "caps",
     "callbackReservation",
     "cooldownMs",
     "rollout",
@@ -279,6 +281,7 @@ export function validatePolicy(p: AutonomyPolicy): void {
     integer(p.callbackReservation[key], key, 0);
   if (p.daily.deployments < 1)
     fail("invalid_policy", "A finite positive deployment ceiling is required.");
+  if (p.caps !== undefined) validateCaps(p.caps);
   fields(p.rollout, ["mode"]);
   enumeration(p.rollout.mode, ["immediate", "canary"], "rollout mode");
   fields(p.observation, [

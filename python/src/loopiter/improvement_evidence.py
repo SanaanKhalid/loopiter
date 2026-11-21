@@ -16,6 +16,7 @@ from .acceptance_gate import (
     minimum_decisive_floor,
     not_measured_retention,
 )
+from .run_caps import validate_caps
 
 
 def validate_schema(schema):
@@ -114,6 +115,7 @@ def validate_policy(p):
             "maximum_proposal_calls",
             "maximum_consecutive_failures",
             "audit_method",
+            "caps",
         ],
         tuple(names),
     )
@@ -224,6 +226,8 @@ def validate_policy(p):
             v.integer(p[name][key], key, 0)
     if p["daily"]["deployments"] < 1:
         v.fail("invalid_policy", "A positive deployment ceiling is required.")
+    if "caps" in p:
+        validate_caps(p["caps"])
     v.fields(p["rollout"], ["mode"], ("mode",))
     v.enum(p["rollout"]["mode"], ["immediate", "canary"], "rollout mode")
     obs = p["observation"]

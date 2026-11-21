@@ -526,6 +526,11 @@ def _unsafe_integer_token(token: str) -> bool:
     return digits > str(_SAFE_INTEGER_MAX)
 
 
+def canonical_json(value: Any) -> str:
+    """UTF-8 canonical JSON. Object keys are ordered by UTF-8 bytes. Non-ASCII is not escaped."""
+    return _canonical_json(value)
+
+
 def _canonical_json(value: Any) -> str:
     return _encode_json(_json_value(value), set())
 
