@@ -1,4 +1,6 @@
-{
+// Generated from python/src/loopiter/failure_detail_rules.json.
+// Regenerate with: node scripts/generate-failure-detail-rules.mjs
+export default {
   "inputMax": 32768,
   "outputMax": 500,
   "rules": [
@@ -73,4 +75,4 @@
       "replace": "[redacted]"
     }
   ]
-}
+} as const;

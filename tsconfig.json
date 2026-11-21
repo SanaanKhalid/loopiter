@@ -14,8 +14,7 @@
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true
+    "skipLibCheck": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "examples/**/*.ts", "benchmarks/**/*.ts"]
 }

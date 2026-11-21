@@ -51,7 +51,7 @@ function evalLockSplits(
   return selected;
 }
 import { redactCapture } from "./integrations/privacy.js";
-import failureDetailRuleFile from "./failure-detail-rules.json" with { type: "json" };
+import failureDetailRuleFile from "./failure-detail-rules.js";
 import {
   cancellable,
   clone,

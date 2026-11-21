@@ -815,9 +815,9 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.registry.calls, 0)
 
     def test_failure_detail_rules_match_node(self):
-        node = json.loads(
-            (Path(__file__).parents[2] / "src" / "failure-detail-rules.json").read_text()
-        )
+        source = (Path(__file__).parents[2] / "src" / "failure-detail-rules.ts").read_text()
+        start = source.index("export default ") + len("export default ")
+        node = json.loads(source[start : source.rindex(" as const")])
         python = json.loads(
             (
                 Path(__file__).parents[1] / "src" / "loopiter" / "failure_detail_rules.json"

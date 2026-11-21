@@ -85,7 +85,8 @@
     "docs/application-observation.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp src/failure-detail-rules.json dist/src/failure-detail-rules.json",
+    "build": "tsc -p tsconfig.json",
+    "generate:failure-detail-rules": "node scripts/generate-failure-detail-rules.mjs",
     "prepack": "npm run build",
     "starter": "npm run build && node dist/examples/prompt-improvement/cli.js",
     "test:postgres": "npm run build && node --test dist/test/postgres.test.js",
