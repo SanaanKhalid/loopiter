@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import {
   FeedbackLoop,
   InMemoryStore,
@@ -18,6 +22,8 @@ import {
 } from "../src/index.js";
 import { Registry } from "./helpers.js";
 import { assignCohort, validateChange } from "../src/index.js";
+import { JsonFileStore } from "../src/stores/json-file.js";
+import { hash } from "../src/utils.js";
 
 const failureDetailProbes = JSON.parse(
   await readFile(
@@ -136,6 +142,7 @@ function setup(
     errors: number;
     productionErrors?: number;
   } = { name: "accepted", scores: [0.95, 0.85], errors: 0 },
+  store: InMemoryStore = new InMemoryStore(),
 ) {
   let now = new Date("2026-02-01T00:00:00.000Z");
   let proposals = 0,
@@ -149,7 +156,7 @@ function setup(
   }
   const registry = new TestRegistry(),
     loop = new FeedbackLoop({
-      store: new InMemoryStore(),
+      store,
       namespace: "test",
       clock: () => now,
     });
@@ -557,8 +564,333 @@ test("confidence policies reject a short partition and a non-integer decisive fl
   const extra = structuredClone(base);
   Object.assign(extra.objective, { noiseFloor: { validation: true, samples: 10 } });
   assert.throws(() => validatePolicy(extra));
+  const kept = structuredClone(base);
+  kept.objective = { ...kept.objective, retention: { margin: 0.02 } };
+  assert.doesNotThrow(() => validatePolicy(kept));
+  const withConfidence = structuredClone(base);
+  withConfidence.objective = {
+    ...withConfidence.objective,
+    retention: { margin: 0, confidence: 0.8 },
+  };
+  assert.doesNotThrow(() => validatePolicy(withConfidence));
+  const fixedRetention = structuredClone(fixtures.policy) as AutonomyPolicy;
+  fixedRetention.objective = { ...fixedRetention.objective, retention: { margin: 0.02 } };
+  assert.throws(() => validatePolicy(fixedRetention), { code: "invalid_policy" });
+  const missingMargin = structuredClone(base);
+  missingMargin.objective = { ...missingMargin.objective, retention: {} as { margin: number } };
+  assert.throws(() => validatePolicy(missingMargin), { code: "invalid_policy" });
+  const negative = structuredClone(base);
+  negative.objective = { ...negative.objective, retention: { margin: -0.01 } };
+  assert.throws(() => validatePolicy(negative), { code: "invalid_input" });
+  const badConfidence = structuredClone(base);
+  badConfidence.objective = {
+    ...badConfidence.objective,
+    retention: { margin: 0.1, confidence: 1 },
+  };
+  assert.throws(() => validatePolicy(badConfidence), { code: "invalid_policy" });
+  const extraRetention = structuredClone(base);
+  Object.assign(extraRetention.objective, { retention: { margin: 0.1, samples: 10 } });
+  assert.throws(() => validatePolicy(extraRetention));
   assert.doesNotThrow(() => validatePolicy(structuredClone(fixtures.policy)));
 });
+
+function retentionReady(
+  scores: number[],
+  margin: number,
+  productionErrors = 0,
+  store?: InMemoryStore,
+) {
+  const scenario = { name: "accepted", scores, errors: 0, productionErrors };
+  const x = store ? setup(scenario, store) : setup(scenario);
+  x.workflow.policy.objective = {
+    ...x.workflow.policy.objective,
+    acceptance: "confidence",
+    minimumEffect: 0,
+    confidence: 0.9,
+    bootstrapSamples: 200,
+    bootstrapSeed: 17,
+    retention: { margin },
+  };
+  x.workflow.policy.daily = { modelRequests: 20, tokens: 5000, deployments: 5 };
+  return x;
+}
+
+class TracingStore extends InMemoryStore {
+  batches: { kind: string; state?: string; bestId?: string }[][] = [];
+  override async transaction<T>(
+    namespace: string,
+    operation: (tx: import("../src/store.js").StoreTransaction) => Promise<T>,
+  ): Promise<T> {
+    const batch: { kind: string; state?: string; bestId?: string }[] = [];
+    const result = await super.transaction(namespace, async (tx) => {
+      const note = (kind: string, record: { data?: { state?: string; retention?: { bestEver?: { id?: string } } } }) => {
+        const write: { kind: string; state?: string; bestId?: string } = { kind };
+        if (record.data?.state !== undefined) write.state = record.data.state;
+        const bestId = record.data?.retention?.bestEver?.id;
+        if (bestId !== undefined) write.bestId = bestId;
+        batch.push(write);
+      };
+      return operation({
+        get: tx.get.bind(tx),
+        list: tx.list.bind(tx),
+        insert: async (kind, record) => {
+          note(kind, record as { data?: { state?: string; retention?: { bestEver?: { id?: string } } } });
+          return tx.insert(kind, record);
+        },
+        replace: async (kind, record, expected) => {
+          note(kind, record as { data?: { state?: string; retention?: { bestEver?: { id?: string } } } });
+          return tx.replace(kind, record, expected);
+        },
+      });
+    });
+    if (batch.length) this.batches.push(batch);
+    return result;
+  }
+}
+
+function auditScores(score: number, count = 50) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `customer-audit-${index}`,
+    score,
+  }));
+}
+
+async function seedBestEver(
+  x: ReturnType<typeof setup>,
+  score: number,
+  count = 50,
+) {
+  const now = "2026-02-01T00:00:00.000Z";
+  await x.loop.store.transaction(x.loop.namespace, async (tx) => {
+    await tx.insert("coordination", {
+      id: `target:${hash(x.workflow.policy.target)}`,
+      namespace: x.loop.namespace,
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+      format: 1,
+      data: {
+        retention: {
+          bestEver: { id: "seeded", score, items: auditScores(score, count) },
+          decisions: [],
+        },
+      },
+    });
+  });
+}
+
+test("a first promotion records not_measured and then the best-ever score", async () => {
+  const x = retentionReady([0.5], 0.05);
+  const controller = x.controller();
+  const result = await finishRetention(x, controller);
+  assert.equal(result.state, "completed", JSON.stringify(result));
+  const run = (await controller.getRun(result.runId!))!;
+  assert.equal(run.data.retention?.outcome, "not_measured");
+  assert.equal(run.data.retention?.lower, null);
+  assert.equal(run.data.retention?.margin, null);
+  assert.equal(run.data.retention?.items, null);
+  assert.equal(run.data.retention?.bestEverId, null);
+  const ledger = await retentionLedger(x);
+  assert.equal(ledger.bestEver?.score, 0.5);
+  assert.equal(ledger.bestEver?.id, run.data.selectedId);
+  assert.equal(ledger.decisions.at(-1)?.items, null);
+});
+
+test("retention regression blocks promotion and does not move best-ever", async () => {
+  const x = retentionReady([0.25], 0.05);
+  await seedBestEver(x, 1);
+  const result = await finishRetention(x, x.controller());
+  assert.equal(result.state, "no_improvement");
+  assert.equal(result.reason, "retention_regression");
+  assert.equal(x.registry.applications, 0);
+  const ledger = await retentionLedger(x);
+  assert.equal(ledger.bestEver?.id, "seeded");
+  assert.equal(ledger.bestEver?.score, 1);
+  assert.equal(ledger.decisions.at(-1)?.outcome, "retention_regression");
+  assert.ok((ledger.decisions.at(-1)?.lower ?? 0) < -0.05);
+  assert.equal((await targetLock(x)).consecutiveFailures, 1);
+});
+
+test("a passing promotion updates best-ever only when the control score is higher", async () => {
+  const x = retentionReady([0.5], 0.5);
+  await seedBestEver(x, 0.75);
+  const result = await finishRetention(x, x.controller());
+  assert.equal(result.state, "completed", JSON.stringify(result));
+  assert.equal(x.registry.applications, 1);
+  const ledger = await retentionLedger(x);
+  assert.equal(ledger.bestEver?.id, "seeded");
+  assert.equal(ledger.bestEver?.score, 0.75);
+  assert.equal(ledger.decisions.at(-1)?.outcome, "pass");
+});
+
+test("a rolled-back promotion never becomes best-ever", async () => {
+  const x = retentionReady([1], 0.05, 0.5);
+  await seedBestEver(x, 0.5);
+  const controller = x.controller();
+  let rising = await controller.tick("classification");
+  for (let i = 0; i < 8 && rising.state !== "observing" && rising.state !== "rolling_back"; i++)
+    rising = await controller.tick("classification");
+  assert.equal(rising.state, "observing", JSON.stringify(rising));
+  const promoted = (await controller.getRun(rising.runId!))!;
+  let ledger = await retentionLedger(x);
+  assert.equal(ledger.bestEver?.id, "seeded");
+  assert.equal(ledger.bestEver?.score, 0.5);
+  assert.notEqual(ledger.bestEver?.id, promoted.data.selectedId);
+  x.advance(2);
+  let rolled = await controller.tick("classification");
+  for (let i = 0; i < 4 && rolled.state !== "rolled_back"; i++)
+    rolled = await controller.tick("classification");
+  assert.equal(rolled.state, "rolled_back", JSON.stringify(rolled));
+  ledger = await retentionLedger(x);
+  assert.equal(ledger.bestEver?.id, "seeded");
+  assert.equal(ledger.bestEver?.score, 0.5);
+  assert.notEqual(ledger.bestEver?.id, promoted.data.selectedId);
+});
+
+test("completed state and the best-ever record are saved in one transaction", async () => {
+  const tracing = new TracingStore();
+  const x = retentionReady([1], 0.05, 0, tracing);
+  await seedBestEver(x, 0.5);
+  const result = await finishRetention(x, x.controller());
+  assert.equal(result.state, "completed", JSON.stringify(result));
+  const selected = (await x.controller().getRun(result.runId!))!.data.selectedId;
+  const saving = tracing.batches.filter(
+    (batch) =>
+      batch.some((write) => write.kind === "runs" && write.state === "completed") &&
+      batch.some((write) => write.kind === "coordination" && write.bestId === selected),
+  );
+  assert.equal(saving.length, 1);
+  const before = tracing.batches.indexOf(saving[0]!);
+  assert.equal(
+    tracing.batches.slice(0, before).some((batch) => batch.some((write) => write.bestId === selected)),
+    false,
+  );
+});
+
+test("retention status reads the coordination row a controller run wrote", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "retention-store-"));
+  const file = join(directory, "state.json");
+  const store = new JsonFileStore(file);
+  try {
+    const x = retentionReady([1], 0.05, 0, store);
+    const controller = x.controller();
+    const result = await finishRetention(x, controller);
+    assert.equal(result.state, "completed", JSON.stringify(result));
+    const selected = (await controller.getRun(result.runId!))!.data.selectedId!;
+    await store.close();
+    const repo = fileURLToPath(new URL("../..", import.meta.url));
+    const cli = fileURLToPath(new URL("../../dist/src/cli.js", import.meta.url));
+    const args = ["retention", "status", "--file", file, "--namespace", "test", "--json"];
+    const node = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8" });
+    const python = spawnSync("python3", ["-m", "loopiter", ...args], {
+      cwd: repo,
+      env: { ...process.env, PYTHONPATH: join(repo, "python/src") },
+      encoding: "utf8",
+    });
+    assert.equal(node.status, 0, node.stderr);
+    assert.equal(python.status, 0, python.stderr);
+    assert.equal(python.stdout, node.stdout);
+    const parsed = JSON.parse(node.stdout) as {
+      targets: { id: string; bestEver: { id: string; score: number } }[];
+    };
+    assert.equal(parsed.targets.length, 1);
+    assert.equal(parsed.targets[0]?.bestEver.id, selected);
+    assert.equal(parsed.targets[0]?.bestEver.score, 1);
+    assert.equal(parsed.targets[0]?.id.startsWith("target:"), true);
+  } finally {
+    await store.close().catch(() => {});
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an invalid best-ever record fails closed and is not replaced", async () => {
+  const x = retentionReady([1], 0.05);
+  const now = "2026-02-01T00:00:00.000Z";
+  await x.loop.store.transaction(x.loop.namespace, async (tx) => {
+    await tx.insert("coordination", {
+      id: `target:${hash(x.workflow.policy.target)}`,
+      namespace: x.loop.namespace,
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+      format: 1,
+      data: {
+        retention: {
+          bestEver: {
+            id: "bad",
+            score: 1,
+            items: [
+              { id: "customer-audit-0", score: 1 },
+              { id: "customer-audit-0", score: 1 },
+            ],
+          },
+          decisions: [],
+        },
+      },
+    });
+  });
+  const controller = x.controller();
+  let result = await controller.tick("classification");
+  for (let i = 0; i < 8 && result.reason !== "invalid_retention"; i++)
+    result = await controller.tick("classification");
+  assert.equal(result.reason, "invalid_retention");
+  assert.match(result.detail ?? "", /Duplicate retention best-ever item id/);
+  assert.equal(x.registry.applications, 0);
+  const rows = await x.loop.list("coordination", { limit: 1000 });
+  const target = rows.items.find((row) => String(row.id).startsWith("target:"));
+  const kept = target?.data.retention as { bestEver?: { id?: string } };
+  assert.equal(kept.bestEver?.id, "bad");
+});
+
+test("too few overlapping items is insufficient and does not deploy", async () => {
+  const x = retentionReady([0.5], 0.05);
+  await seedBestEver(x, 1, 2);
+  const result = await finishRetention(x, x.controller());
+  assert.equal(result.state, "waiting_for_evidence");
+  assert.equal(result.reason, "insufficient_decisive");
+  assert.equal(x.registry.applications, 0);
+  const run = (await x.controller().getRun(result.runId!))!;
+  assert.equal(run.data.retention?.outcome, "insufficient");
+  assert.equal(run.data.retention?.lower, null);
+  assert.equal(run.data.retention?.items, 2);
+  const ledger = await retentionLedger(x);
+  assert.equal(ledger.bestEver?.score, 1);
+  assert.equal((await targetLock(x)).consecutiveFailures ?? 0, 0);
+});
+
+async function finishRetention(
+  x: ReturnType<typeof setup>,
+  controller: ImprovementController,
+) {
+  let result = await controller.tick("classification");
+  for (
+    let i = 0;
+    i < 10 &&
+    !["completed", "no_improvement", "rolled_back", "waiting_for_evidence"].includes(result.state);
+    i++
+  ) {
+    if (result.state === "observing") x.advance(2);
+    result = await controller.tick("classification");
+  }
+  return result;
+}
+
+async function retentionLedger(x: ReturnType<typeof setup>) {
+  const lock = await targetLock(x);
+  return (lock.retention ?? { bestEver: null, decisions: [] }) as {
+    bestEver: { id: string; score: number } | null;
+    decisions: { outcome: string; lower: number | null; items: number | null }[];
+  };
+}
+
+async function targetLock(x: ReturnType<typeof setup>) {
+  const rows = await x.loop.list("coordination", { limit: 1000 });
+  const target = rows.items.find((row) => String(row.id).startsWith("target:"));
+  return (target?.data ?? {}) as {
+    consecutiveFailures?: number;
+    retention?: unknown;
+  };
+}
 
 test("autonomous fails closed without audit, budget, or enable", async () => {
   const disabled = setup();

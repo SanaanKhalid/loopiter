@@ -27,6 +27,10 @@ export function fixtureEvalLockPath(taskId: string): string {
   return join(repoRoot(import.meta.url), "benchmarks", taskId, "fixtures.eval.lock.json");
 }
 
+export function fixtureTrainSuitePath(taskId: string): string {
+  return join(repoRoot(import.meta.url), "benchmarks", taskId, "fixtures.train.json");
+}
+
 export function pinnedEvalLockPath(taskId: string): string {
   return join(repoRoot(import.meta.url), "benchmarks", taskId, "pinned-eval.lock.json");
 }

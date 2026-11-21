@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from test_core import Registry
 
@@ -16,6 +17,7 @@ from loopiter.eval_lock import (
     lock_eval_set,
     verify_eval_lock,
 )
+from loopiter.improvement_evidence import prepare_dataset
 
 ROOT = Path(__file__).resolve().parents[2]
 RICH = {
@@ -115,6 +117,31 @@ class EvalLockTests(unittest.TestCase):
         self.assertTrue(capped["truncated"])
         self.assertEqual(len(capped["ids"]), EVAL_REPORT_ID_CAP)
 
+    def test_control_separators_stay_in_the_content_hash(self):
+        controls = "\u001c\u001d\u001e\u001f\u0085"
+        report = check_eval_leakage(
+            {"items": [{"id": "k", "input": f"{controls}foo{controls}", "expected": "a"}]},
+            {"items": [{"id": "s", "input": "foo", "expected": "a"}]},
+            ["input"],
+        )
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["contentOverlapCount"], 0)
+
+    def test_proto_key_is_part_of_the_hash(self):
+        original = {
+            "items": [
+                {"id": "p", "input": {"__proto__": {"edited": False}, "keep": 1}, "expected": "ok"}
+            ]
+        }
+        edited = {
+            "items": [
+                {"id": "p", "input": {"__proto__": {"edited": True}, "keep": 1}, "expected": "ok"}
+            ]
+        }
+        drifted = verify_eval_lock(edited, lock_eval_set(original))
+        self.assertFalse(drifted["ok"])
+        self.assertEqual(drifted["changed"], 1)
+
     def test_cli_exit_codes(self):
         with tempfile.TemporaryDirectory() as directory:
             suite = Path(directory) / "suite.json"
@@ -174,31 +201,38 @@ class EvalLockTests(unittest.TestCase):
 
 
 class EvalLockControllerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_lock_is_required_only_when_set(self):
-        open_run = await self.tick(None)
-        self.assertGreater(open_run["dataset"], 0)
-        self.assertNotEqual(open_run["reason"], "eval_lock_drift")
-        suite = {"items": [{"id": "e", "input": "q", "expected": "a"}]}
-        lock = lock_eval_set(suite)
-        matched = await self.tick({"suite": suite, "lock": lock})
-        self.assertGreater(matched["dataset"], 0)
-        drifted = await self.tick(
-            {
-                "suite": {"items": [{"id": "e", "input": "q", "expected": "changed"}]},
-                "lock": lock,
-            }
-        )
-        self.assertEqual(drifted["dataset"], 0)
-        self.assertEqual(drifted["artifact"], 0)
-        self.assertEqual(drifted["reason"], "eval_lock_drift")
+    async def test_changed_eval_rows_stop_before_a_model_or_evaluator_call(self):
+        with patch("loopiter._validation.now", lambda: "2026-02-01T00:00:00Z"):
+            open_run = await self.tick(None)
+            self.assertGreater(open_run["dataset"], 0)
+            self.assertGreater(open_run["propose"], 0)
+            self.assertNotEqual(open_run["reason"], "eval_lock_drift")
+            policy = snake(
+                json.loads(
+                    (Path(__file__).parent / "fixtures" / "autonomy.json").read_text(
+                        encoding="utf-8"
+                    )
+                )["policy"]
+            )
+            lock = lock_eval_set(eval_rows(sample_dataset(), policy))
+            matched = await self.tick({"lock": lock})
+            self.assertGreater(matched["propose"], 0)
+            changed = sample_dataset()
+            changed["validation"][0]["label"] = "changed-eval-label"
+            drifted = await self.tick({"lock": lock}, changed)
+            self.assertEqual(drifted["dataset"], 1)
+            self.assertEqual(drifted["propose"], 0)
+            self.assertEqual(drifted["evaluate"], 0)
+            self.assertEqual(drifted["reason"], "eval_lock_drift")
 
-    async def tick(self, require_eval_lock):
+    async def tick(self, require_eval_lock, data=None):
         policy = snake(
             json.loads(
                 (Path(__file__).parent / "fixtures" / "autonomy.json").read_text(encoding="utf-8")
             )["policy"]
         )
-        calls = {"dataset": 0, "artifact": 0}
+        calls = {"dataset": 0, "artifact": 0, "propose": 0, "evaluate": 0}
+        rows = data if data is not None else sample_dataset()
 
         async def artifact(_):
             calls["artifact"] += 1
@@ -206,15 +240,18 @@ class EvalLockControllerTests(unittest.IsolatedAsyncioTestCase):
 
         async def dataset(_):
             calls["dataset"] += 1
-            return sample_dataset()
+            return rows
 
         async def propose(_, ctx):
+            calls["propose"] += 1
+
             async def request():
                 return {"value": [{"score": 0.9}], "tokens": 10}
 
             return await ctx.meter(100, request)
 
         async def evaluate(_input, _ctx):
+            calls["evaluate"] += 1
             return {"cases": [], "metrics": {"errors": 0}, "estimated_serving_cost": 0}
 
         async def observe(_input, _ctx):
@@ -259,6 +296,17 @@ def snake(value):
             for key, child in value.items()
         }
     return value
+
+
+def eval_rows(data, policy):
+    prepared = prepare_dataset(data, policy, "2026-02-01T00:00:00Z")
+    return {
+        "items": [
+            {"id": row["id"], "input": row["input"], "expected": row["label"]}
+            for name in ("validation", "audit")
+            for row in prepared[name]
+        ]
+    }
 
 
 def sample_dataset():

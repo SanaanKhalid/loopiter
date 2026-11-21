@@ -12,6 +12,7 @@ import type {
   AutonomyPolicy,
   CallbackContext,
   Comparison,
+  DatasetSnapshot,
   ImprovementControllerOptions,
   ImprovementRun,
   ImprovementRunData,
@@ -21,14 +22,35 @@ import type {
   TickResult,
 } from "./improvement-contracts.js";
 import {
+  loadRetentionLedger,
+  nextBestEver,
+  rememberRetentionDecision,
+  type RetentionDecision,
+  type RetentionLedger,
+} from "./acceptance-gate.js";
+import {
   compare,
   minimumCertifiableAuditUnits,
   passesGates,
   prepareDataset,
+  promotionRetention,
   validateChange,
   validatePolicy,
 } from "./improvement-evidence.js";
-import { readEvalLock, readEvalSuite, verifyEvalLock } from "./eval-lock.js";
+import { readEvalLock, verifyEvalLock } from "./eval-lock.js";
+
+function evalLockSplits(
+  splits: readonly ("validation" | "audit")[] | undefined,
+): readonly ("validation" | "audit")[] {
+  const selected = splits ?? ["validation", "audit"];
+  if (
+    selected.length === 0 ||
+    selected.some((split) => split !== "validation" && split !== "audit") ||
+    new Set(selected).size !== selected.length
+  )
+    fail("invalid_input", "requireEvalLock splits must be validation or audit.");
+  return selected;
+}
 import { redactCapture } from "./integrations/privacy.js";
 import {
   cancellable,
@@ -310,14 +332,21 @@ export class ImprovementController {
       );
     }
     if (options.requireEvalLock !== undefined) {
-      readEvalSuite(options.requireEvalLock.suite);
       readEvalLock(options.requireEvalLock.lock);
+      evalLockSplits(options.requireEvalLock.splits);
     }
   }
-  private assertRequiredEvalLock(): void {
+  private assertRequiredEvalLock(dataset: DatasetSnapshot): void {
     const required = this.options.requireEvalLock;
     if (!required) return;
-    const report = verifyEvalLock(required.suite, required.lock);
+    const items = evalLockSplits(required.splits).flatMap((split) =>
+      dataset[split].map((row) => ({
+        id: row.id,
+        input: row.input,
+        expected: row.label,
+      })),
+    );
+    const report = verifyEvalLock({ items }, required.lock);
     if (!report.ok)
       fail(
         "eval_lock_drift",
@@ -636,14 +665,17 @@ export class ImprovementController {
             ...((lock.data.previousOutcomes ?? []) as JsonValue[]),
             { state: data.state, reason: data.reason },
           ].slice(-10);
-          await this.put(tx, "coordination", key, {
+          const nextLock: JsonObject = {
             ...lock.data,
             activeRun: null,
             consecutiveFailures,
             consecutiveTimeouts,
             previousOutcomes,
             nextEligibleAt: plus(this.loop.now(), w.policy.cooldownMs),
-          });
+          };
+          const retention = retainedLedger(w, data, lock.data.retention);
+          if (retention) nextLock.retention = retention as unknown as JsonValue;
+          await this.put(tx, "coordination", key, nextLock);
         }
       }
       return this.parse(row);
@@ -988,7 +1020,6 @@ export class ImprovementController {
         const next = lock.target?.data.nextEligibleAt;
         if (typeof next === "string" && next > this.loop.now())
           return idle("cooldown", "waiting_for_evidence", next);
-        this.assertRequiredEvalLock();
         const baseline = await this.plain(w, (c) => w.artifact(c), signal2);
         this.baseline(baseline);
         const dataset = prepareDataset(
@@ -996,6 +1027,7 @@ export class ImprovementController {
           w.policy,
           this.loop.now(),
         );
+        this.assertRequiredEvalLock(dataset);
         if (mode === "observe") return idle("observation_only");
         if (
           dataset.optimization.length < w.policy.minimumNewUnits ||
@@ -1426,36 +1458,31 @@ export class ImprovementController {
             state: "completed",
             reason: "experiment_only",
           });
-        else {
-          const current = await this.plain(w, (c) => w.artifact(c), signal2);
-          this.baseline(current);
-          if (hash(current) !== hash(d.baseline))
-            fail("stale_baseline", "Serving baseline changed.");
-          await this.loop.store.transaction(this.loop.namespace, async (tx) => {
-            await this.owned(tx, rid, owner);
-            const opId = `${rid}:deployment_budget`;
-            if (!(await this.read(tx, "operations", opId))) {
-              await this.reserve(tx, w, 0, 0, 1);
-              await this.put(tx, "operations", opId, {
-                status: "completed",
-                result: true,
-              });
-            }
-          });
-          const evaluated = (await this.loop.getCandidate(cid))!;
-          if (evaluated.status === "evaluated")
-            await this.loop.approveCandidate(cid, {
-              actor: "loopiter/autonomous",
-              evaluationId: auditEvaluation.id,
-              authorization: { runId: rid, leaseOwner: owner },
+        else if (w.policy.objective.retention) {
+          const retention = promotionRetention(
+            w.policy,
+            audit.cases,
+            (await this.retentionLedger(w)).bestEver,
+          );
+          if (retention.outcome === "retention_regression") {
+            run = await this.save(rid, owner, {
+              audit,
+              retention,
+              state: "no_improvement",
+              reason: "retention_regression",
             });
-          run = await this.save(rid, owner, {
-            audit,
-            state: "deploying",
-            reason: "audit_passed",
-            attemptId: `${rid}:apply`,
-            operation: "apply",
-          });
+          } else if (retention.outcome === "insufficient") {
+            run = await this.save(rid, owner, {
+              audit,
+              retention,
+              state: "waiting_for_evidence",
+              reason: "insufficient_decisive",
+            });
+          } else {
+            run = await this.deployPassedAudit(rid, owner, w, audit, signal2, retention);
+          }
+        } else {
+          run = await this.deployPassedAudit(rid, owner, w, audit, signal2);
         }
       } else if (
         (["deploying", "rolling_back", "reconciliation_required"].includes(
@@ -2033,4 +2060,92 @@ export class ImprovementController {
       });
     }
   }
+  private async deployPassedAudit(
+    rid: string,
+    owner: string,
+    w: ImprovementWorkflow,
+    audit: Comparison,
+    signal: AbortSignal,
+    retention?: RetentionDecision,
+  ) {
+    const currentRun = (await this.getRun(rid))!;
+    const current = await this.plain(w, (c) => w.artifact(c), signal);
+    this.baseline(current);
+    if (hash(current) !== hash(currentRun.data.baseline))
+      fail("stale_baseline", "Serving baseline changed.");
+    await this.loop.store.transaction(this.loop.namespace, async (tx) => {
+      await this.owned(tx, rid, owner);
+      const opId = `${rid}:deployment_budget`;
+      if (!(await this.read(tx, "operations", opId))) {
+        await this.reserve(tx, w, 0, 0, 1);
+        await this.put(tx, "operations", opId, {
+          status: "completed",
+          result: true,
+        });
+      }
+    });
+    const cid = currentRun.data.selectedId!;
+    const evaluated = (await this.loop.getCandidate(cid))!;
+    if (evaluated.status === "evaluated")
+      await this.loop.approveCandidate(cid, {
+        actor: "loopiter/autonomous",
+        evaluationId: currentRun.data.auditEvaluationId!,
+        authorization: { runId: rid, leaseOwner: owner },
+      });
+    return this.save(rid, owner, {
+      audit,
+      ...(retention ? { retention } : {}),
+      state: "deploying",
+      reason: "audit_passed",
+      attemptId: `${rid}:apply`,
+      operation: "apply",
+    });
+  }
+  private async retentionLedger(w: ImprovementWorkflow): Promise<RetentionLedger> {
+    const row = await this.loop.store.transaction(this.loop.namespace, (tx) =>
+      this.read(tx, "coordination", this.targetKey(w)),
+    );
+    try {
+      return loadRetentionLedger(row?.data.retention);
+    } catch (error) {
+      fail(
+        "invalid_retention",
+        error instanceof Error ? error.message : "Invalid retention ledger.",
+      );
+    }
+  }
+}
+
+function retainedLedger(
+  w: ImprovementWorkflow,
+  data: ImprovementRunData,
+  stored: unknown,
+): RetentionLedger | undefined {
+  const retention = data.retention;
+  if (!w.policy.objective.retention || !retention || !data.selectedId || !data.audit)
+    return undefined;
+  const finished =
+    data.state === "completed" &&
+    data.reason !== "experiment_only" &&
+    (retention.outcome === "pass" || retention.outcome === "not_measured");
+  const blocked =
+    data.reason === "retention_regression" ||
+    (data.state === "waiting_for_evidence" && retention.outcome === "insufficient");
+  if (!finished && !blocked) return undefined;
+  let ledger = rememberRetentionDecision(loadRetentionLedger(stored), {
+    ...retention,
+    candidateId: data.selectedId,
+  });
+  if (finished) {
+    ledger = {
+      ...ledger,
+      bestEver: nextBestEver({
+        current: ledger.bestEver,
+        candidateId: data.selectedId,
+        items: data.audit.cases.map((row) => ({ id: row.id, score: row.candidate })),
+        direction: w.policy.objective.direction,
+      }),
+    };
+  }
+  return ledger;
 }

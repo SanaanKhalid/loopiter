@@ -479,19 +479,33 @@ function normalizeValue(value: JsonValue): JsonValue {
   if (typeof value === "string") return normalizeText(value);
   if (Array.isArray(value)) return value.map((item) => normalizeValue(item));
   if (value !== null && typeof value === "object") {
-    const next: Record<string, JsonValue> = {};
+    const next = Object.create(null) as Record<string, JsonValue>;
     for (const key of Object.keys(value)) next[key] = normalizeValue(value[key]!);
     return next;
   }
   return value;
 }
 
+/** The only characters treated as whitespace. Trim uses this set, not String.trim. */
+const WHITESPACE_CODES = new Set<number>([
+  0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0x00a0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff,
+]);
+for (let code = 0x2000; code <= 0x200a; code += 1) WHITESPACE_CODES.add(code);
+
 function normalizeText(value: string): string {
   assertUnicode(value);
-  return value
-    .normalize("NFC")
-    .replace(/[ \t\n\v\f\r\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/gu, " ")
-    .trim();
+  let text = "";
+  let pending = false;
+  for (const character of value.normalize("NFC")) {
+    if (WHITESPACE_CODES.has(character.codePointAt(0)!)) {
+      pending = true;
+      continue;
+    }
+    if (pending && text.length > 0) text += " ";
+    pending = false;
+    text += character;
+  }
+  return text;
 }
 
 function capIds(ids: string[]): { ids: string[]; truncated: boolean } {
@@ -554,7 +568,7 @@ function jsonValue(value: unknown, seen = new Set<object>()): JsonValue {
     fail("invalid_input", "Eval set contains a value that is not JSON.");
   if (seen.has(value)) fail("invalid_input", "Eval set contains a value that is not JSON.");
   seen.add(value);
-  const next: Record<string, JsonValue> = {};
+  const next = Object.create(null) as Record<string, JsonValue>;
   for (const key of Object.keys(value)) {
     assertUnicode(key);
     next[key] = jsonValue((value as Record<string, unknown>)[key], seen);

@@ -1,3 +1,4 @@
+import type { RetentionDecision } from "./acceptance-gate.js";
 import type {
   ArtifactBaseline,
   CandidateTarget,
@@ -6,7 +7,7 @@ import type {
   JsonObject,
   RecordBase,
 } from "./contracts.js";
-import type { EvalLock, EvalSuite } from "./eval-lock.js";
+import type { EvalLock } from "./eval-lock.js";
 
 export type ImprovementMode =
   | "observe"
@@ -77,6 +78,12 @@ export interface AutonomyPolicy {
      * Only valid with confidence acceptance.
      */
     noiseFloor?: { validation?: boolean; audit?: boolean };
+    /**
+     * Block a promotion whose control scores regress past the best-ever
+     * record by more than `margin`, at the gate's paired bootstrap.
+     * Omitted leaves the check off. Only valid with confidence acceptance.
+     */
+    retention?: { margin: number; confidence?: number };
   };
   guardrails: MetricGate[];
   trustedSources: string[];
@@ -270,6 +277,11 @@ export interface ImprovementRunData {
   stepTimeouts?: number;
   /** Redacted, truncated text from a failed callback. Absent on a clean tick. */
   detail?: string;
+  /**
+   * Retention check recorded when a candidate would be promoted.
+   * Absent when the policy omits retention. Nulls, never 0, when not measured.
+   */
+  retention?: RetentionDecision;
   /** Recorded when a confidence check waits instead of rejecting the candidate. */
   acceptance?: {
     split: "validation" | "audit";
@@ -309,10 +321,15 @@ export interface ImprovementControllerOptions {
   mode?: ImprovementMode;
   workflows: ImprovementWorkflow[];
   /**
-   * When set, a new run starts only if this eval lock still matches the suite.
+   * When set, the loaded validation and audit rows are checked against this
+   * lock after the dataset is read and before a model or evaluator call.
    * Omitted leaves the check off.
    */
-  requireEvalLock?: { suite: EvalSuite; lock: EvalLock };
+  requireEvalLock?: {
+    lock: EvalLock;
+    /** Defaults to validation and audit. */
+    splits?: readonly ("validation" | "audit")[];
+  };
   /** Per-step callback deadline. `stepTimeoutMs` wins when both are set. */
   callbackTimeoutMs?: number;
   stepTimeoutMs?: number;

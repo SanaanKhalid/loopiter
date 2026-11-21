@@ -19,19 +19,33 @@ from typing import Any
 from uuid import uuid4
 
 from . import _validation as v
+from .acceptance_gate import load_retention_ledger, next_best_ever, remember_retention_decision
 from .client import FeedbackLoop, _callback
-from .eval_lock import read_eval_lock, read_eval_suite, verify_eval_lock
+from .eval_lock import read_eval_lock, verify_eval_lock
 from .improvement_evidence import (
     compare,
     minimum_certifiable_audit_units,
     passes_gates,
     prepare_dataset,
+    promotion_retention,
     validate_change,
     validate_policy,
 )
 
 TERMINAL = {"completed", "no_improvement", "failed", "timed_out", "rolled_back"}
 _DISABLE_OFF = {"0", "false", "no", "off"}
+
+
+def _eval_lock_splits(splits):
+    selected = ["validation", "audit"] if splits is None else splits
+    if (
+        type(selected) is not list
+        or not selected
+        or any(name not in ("validation", "audit") for name in selected)
+        or len(set(selected)) != len(selected)
+    ):
+        v.fail("invalid_input", "require_eval_lock splits must be validation or audit.")
+    return selected
 
 
 def _audit_notes(policy, gate):
@@ -288,17 +302,21 @@ class ImprovementController:
             )
         self.require_eval_lock = None
         if require_eval_lock is not None:
-            if not isinstance(require_eval_lock, dict):
-                v.fail("invalid_input", "require_eval_lock must be an object.")
-            read_eval_suite(require_eval_lock.get("suite"))
-            read_eval_lock(require_eval_lock.get("lock"))
+            if not isinstance(require_eval_lock, dict) or "lock" not in require_eval_lock:
+                v.fail("invalid_input", "require_eval_lock requires a lock.")
+            read_eval_lock(require_eval_lock["lock"])
+            _eval_lock_splits(require_eval_lock.get("splits"))
             self.require_eval_lock = require_eval_lock
 
-    def _assert_eval_lock(self):
+    def _assert_eval_lock(self, dataset):
         required = self.require_eval_lock
         if not required:
             return
-        report = verify_eval_lock(required["suite"], required["lock"])
+        items = []
+        for name in _eval_lock_splits(required.get("splits")):
+            for row in dataset[name]:
+                items.append({"id": row["id"], "input": row["input"], "expected": row["label"]})
+        report = verify_eval_lock({"items": items}, required["lock"])
         if not report["ok"]:
             v.fail(
                 "eval_lock_drift",
@@ -554,22 +572,21 @@ class ImprovementController:
                     else:
                         failures = lock["data"].get("consecutive_failures", 0) + 1
                         timeouts = lock["data"].get("consecutive_timeouts", 0)
-                    await self._put(
-                        tx,
-                        "coordination",
-                        self._target(w),
-                        {
-                            **lock["data"],
-                            "active_run": None,
-                            "consecutive_failures": failures,
-                            "consecutive_timeouts": timeouts,
-                            "previous_outcomes": [
-                                *lock["data"].get("previous_outcomes", []),
-                                {"state": data["state"], "reason": data["reason"]},
-                            ][-10:],
-                            "next_eligible_at": _plus(self.loop.now(), w.policy["cooldown_ms"]),
-                        },
-                    )
+                    next_lock = {
+                        **lock["data"],
+                        "active_run": None,
+                        "consecutive_failures": failures,
+                        "consecutive_timeouts": timeouts,
+                        "previous_outcomes": [
+                            *lock["data"].get("previous_outcomes", []),
+                            {"state": data["state"], "reason": data["reason"]},
+                        ][-10:],
+                        "next_eligible_at": _plus(self.loop.now(), w.policy["cooldown_ms"]),
+                    }
+                    retained = _retained_ledger(w, data, lock["data"].get("retention"))
+                    if retained is not None:
+                        next_lock["retention"] = retained
+                    await self._put(tx, "coordination", self._target(w), next_lock)
             return self._parse(row)
 
     async def _operation(self, run, owner, kind, fn, recovery=False):
@@ -879,10 +896,10 @@ class ImprovementController:
                     lock["next_eligible_at"]
                 ) > v.timestamp(self.loop.now()):
                     return await self._idle(w, "cooldown", next_time=lock["next_eligible_at"])
-                self._assert_eval_lock()
                 baseline = await self._plain(w, w.artifact)
                 v.baseline(baseline)
                 dataset = prepare_dataset(await self._plain(w, w.dataset), p, self.loop.now())
+                self._assert_eval_lock(dataset)
                 if self.mode == "observe":
                     return await self._idle(w, "observation_only")
                 if any(
@@ -1324,38 +1341,36 @@ class ImprovementController:
                 await self._save(
                     rid, owner, {"audit": audit, "state": "completed", "reason": "experiment_only"}
                 )
-            else:
-                current = await self._plain(w, w.artifact)
-                v.baseline(current)
-                if current != d["baseline"]:
-                    v.fail("stale_baseline", "Serving baseline changed.")
-                async with self._tx() as tx:
-                    await self._owned(tx, rid, owner)
-                    opid = rid + ":deployment_budget"
-                    if not await self._read(tx, "operations", opid):
-                        await self._reserve(tx, w, 0, 0, 1)
-                        await self._put(
-                            tx, "operations", opid, {"status": "completed", "result": True}
-                        )
-                candidate = await self.loop.get_candidate(cid)
-                if candidate["status"] == "evaluated":
-                    await self.loop.approve_candidate(
-                        cid,
-                        actor="loopiter/autonomous",
-                        authorization={"run_id": rid, "lease_owner": owner},
-                        evaluation_id=audit_evaluation["id"],
-                    )
-                await self._save(
-                    rid,
-                    owner,
-                    {
-                        "audit": audit,
-                        "state": "deploying",
-                        "reason": "audit_passed",
-                        "attempt_id": rid + ":apply",
-                        "operation": "apply",
-                    },
+            elif p["objective"].get("retention"):
+                retention = promotion_retention(
+                    p, audit["cases"], (await self._retention_ledger(w))["best_ever"]
                 )
+                if retention["outcome"] == "retention_regression":
+                    await self._save(
+                        rid,
+                        owner,
+                        {
+                            "audit": audit,
+                            "retention": retention,
+                            "state": "no_improvement",
+                            "reason": "retention_regression",
+                        },
+                    )
+                elif retention["outcome"] == "insufficient":
+                    await self._save(
+                        rid,
+                        owner,
+                        {
+                            "audit": audit,
+                            "retention": retention,
+                            "state": "waiting_for_evidence",
+                            "reason": "insufficient_decisive",
+                        },
+                    )
+                else:
+                    await self._deploy_passed_audit(rid, owner, w, audit, retention)
+            else:
+                await self._deploy_passed_audit(rid, owner, w, audit, None)
         elif (
             d["state"] in ("deploying", "rolling_back", "reconciliation_required")
             or (d["state"] == "paused" and d.get("operation") == "apply")
@@ -1703,3 +1718,81 @@ class ImprovementController:
                 v.nonempty(key, "control unit")
             if len(set(control)) != len(control) or set(control) & set(o["unit_ids"]):
                 v.fail("invalid_observation", "Canary/control units overlap.")
+
+    async def _deploy_passed_audit(self, rid, owner, w, audit, retention):
+        current_run = await self.get_run(rid)
+        current = await self._plain(w, w.artifact)
+        v.baseline(current)
+        if current != current_run["data"]["baseline"]:
+            v.fail("stale_baseline", "Serving baseline changed.")
+        async with self._tx() as tx:
+            await self._owned(tx, rid, owner)
+            opid = rid + ":deployment_budget"
+            if not await self._read(tx, "operations", opid):
+                await self._reserve(tx, w, 0, 0, 1)
+                await self._put(tx, "operations", opid, {"status": "completed", "result": True})
+        cid = current_run["data"]["selected_id"]
+        candidate = await self.loop.get_candidate(cid)
+        if candidate["status"] == "evaluated":
+            await self.loop.approve_candidate(
+                cid,
+                actor="loopiter/autonomous",
+                authorization={"run_id": rid, "lease_owner": owner},
+                evaluation_id=current_run["data"]["audit_evaluation_id"],
+            )
+        patch = {
+            "audit": audit,
+            "state": "deploying",
+            "reason": "audit_passed",
+            "attempt_id": rid + ":apply",
+            "operation": "apply",
+        }
+        if retention is not None:
+            patch["retention"] = retention
+        await self._save(rid, owner, patch)
+
+    async def _retention_ledger(self, w):
+        async with self._tx() as tx:
+            row = await self._read(tx, "coordination", self._target(w))
+        try:
+            return load_retention_ledger(None if row is None else row["data"].get("retention"))
+        except ValueError as error:
+            v.fail("invalid_retention", str(error))
+
+
+def _retained_ledger(w, data, stored):
+    retention = data.get("retention")
+    if (
+        not w.policy["objective"].get("retention")
+        or not retention
+        or not data.get("selected_id")
+        or not data.get("audit")
+    ):
+        return None
+    finished = (
+        data.get("state") == "completed"
+        and data.get("reason") != "experiment_only"
+        and retention["outcome"] in ("pass", "not_measured")
+    )
+    blocked = data.get("reason") == "retention_regression" or (
+        data.get("state") == "waiting_for_evidence" and retention["outcome"] == "insufficient"
+    )
+    if not finished and not blocked:
+        return None
+    ledger = remember_retention_decision(
+        load_retention_ledger(stored),
+        {**retention, "candidate_id": data["selected_id"]},
+    )
+    if finished:
+        ledger = {
+            **ledger,
+            "best_ever": next_best_ever(
+                current=ledger["best_ever"],
+                candidate_id=data["selected_id"],
+                items=[
+                    {"id": row["id"], "score": row["candidate"]} for row in data["audit"]["cases"]
+                ],
+                direction=w.policy["objective"]["direction"],
+            ),
+        }
+    return ledger

@@ -3,7 +3,15 @@
  * Checks that were not recorded stay null. A missing count is null, not 0.
  */
 import { readFileSync } from "node:fs";
-import { MAX_BOOTSTRAP_SAMPLES, minimumDecisiveFloor, DEFAULT_GATE } from "./acceptance-gate.js";
+import {
+  MAX_BOOTSTRAP_SAMPLES,
+  minimumDecisiveFloor,
+  DEFAULT_GATE,
+  loadRetentionLedger,
+  type RetentionDecision,
+  type RetentionItemScore,
+  type RetentionLedger,
+} from "./acceptance-gate.js";
 
 export interface ExplainedNoise {
   value: number | null;
@@ -25,6 +33,29 @@ export interface ExplainedCheck {
   noiseFloor: ExplainedNoise;
   effectiveThreshold: number | null;
   bindingThreshold: "minimum_effect" | "noise_floor" | "tie" | null;
+  retention: ExplainedRetention;
+}
+
+export interface ExplainedRetention {
+  outcome: RetentionDecision["outcome"];
+  reason: string;
+  bestEverId: string | null;
+  lower: number | null;
+  margin: number | null;
+  items: number | null;
+}
+
+export interface RetentionStatus {
+  bestEver: { id: string; score: number; items: RetentionItemScore[] } | null;
+  decisions: (ExplainedRetention & { candidateId: string })[];
+}
+
+export interface RetentionTargetStatus extends RetentionStatus {
+  id: string;
+}
+
+export interface RetentionReport {
+  targets: RetentionTargetStatus[];
 }
 
 export interface ExplainedCandidate {
@@ -208,6 +239,11 @@ function explainDecision(
     noiseFloor: readNoise(decision.noiseFloor, seed, round),
     effectiveThreshold: readEffective(decision.effectiveThreshold, seed, round),
     bindingThreshold: readBinding(decision.bindingThreshold, seed, round),
+    retention: readRetention(
+      (decision as { retention?: unknown }).retention,
+      seed,
+      round,
+    ),
   };
 }
 
@@ -283,6 +319,73 @@ function notMeasuredNoise(): ExplainedNoise {
   return { value: null, method: "not_measured", items: null, calls: null };
 }
 
+function notMeasuredRetentionView(): ExplainedRetention {
+  return {
+    outcome: "not_measured",
+    reason: "not_measured",
+    bestEverId: null,
+    lower: null,
+    margin: null,
+    items: null,
+  };
+}
+
+function readRetention(value: unknown, seed: number, round: number): ExplainedRetention {
+  if (value === undefined || value === null) return notMeasuredRetentionView();
+  return readRetentionFields(value, `Seed ${seed} round ${round}`);
+}
+
+function readRetentionFields(value: unknown, where: string): ExplainedRetention {
+  if (!value || typeof value !== "object")
+    throw new Error(`${where} has a malformed retention check.`);
+  const row = value as {
+    outcome?: unknown;
+    reason?: unknown;
+    bestEverId?: unknown;
+    lower?: unknown;
+    margin?: unknown;
+    items?: unknown;
+  };
+  if (typeof row.outcome !== "string" || !RETENTION_OUTCOMES.has(row.outcome))
+    throw new Error(`${where} has an unknown retention outcome.`);
+  if (typeof row.reason !== "string")
+    throw new Error(`${where} has a malformed retention check.`);
+  if (row.outcome === "not_measured") {
+    if (row.bestEverId != null || row.lower != null || row.margin != null || row.items != null)
+      throw new Error(`${where} records an unmeasured retention check as a number.`);
+    return notMeasuredRetentionView();
+  }
+  if (row.bestEverId !== null && typeof row.bestEverId !== "string")
+    throw new Error(`${where} has a malformed best-ever id.`);
+  const items = row.items;
+  if (typeof items !== "number" || !Number.isInteger(items) || items < 1)
+    throw new Error(`${where} has an invalid retention item count.`);
+  const margin = row.margin;
+  if (typeof margin !== "number" || !Number.isFinite(margin))
+    throw new Error(`${where} has a non-finite retention margin.`);
+  if (row.outcome === "insufficient") {
+    if (row.lower != null) throw new Error(`${where} records an unused retention bound.`);
+    return {
+      outcome: "insufficient",
+      reason: row.reason,
+      bestEverId: typeof row.bestEverId === "string" ? row.bestEverId : null,
+      lower: null,
+      margin,
+      items,
+    };
+  }
+  if (typeof row.lower !== "number" || !Number.isFinite(row.lower))
+    throw new Error(`${where} has a non-finite retention lower bound.`);
+  return {
+    outcome: row.outcome as "pass" | "retention_regression",
+    reason: row.reason,
+    bestEverId: typeof row.bestEverId === "string" ? row.bestEverId : null,
+    lower: row.lower,
+    margin,
+    items,
+  };
+}
+
 function noiseCount(value: unknown, seed: number, round: number, name: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
     throw new Error(`Seed ${seed} round ${round} has an invalid ${name} count.`);
@@ -337,7 +440,152 @@ function formatCheck(
     `calls ${show(check.noiseFloor.calls)}`,
     `effective ${show(check.effectiveThreshold)}`,
     `binding ${check.bindingThreshold ?? "null"}`,
+    `retention ${check.retention.outcome}`,
+    `retentionReason ${showText(check.retention.reason)}`,
+    `bestEver ${check.retention.bestEverId === null ? "null" : showText(check.retention.bestEverId)}`,
+    `retentionLower ${show(check.retention.lower)}`,
+    `margin ${show(check.retention.margin)}`,
+    `retentionItems ${show(check.retention.items)}`,
   ].join(" ");
+}
+
+const RETENTION_OUTCOMES = new Set(["pass", "retention_regression", "insufficient", "not_measured"]);
+
+export function emptyRetentionStatus(): RetentionStatus {
+  return { bestEver: null, decisions: [] };
+}
+
+/** Read coordination retention rows from a v3 state file. Does not write. */
+export function retentionReportFromState(text: string, namespace: string): RetentionReport {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("State file is not JSON.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error("State file is not a v3 store.");
+  const file = parsed as { version?: unknown; namespaces?: unknown };
+  if (file.version !== 3 || !file.namespaces || typeof file.namespaces !== "object" || Array.isArray(file.namespaces))
+    throw new Error("State file is not a v3 store.");
+  const bucket = (file.namespaces as Record<string, unknown>)[namespace];
+  if (!bucket || typeof bucket !== "object" || Array.isArray(bucket))
+    throw new Error("State file has no such namespace.");
+  const coordination = (bucket as { coordination?: unknown }).coordination;
+  if (!coordination || typeof coordination !== "object" || Array.isArray(coordination))
+    return { targets: [] };
+  const targets: RetentionTargetStatus[] = [];
+  for (const [id, row] of Object.entries(coordination)) {
+    if (!id.startsWith("target:")) continue;
+    if (!row || typeof row !== "object") continue;
+    const data = (row as { data?: unknown }).data;
+    if (!data || typeof data !== "object" || !("retention" in data)) continue;
+    const ledger = loadRetentionLedger(normalizeLedger((data as { retention: unknown }).retention));
+    targets.push(targetStatus(id, ledger));
+  }
+  targets.sort((a, b) => Buffer.compare(Buffer.from(a.id), Buffer.from(b.id)));
+  return { targets };
+}
+
+export function formatRetentionReport(report: RetentionReport): string {
+  if (report.targets.length === 0) return "bestEver null score null items null\n";
+  return `${report.targets
+    .map((target) => `target ${showText(target.id)}\n${formatRetentionStatus(target).replace(/\n$/, "")}`)
+    .join("\n")}\n`;
+}
+
+export function formatRetentionReportJson(report: RetentionReport): string {
+  return `${asciiJson(report)}\n`;
+}
+
+function normalizeLedger(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const row = value as {
+    bestEver?: unknown;
+    best_ever?: unknown;
+    decisions?: unknown;
+  };
+  const decisions = Array.isArray(row.decisions) ? row.decisions : row.decisions;
+  const camel = row.best_ever === undefined && !usesSnakeDecision(decisions);
+  if (camel) return { bestEver: row.bestEver ?? null, decisions: decisions ?? [] };
+  return {
+    bestEver: row.best_ever ?? row.bestEver ?? null,
+    decisions: (Array.isArray(decisions) ? decisions : []).map((decision) => {
+      if (!decision || typeof decision !== "object") return decision;
+      const item = decision as {
+        candidate_id?: unknown;
+        candidateId?: unknown;
+        best_ever_id?: unknown;
+        bestEverId?: unknown;
+        outcome?: unknown;
+        reason?: unknown;
+        lower?: unknown;
+        margin?: unknown;
+        items?: unknown;
+      };
+      return {
+        candidateId: item.candidateId ?? item.candidate_id,
+        outcome: item.outcome,
+        reason: item.reason,
+        bestEverId: item.bestEverId !== undefined ? item.bestEverId : item.best_ever_id ?? null,
+        lower: item.lower ?? null,
+        margin: item.margin ?? null,
+        items: item.items ?? null,
+      };
+    }),
+  };
+}
+
+function usesSnakeDecision(decisions: unknown): boolean {
+  return (
+    Array.isArray(decisions) &&
+    decisions.some((decision) => !!decision && typeof decision === "object" && "candidate_id" in decision)
+  );
+}
+
+function targetStatus(id: string, ledger: RetentionLedger): RetentionTargetStatus {
+  return {
+    id,
+    bestEver: ledger.bestEver,
+    decisions: ledger.decisions.map((decision) => ({
+      candidateId: decision.candidateId,
+      outcome: decision.outcome,
+      reason: decision.reason,
+      bestEverId: decision.bestEverId,
+      lower: decision.lower,
+      margin: decision.margin,
+      items: decision.items,
+    })),
+  };
+}
+
+export function formatRetentionStatus(status: RetentionStatus): string {
+  const lines = [
+    `bestEver ${status.bestEver ? showText(status.bestEver.id) : "null"} score ${show(status.bestEver?.score ?? null)} items ${show(status.bestEver ? status.bestEver.items.length : null)}`,
+  ];
+  if (status.bestEver) {
+    for (const item of status.bestEver.items)
+      lines.push(`item ${showText(item.id)} ${show(item.score)}`);
+  }
+  for (const decision of status.decisions) {
+    lines.push(
+      [
+        "decision",
+        showText(decision.candidateId),
+        decision.outcome,
+        `reason ${showText(decision.reason)}`,
+        `bestEver ${decision.bestEverId === null ? "null" : showText(decision.bestEverId)}`,
+        `lower ${show(decision.lower)}`,
+        `margin ${show(decision.margin)}`,
+        `items ${show(decision.items)}`,
+      ].join(" "),
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatRetentionStatusJson(status: RetentionStatus): string {
+  return `${asciiJson(status)}\n`;
 }
 
 function show(value: number | null): string {

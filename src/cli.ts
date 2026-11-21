@@ -20,10 +20,14 @@ import {
 } from "./onboarding.js";
 import type { ImprovementMode } from "./improvement-contracts.js";
 import { improvementWorkDisabled } from "./improvement-controller.js";
+import { readFileSync } from "node:fs";
 import {
   explainDecisionLog,
   formatExplanation,
   formatExplanationJson,
+  formatRetentionReport,
+  formatRetentionReportJson,
+  retentionReportFromState,
 } from "./decision-explain.js";
 import { runEvalCommand } from "./eval-lock.js";
 const [command, ...args] = process.argv.slice(2);
@@ -49,7 +53,7 @@ function validateOptions(values: string[], switches: string[] = []) {
 async function main() {
   if (!command || command === "--help" || args.includes("--help")) {
     console.log(
-      "Loopiter alpha — self-hosted SDK tools\n guide — print the installed agent setup guide\n init --directory ./loopiter — create a self-hosted setup (never overwrites)\n doctor --directory ./loopiter — check configuration without calling models\n verify — run isolated offline controller/rollback checks\n reference [--name workflows|registry|registrySql|providers|classification|classificationReadme]\n starter demo [--reject|--interrupt] — packaged classification example\n worker --module ./loopiter/application.mjs [--mode observe|recommend|experiment|autonomous] [--disable] [--step-timeout-ms 120000] [--once] [--interval-ms 30000]\n explain <decisions.json> [--json] — read a decision log and print each seed's accepted, rejected, or insufficient checks\n eval lock <suite> [--out] — write a checksum of an eval set\n eval verify <suite> [--lock] [--json] — refuse a changed eval set\n eval leakage --train <file> --eval <file> [--fields] [--json] — refuse exact train/eval overlap\n Fresh init writes schemaVersion 2 (autonomous-default): mode autonomous and selfImproving true. An ImprovementController created with no mode uses that same default. Omitting --mode uses plan.mode, or autonomous when no plan is present; --mode overrides it. The worker pauses before importing the application, in every mode, when --disable is set or LOOPITER_DISABLE is any non-empty value except 0, false, no, or off. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, budgets, and rollback still apply.\n analyze --file STATE --namespace NAME --dimensions metadata.task\n candidates|events --file STATE --namespace NAME\n export --file STATE --namespace NAME (writes JSON to stdout)\n import-v1 --input OLD --file NEW --namespace NAME",
+      "Loopiter alpha — self-hosted SDK tools\n guide — print the installed agent setup guide\n init --directory ./loopiter — create a self-hosted setup (never overwrites)\n doctor --directory ./loopiter — check configuration without calling models\n verify — run isolated offline controller/rollback checks\n reference [--name workflows|registry|registrySql|providers|classification|classificationReadme]\n starter demo [--reject|--interrupt] — packaged classification example\n worker --module ./loopiter/application.mjs [--mode observe|recommend|experiment|autonomous] [--disable] [--step-timeout-ms 120000] [--once] [--interval-ms 30000]\n explain <decisions.json> [--json] — read a decision log and print each seed's accepted, rejected, or insufficient checks, including retention\n retention status --file STATE --namespace NAME [--json] — print the best-ever retention record stored on the controller target; writes nothing\n eval lock <suite> [--out] — write a checksum of an eval set\n eval verify <suite> [--lock] [--json] — refuse a changed eval set\n eval leakage --train <file> --eval <file> [--fields] [--json] — refuse exact train/eval overlap\n Fresh init writes schemaVersion 2 (autonomous-default): mode autonomous and selfImproving true. An ImprovementController created with no mode uses that same default. Omitting --mode uses plan.mode, or autonomous when no plan is present; --mode overrides it. The worker pauses before importing the application, in every mode, when --disable is set or LOOPITER_DISABLE is any non-empty value except 0, false, no, or off. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, budgets, and rollback still apply.\n analyze --file STATE --namespace NAME --dimensions metadata.task\n candidates|events --file STATE --namespace NAME\n export --file STATE --namespace NAME (writes JSON to stdout)\n import-v1 --input OLD --file NEW --namespace NAME",
     );
     return;
   }
@@ -70,6 +74,57 @@ async function main() {
     );
   if (command === "eval") {
     process.exitCode = runEvalCommand(args);
+    return;
+  }
+  if (command === "retention") {
+    const [sub, ...rest] = args;
+    if (sub !== "status") {
+      console.error("Usage: loopiter retention status --file STATE --namespace NAME [--json]");
+      process.exitCode = 2;
+      return;
+    }
+    let file: string | undefined;
+    let namespace: string | undefined;
+    let json = false;
+    for (let index = 0; index < rest.length; index++) {
+      const option = rest[index]!;
+      if (option === "--json") {
+        if (json) throw Error("Duplicate option: --json");
+        json = true;
+        continue;
+      }
+      if (option !== "--file" && option !== "--namespace") {
+        console.error(`Unknown option: ${option}`);
+        process.exitCode = 2;
+        return;
+      }
+      const value = rest[index + 1];
+      if (!value || value.startsWith("--")) {
+        console.error(`${option} requires a value.`);
+        process.exitCode = 2;
+        return;
+      }
+      if (option === "--file") {
+        if (file !== undefined) throw Error("Duplicate option: --file");
+        file = value;
+      } else {
+        if (namespace !== undefined) throw Error("Duplicate option: --namespace");
+        namespace = value;
+      }
+      index++;
+    }
+    if (!file || !namespace) {
+      console.error("Usage: loopiter retention status --file STATE --namespace NAME [--json]");
+      process.exitCode = 2;
+      return;
+    }
+    try {
+      const report = retentionReportFromState(readFileSync(file, "utf8"), namespace);
+      process.stdout.write(json ? formatRetentionReportJson(report) : formatRetentionReport(report));
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : "Retention status failed.");
+      process.exitCode = 1;
+    }
     return;
   }
   if (command === "explain") {

@@ -10,6 +10,7 @@ import { hotpotTask } from "../benchmarks/hotpotqa/task.js";
 import { ifbenchTask } from "../benchmarks/ifbench/task.js";
 import {
   fixtureEvalLockPath,
+  fixtureTrainSuitePath,
   guardEvalSuite,
   suiteFromTask,
 } from "../benchmarks/public/eval-lock.js";
@@ -23,6 +24,7 @@ import {
   ImprovementController,
   checkEvalLeakage,
   lockEvalSet,
+  prepareDataset,
   verifyEvalLock,
   type AutonomyPolicy,
   type DatasetSnapshot,
@@ -293,26 +295,80 @@ test("cli output and exit codes match across the sdks", async () => {
     assert.equal([...craftedJson.stdout].every((character) => character.charCodeAt(0) <= 127), true);
     const craftedReport = JSON.parse(craftedJson.stdout) as { ids: string[] };
     assert.equal(craftedReport.ids[0], "c\u007f\u202e\u00e9\n\u{1F600}");
+    const controls = "\u001c\u001d\u001e\u001f\u0085";
+    const kept = join(directory, "kept.json");
+    const stripped = join(directory, "stripped.json");
+    await writeFile(
+      kept,
+      `${JSON.stringify({ items: [{ id: "k", input: `${controls}foo${controls}`, expected: "a" }] })}\n`,
+    );
+    await writeFile(
+      stripped,
+      `${JSON.stringify({ items: [{ id: "s", input: "foo", expected: "a" }] })}\n`,
+    );
+    const nodeControls = cli(["eval", "leakage", "--train", kept, "--eval", stripped, "--fields", "input", "--json"]);
+    const pythonControls = py(["eval", "leakage", "--train", kept, "--eval", stripped, "--fields", "input", "--json"]);
+    assert.equal(nodeControls.status, 0, nodeControls.stderr);
+    assert.equal(pythonControls.status, 0, pythonControls.stderr);
+    assert.equal(pythonControls.stdout, nodeControls.stdout);
+    const proto = join(directory, "proto.json");
+    const protoEdited = join(directory, "proto-edited.json");
+    await writeFile(proto, '{"items":[{"id":"p","input":{"__proto__":{"edited":false},"keep":1},"expected":"ok"}]}\n');
+    await writeFile(
+      protoEdited,
+      '{"items":[{"id":"p","input":{"__proto__":{"edited":true},"keep":1},"expected":"ok"}]}\n',
+    );
+    const nodeProto = cli(["eval", "lock", proto, "--out", join(directory, "proto.lock.json")]);
+    const pythonProto = py(["eval", "lock", proto, "--out", join(directory, "proto-py.lock.json")]);
+    assert.equal(nodeProto.status, 0, nodeProto.stderr);
+    assert.equal(pythonProto.status, 0, pythonProto.stderr);
+    assert.equal(
+      await readFile(join(directory, "proto.lock.json"), "utf8"),
+      await readFile(join(directory, "proto-py.lock.json"), "utf8"),
+    );
+    const nodeProtoDrift = cli([
+      "eval",
+      "verify",
+      protoEdited,
+      "--lock",
+      join(directory, "proto.lock.json"),
+      "--json",
+    ]);
+    const pythonProtoDrift = py([
+      "eval",
+      "verify",
+      protoEdited,
+      "--lock",
+      join(directory, "proto.lock.json"),
+      "--json",
+    ]);
+    assert.equal(nodeProtoDrift.status, 1);
+    assert.equal(pythonProtoDrift.stdout, nodeProtoDrift.stdout);
+    assert.equal(JSON.parse(nodeProtoDrift.stdout).changed, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("a required eval lock is checked before a run starts and is off by default", async () => {
+test("changed eval rows stop the run before a model or evaluator call", async () => {
   const open = await controllerCase();
   assert.equal(open.datasetCalls > 0, true);
+  assert.equal(open.proposals > 0, true);
   assert.equal(open.reason === "eval_lock_drift", false);
-  const suite = { items: [{ id: "e", input: "q", expected: "a" }] };
-  const lock = lockEvalSet(suite);
-  const matched = await controllerCase({ suite, lock });
+  const lock = lockEvalSet(evalRows(sampleDataset()));
+  const matched = await controllerCase({ lock });
   assert.equal(matched.datasetCalls > 0, true);
+  assert.equal(matched.proposals > 0, true);
+  assert.equal(matched.evaluations, 0);
   const drifted = await controllerCase({
-    suite: { items: [{ id: "e", input: "q", expected: "changed" }] },
     lock,
+    mutate: (data) => {
+      data.validation[0]!.label = "changed-eval-label";
+    },
   });
-  assert.equal(drifted.datasetCalls, 0);
-  assert.equal(drifted.artifactCalls, 0);
+  assert.equal(drifted.datasetCalls, 1);
   assert.equal(drifted.proposals, 0);
+  assert.equal(drifted.evaluations, 0);
   assert.equal(drifted.reason, "eval_lock_drift");
 });
 
@@ -410,6 +466,8 @@ function assertFixtureLock<T extends PublicExample>(task: BenchmarkTask<T>): voi
   const leakage = checkEvalLeakage(train, evaluation);
   assert.equal(leakage.ok, true);
   assert.equal(leakage.overlapCount, 0);
+  const committedTrain = JSON.parse(readFileSync(fixtureTrainSuitePath(task.id), "utf8")) as EvalSuite;
+  assert.equal(lockEvalSet(committedTrain).sha256, lockEvalSet(train).sha256);
 }
 
 function cli(args: string[]) {
@@ -427,16 +485,42 @@ function py(args: string[]) {
   });
 }
 
-async function controllerCase(requireEvalLock?: {
-  suite: EvalSuite;
-  lock: ReturnType<typeof lockEvalSet>;
-}): Promise<{ datasetCalls: number; artifactCalls: number; proposals: number; reason: string }> {
+function evalRows(data: DatasetSnapshot): EvalSuite {
+  const prepared = prepareDataset(
+    data,
+    JSON.parse(
+      readFileSync(fileURLToPath(new URL("../../python/tests/fixtures/autonomy.json", import.meta.url)), "utf8"),
+    ).policy as AutonomyPolicy,
+    "2026-02-01T00:00:00.000Z",
+  );
+  return {
+    items: [...prepared.validation, ...prepared.audit].map((row) => ({
+      id: row.id,
+      input: row.input,
+      expected: row.label,
+    })),
+  };
+}
+
+async function controllerCase(options?: {
+  lock?: ReturnType<typeof lockEvalSet>;
+  mutate?: (data: DatasetSnapshot) => void;
+}): Promise<{
+  datasetCalls: number;
+  artifactCalls: number;
+  proposals: number;
+  evaluations: number;
+  reason: string;
+}> {
   const policy = JSON.parse(
     await readFile(new URL("../../python/tests/fixtures/autonomy.json", import.meta.url), "utf8"),
   ).policy as AutonomyPolicy;
   let datasetCalls = 0;
   let artifactCalls = 0;
   let proposals = 0;
+  let evaluations = 0;
+  const data = sampleDataset();
+  options?.mutate?.(data);
   const workflow: ImprovementWorkflow = {
     id: "classification",
     version: "1",
@@ -449,13 +533,16 @@ async function controllerCase(requireEvalLock?: {
     },
     dataset: async () => {
       datasetCalls += 1;
-      return sampleDataset();
+      return data;
     },
     propose: async (_input, context) => {
       proposals += 1;
       return context.meter(100, async () => ({ value: [{ score: 0.9 }], tokens: 10 }));
     },
-    evaluate: async () => ({ cases: [], metrics: { errors: 0 }, estimatedServingCost: 0 }),
+    evaluate: async () => {
+      evaluations += 1;
+      return { cases: [], metrics: { errors: 0 }, estimatedServingCost: 0 };
+    },
     deployment: new Registry(),
     observe: async () => {
       throw new Error("observe is not part of this test");
@@ -470,10 +557,10 @@ async function controllerCase(requireEvalLock?: {
     mode: "autonomous",
     selfImproving: true,
     workflows: [workflow],
-    ...(requireEvalLock ? { requireEvalLock } : {}),
+    ...(options?.lock ? { requireEvalLock: { lock: options.lock } } : {}),
   });
   const result = await controller.tick("classification");
-  return { datasetCalls, artifactCalls, proposals, reason: result.reason };
+  return { datasetCalls, artifactCalls, proposals, evaluations, reason: result.reason };
 }
 
 function sampleDataset(): DatasetSnapshot {

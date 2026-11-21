@@ -27,7 +27,6 @@ _WS_CHARS = (
     + "".join(chr(code) for code in range(0x2000, 0x200B))
     + "\u2028\u2029\u202f\u205f\u3000\ufeff"
 )
-_WHITESPACE = re.compile("[" + re.escape(_WS_CHARS) + "]+")
 
 
 def lock_eval_set(suite: Any) -> dict[str, Any]:
@@ -481,7 +480,17 @@ def _normalize_text(value: str) -> str:
         value.encode("utf-8")
     except UnicodeEncodeError:
         v.fail("invalid_input", "Eval set contains invalid Unicode.")
-    return _WHITESPACE.sub(" ", unicodedata.normalize("NFC", value)).strip()
+    collapsed = []
+    pending = False
+    for character in unicodedata.normalize("NFC", value):
+        if character in _WS_CHARS:
+            pending = True
+            continue
+        if pending and collapsed:
+            collapsed.append(" ")
+        pending = False
+        collapsed.append(character)
+    return "".join(collapsed)
 
 
 def _cap_ids(ids: list[str]) -> tuple[list[str], bool]:
