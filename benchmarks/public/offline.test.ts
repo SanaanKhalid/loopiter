@@ -563,32 +563,6 @@ test("the estimate uses the chosen seeds and row counts", () => {
   assert.equal(hotpot.arms.baseline.length, 900);
   assert.equal(hotpot.arms["one-shot"].length, 903);
   assert.equal(hotpot.arms.controller.length, 14253);
-  const withNoise = planTask(hotpotTask, {
-    label: "full",
-    seeds: [1, 2, 3],
-    sizes: hotpotSizes,
-    limits: resolveLimits({}, hotpotTask),
-    deployment: "gpt-5.4-mini",
-    noiseFloor: { validation: true, audit: true },
-  });
-  const repeatedIncumbent = 3 * 2 * (hotpotSizes.validation + hotpotSizes.audit);
-  assert.equal(withNoise.arms.baseline.length, hotpot.arms.baseline.length);
-  assert.equal(withNoise.arms["one-shot"].length, hotpot.arms["one-shot"].length);
-  assert.equal(withNoise.arms.controller.length, hotpot.arms.controller.length + repeatedIncumbent);
-  assert.equal(estimateSelection(["--estimate"], FULL_SIZES), undefined);
-  assert.deepEqual(estimateSelection(["--estimate", "--noise-floor"], FULL_SIZES), {
-    noiseFloor: { validation: true, audit: true },
-  });
-  const noisyEstimate = renderTaskEstimate(
-    hotpotTask,
-    scrubbed({
-      LOOPITER_BENCH_PRICE_INPUT_PER_1M: "1",
-      LOOPITER_BENCH_PRICE_OUTPUT_PER_1M: "2",
-    }),
-    { seeds: [1, 2, 3], sizes: hotpotSizes, noiseFloor: { validation: true, audit: true } },
-  );
-  assert.match(noisyEstimate, /incumbent scoring on an enabled split is counted twice/);
-  assert.match(noisyEstimate, new RegExp(`calls: ${hotpot.arms.controller.length + repeatedIncumbent}`));
   const ifbenchSizes = applyRowCounts(FULL_SIZES, { validationRows: 600, auditRows: 600 });
   const ifbench = planTask(ifbenchTask, {
     label: "full",

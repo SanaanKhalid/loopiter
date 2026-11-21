@@ -33,37 +33,21 @@ export function rowCountOverrides(argv: readonly string[] = process.argv): RowCo
  * Full-plan selection for `--estimate`. Undefined when the caller did not
  * change seeds or row counts, so the default plan stays the five full seeds.
  */
-/** `--noise-floor` repeats incumbent scoring on validation and audit. Absent means off. */
-export function noiseFloorFlag(
-  argv: readonly string[] = process.argv,
-): { validation: true; audit: true } | undefined {
-  if (!argv.includes("--noise-floor")) return undefined;
-  return { validation: true, audit: true };
-}
-
 export function estimateSelection(
   argv: readonly string[],
   full: SplitSizes,
-):
-  | {
-      seeds?: readonly number[];
-      sizes?: SplitSizes;
-      noiseFloor?: { validation: true; audit: true };
-    }
-  | undefined {
+): { seeds?: readonly number[]; sizes?: SplitSizes } | undefined {
   const overrides = rowCountOverrides(argv);
   const customSeeds = argv.includes("--seeds") || argv.includes("--seed-start");
   const customSizes =
     overrides.validationRows !== undefined || overrides.auditRows !== undefined;
-  const noiseFloor = noiseFloorFlag(argv);
-  if (!customSeeds && !customSizes && !noiseFloor) return undefined;
+  if (!customSeeds && !customSizes) return undefined;
   const seeds = customSeeds
     ? seedList(integerOption("--seeds", 5, argv), integerOption("--seed-start", 1, argv))
     : undefined;
   return {
     ...(seeds === undefined ? {} : { seeds }),
     ...(customSizes ? { sizes: applyRowCounts(full, overrides) } : {}),
-    ...(noiseFloor ? { noiseFloor } : {}),
   };
 }
 

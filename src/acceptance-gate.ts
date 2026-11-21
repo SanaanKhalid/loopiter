@@ -513,12 +513,18 @@ function validateCounts(counts: UnpairedCounts): void {
   }
 }
 
+const PAIRED_ITEM_FIELDS = new Set(["id", "incumbent", "candidate", "incumbentRepeat"]);
+
 function orderPairedItems(items: readonly GateItem[]): GateItem[] {
   const ordered = [...items].sort((a, b) =>
     Buffer.compare(Buffer.from(String(a.id)), Buffer.from(String(b.id))),
   );
   const seen = new Set<string>();
   for (const item of ordered) {
+    for (const key of Object.keys(item)) {
+      if (!PAIRED_ITEM_FIELDS.has(key))
+        throw new Error(`Unknown paired item field ${key}.`);
+    }
     if (typeof item.id !== "string" || item.id.length === 0)
       throw new Error("Paired item id must be a non-empty string.");
     if (seen.has(item.id)) throw new Error(`Duplicate paired item id ${item.id}.`);

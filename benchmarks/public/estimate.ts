@@ -30,8 +30,6 @@ export function planTask<T extends PublicExample>(
     sizes: SplitSizes;
     limits: RequestLimits;
     deployment: string;
-    /** When set, incumbent predicts on the named splits are counted twice. */
-    noiseFloor?: { validation?: boolean; audit?: boolean };
   },
 ): ArmPlan {
   const sample = task.fixtures().pool[0];
@@ -82,19 +80,14 @@ export function planTask<T extends PublicExample>(
     if (task.feedbackPredicts)
       pushPredict(arms.controller, "controller", "feedback", seed, input.sizes.optimization, predictBaseline, input.limits.predictMaxOutputTokens);
     arms.controller.push(planCall("controller", "propose", "propose", seed, propose, input.limits.proposeMaxOutputTokens));
-    const scoreSplit = (stage: "validation" | "audit") => {
-      const count = stage === "validation" ? input.sizes.validation : input.sizes.audit;
-      const repeat = stage === "validation" ? input.noiseFloor?.validation === true : input.noiseFloor?.audit === true;
-      pushPredict(arms.controller, "controller", stage, seed, count, predictBaseline, input.limits.predictMaxOutputTokens);
-      if (repeat)
-        pushPredict(arms.controller, "controller", stage, seed, count, predictBaseline, input.limits.predictMaxOutputTokens);
-      pushPredict(arms.controller, "controller", stage, seed, count, predictCandidate, input.limits.predictMaxOutputTokens);
-    };
-    // One-shot rewrite, then the follow-up candidate. Each pass scores the incumbent once unless the noise floor repeats it.
-    scoreSplit("validation");
-    scoreSplit("audit");
-    scoreSplit("validation");
-    scoreSplit("audit");
+    pushPredict(arms.controller, "controller", "validation", seed, input.sizes.validation, predictBaseline, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "validation", seed, input.sizes.validation, predictCandidate, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "audit", seed, input.sizes.audit, predictBaseline, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "audit", seed, input.sizes.audit, predictCandidate, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "validation", seed, input.sizes.validation, predictBaseline, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "validation", seed, input.sizes.validation, predictCandidate, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "audit", seed, input.sizes.audit, predictBaseline, input.limits.predictMaxOutputTokens);
+    pushPredict(arms.controller, "controller", "audit", seed, input.sizes.audit, predictCandidate, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "production", seed, input.sizes.production, predictCandidate, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "held-out-served", seed, input.sizes.heldOut, predictCandidate, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "held-out-ungated", seed, input.sizes.heldOut, predictCandidate, input.limits.predictMaxOutputTokens);
@@ -105,11 +98,7 @@ export function planTask<T extends PublicExample>(
 export function renderTaskEstimate<T extends PublicExample>(
   task: BenchmarkTask<T>,
   env: NodeJS.ProcessEnv,
-  selection?: {
-    seeds?: readonly number[];
-    sizes?: SplitSizes;
-    noiseFloor?: { validation?: boolean; audit?: boolean };
-  },
+  selection?: { seeds?: readonly number[]; sizes?: SplitSizes },
 ): string {
   const { limits, deployment, apiVersion, prices, maxTokensPerMinute } = estimateContext(task, env);
   const smoke = planTask(task, {
@@ -118,7 +107,6 @@ export function renderTaskEstimate<T extends PublicExample>(
     sizes: smokeSizes(task.smokeRows),
     limits,
     deployment,
-    ...(selection?.noiseFloor ? { noiseFloor: selection.noiseFloor } : {}),
   });
   const full = planTask(task, {
     label: "full",
@@ -126,11 +114,7 @@ export function renderTaskEstimate<T extends PublicExample>(
     sizes: selection?.sizes ?? task.fullSizes,
     limits,
     deployment,
-    ...(selection?.noiseFloor ? { noiseFloor: selection.noiseFloor } : {}),
   });
-  const noiseNote = selection?.noiseFloor
-    ? "Noise floor: incumbent scoring on an enabled split is counted twice."
-    : null;
   return [
     `${task.title} live estimate`,
     "No provider calls were made.",
@@ -146,7 +130,6 @@ export function renderTaskEstimate<T extends PublicExample>(
     "Arms: frozen baseline, one-shot rewrite with no gates, and the autonomous ImprovementController.",
     "Input tokens repeat one checked-in fixture row up to the split size. Output tokens are the max_output_tokens bound. This is a call plan, not a measured score.",
     `Projection rounds each call to micro-USD. TPM pacing reserves bytes/4 plus the output bound against ${Math.round(PACE_HEADROOM * 100)}% of LOOPITER_BENCH_MAX_TPM.`,
-    ...(noiseNote ? [noiseNote] : []),
     "",
     formatPlan(smoke, prices, maxTokensPerMinute),
     "",

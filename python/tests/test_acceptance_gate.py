@@ -355,6 +355,27 @@ class AcceptanceGateTest(unittest.TestCase):
             for item in steady_items
         ]
         plain = decide_acceptance(plain_items, parameters=rule)
+        snake = decide_acceptance(
+            [
+                {
+                    "id": item["id"],
+                    "incumbent": item["incumbent"],
+                    "candidate": item["candidate"],
+                    "incumbent_repeat": item["incumbentRepeat"],
+                }
+                for item in steady_items
+            ],
+            parameters=rule,
+        )
+        self.assertEqual(snake["noise_floor"], steady["noise_floor"])
+        self.assertEqual(snake["accept"], steady["accept"])
+        self.assertEqual(snake["binding_threshold"], steady["binding_threshold"])
+        with self.assertRaises(ValueError) as unknown:
+            decide_acceptance(
+                [{"id": "a", "incumbent": 0, "candidate": 1, "repeat": 0}],
+                parameters=rule,
+            )
+        self.assertIn("Unknown paired item field repeat", str(unknown.exception))
         self.assertEqual(steady["noise_floor"]["value"], 0)
         self.assertEqual(steady["noise_floor"]["method"], "paired-bootstrap")
         self.assertEqual(steady["noise_floor"]["calls"], len(steady_items))

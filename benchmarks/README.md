@@ -21,11 +21,8 @@ confidence policy cannot set a lower decisive minimum.
 Fewer decisive items is `insufficient`: the candidate is not served and the
 failure stop is not incremented. `compare()` also requires the policy's
 validation and audit unit counts, which must be at least that floor.
-
-An optional `noiseFloor` re-scores the incumbent on validation, audit, or both.
-The benchmark policy leaves it off. Turning it on doubles incumbent scoring on
-the enabled split. `--estimate --noise-floor` counts that second incumbent
-pass on both splits. The default estimate does not.
+The public benchmark harness does not enable the optional noise floor yet.
+Its call plan and reservations stay the two-score validation and audit passes.
 
 The benchmark opts in with `objective.acceptance: "confidence"`. That is
 intended. The product default, including onboarding, keeps the fixed
@@ -151,7 +148,6 @@ Useful flags:
 | `--out` | stdout | JSON path. A `.md` summary is written beside it |
 | `--validation-rows` | `150` | HotpotQA and IFBench validation rows on `--live`, `--estimate`, and `--fixtures`. An integer from 1 to 10000. Omitted, a full run stays at 150 and a fixtures run keeps its fixture split. Held-out is not configurable |
 | `--audit-rows` | `300` | HotpotQA and IFBench audit rows for those same modes. An integer from 2 to 10000. Omitted, a full run stays at 300. The one-shot rewrite scores the first `ceil(n / 2)` audit rows by id; the follow-up scores the rest |
-| `--noise-floor` | off | With `--estimate` on HotpotQA and IFBench, count the incumbent predict twice on validation and audit. Omitted, the call plan is unchanged |
 
 `--live` does not run unless `LOOPITER_BENCH_ALLOW_LIVE=1` is also set.
 `LOOPITER_BENCHMARK_LIVE=1` alone is still refused. The Phase 0 command never

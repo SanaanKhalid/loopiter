@@ -426,6 +426,25 @@ print(json.dumps({"accept": first["accept"], "reason": first["reason"], "lower":
   assert.equal(parsed.lower, node.lower);
 });
 
+test("unknown paired item fields are rejected", () => {
+  assert.throws(
+    () =>
+      decideAcceptance({
+        items: [{ id: "a", incumbent: 0, candidate: 1, extra: 1 } as GateItem],
+        parameters: rule,
+      }),
+    /Unknown paired item field extra/,
+  );
+  assert.throws(
+    () =>
+      decideAcceptance({
+        items: [{ id: "a", incumbent: 0, candidate: 1, incumbent_repeat: 0 } as GateItem],
+        parameters: rule,
+      }),
+    /Unknown paired item field incumbent_repeat/,
+  );
+});
+
 test("paired decisions ignore input order and reject duplicate ids", () => {
   const items = pairs([...repeated(6, [0, 1]), ...repeated(4, [1, 0])]);
   const forward = decideAcceptance({ items, parameters: rule });

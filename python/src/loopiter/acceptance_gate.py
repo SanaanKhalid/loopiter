@@ -10,7 +10,8 @@ accept a one-sided difference. ``minimum_decisive`` counts items whose scores
 differ. Below that count the outcome is ``insufficient`` and the interval is
 not used. 0 leaves that guard off. Aggregate counts, used only when no paired
 items are supplied, use a Newcombe interval built from Wilson bounds.
-An optional ``incumbentRepeat`` on every item measures run-to-run jitter.
+An optional ``incumbent_repeat`` (``incumbentRepeat`` is also accepted) on every
+item measures run-to-run jitter.
 The same bootstrap, seed, and id order produce an upper bound on the absolute
 mean of that pair. The candidate must clear the larger of ``minimum_effect``
 and that bound. Omitting the second score records the floor as not measured.
@@ -353,15 +354,41 @@ def _insufficient(
     }
 
 
+_PAIRED_ITEM_FIELDS = {"id", "incumbent", "candidate", "incumbentRepeat", "incumbent_repeat"}
+
+
+def _repeat_score(item: dict[str, Any]) -> Any:
+    """The second incumbent score, or a missing marker when the floor was not measured."""
+    unknown = sorted(key for key in item if key not in _PAIRED_ITEM_FIELDS)
+    if unknown:
+        raise ValueError(f"Unknown paired item field {unknown[0]}.")
+    has_snake = "incumbent_repeat" in item
+    has_camel = "incumbentRepeat" in item
+    if has_snake and has_camel and item["incumbent_repeat"] != item["incumbentRepeat"]:
+        raise ValueError("Incumbent repeat scores disagree.")
+    if has_snake:
+        return item["incumbent_repeat"]
+    if has_camel:
+        return item["incumbentRepeat"]
+    return _MISSING_REPEAT
+
+
+class _MissingRepeat:
+    pass
+
+
+_MISSING_REPEAT = _MissingRepeat()
+
+
 def _noise_from_repeats(items: list[dict[str, Any]], parameters: dict[str, Any]) -> dict[str, Any]:
-    present = [item for item in items if "incumbentRepeat" in item]
+    present = [item for item in items if _repeat_score(item) is not _MISSING_REPEAT]
     if not present:
         return _absent_noise(parameters["minimum_effect"])
     if len(present) != len(items):
         raise ValueError("Incumbent repeat scores must cover every item.")
     measured = observed_noise_floor(
         [
-            {"id": item["id"], "first": item["incumbent"], "second": item["incumbentRepeat"]}
+            {"id": item["id"], "first": item["incumbent"], "second": _repeat_score(item)}
             for item in items
         ],
         parameters,
@@ -457,21 +484,24 @@ def _clamp01(value: float) -> float:
 def _ordered_pairs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ordered = sorted(items, key=lambda item: str(item.get("id", "")).encode("utf-8"))
     seen: set[str] = set()
+    normalized = []
     for item in ordered:
+        if type(item) is not dict:
+            raise ValueError("Paired item must be an object.")
+        repeat = _repeat_score(item)
         item_id = item.get("id")
         if type(item_id) is not str or not item_id:
             raise ValueError("Paired item id must be a non-empty string.")
         if item_id in seen:
             raise ValueError(f"Duplicate paired item id {item_id}.")
         seen.add(item_id)
-        repeat = item.get("incumbentRepeat", None) if "incumbentRepeat" in item else None
         if (
             isinstance(item["incumbent"], bool)
             or isinstance(item["candidate"], bool)
             or not math.isfinite(item["incumbent"])
             or not math.isfinite(item["candidate"])
             or (
-                "incumbentRepeat" in item
+                repeat is not _MISSING_REPEAT
                 and (
                     isinstance(repeat, bool)
                     or not isinstance(repeat, (int, float))
@@ -480,7 +510,15 @@ def _ordered_pairs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
         ):
             raise ValueError("Paired scores must be finite.")
-    return ordered
+        copied = {
+            "id": item_id,
+            "incumbent": item["incumbent"],
+            "candidate": item["candidate"],
+        }
+        if repeat is not _MISSING_REPEAT:
+            copied["incumbentRepeat"] = repeat
+        normalized.append(copied)
+    return normalized
 
 
 def _i32(value: int) -> int:
