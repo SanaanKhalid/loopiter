@@ -28,6 +28,8 @@ export interface BatchCase {
   baseline: number;
   candidate: number;
   latencyMs: number;
+  /** Second incumbent score when the noise floor is measured for this split. */
+  baselineRepeat?: number;
 }
 
 export function readContext(): CallbackContext {
@@ -64,7 +66,7 @@ export function createPromptWorkflow(input: {
   onComparison?: (comparison: {
     split: "validation" | "audit";
     candidatePrompt: string;
-    items: { id: string; incumbent: number; candidate: number }[];
+    items: { id: string; incumbent: number; candidate: number; incumbentRepeat?: number }[];
   }) => void;
 }): ImprovementWorkflow {
   const configuration = {
@@ -122,6 +124,7 @@ export function createPromptWorkflow(input: {
           id: item.id,
           incumbent: item.baseline,
           candidate: item.candidate,
+          ...(item.baselineRepeat !== undefined ? { incumbentRepeat: item.baselineRepeat } : {}),
         })),
       });
       return {
@@ -156,11 +159,13 @@ export function flattenCases(value: JsonValue[] | undefined): BatchCase[] {
       const latencyMs = item.latencyMs;
       if (typeof id !== "string" || typeof baseline !== "number" || typeof candidate !== "number")
         throw new Error("Evaluation case is missing scores.");
+      const repeat = item.baselineRepeat;
       cases.push({
         id,
         baseline,
         candidate,
         latencyMs: typeof latencyMs === "number" ? latencyMs : 1,
+        ...(typeof repeat === "number" ? { baselineRepeat: repeat } : {}),
       });
     }
   }

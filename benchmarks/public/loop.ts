@@ -2,6 +2,7 @@
  * One-shot arm and the autonomous controller. Held-out rows are scored only
  * after those arms return, and only through the held-out type.
  */
+import { noiseFloorEnabled } from "../../src/improvement-evidence.js";
 import { hash } from "../../src/utils.js";
 import {
   gateParameters,
@@ -395,24 +396,39 @@ export async function runController<T extends PublicExample>(input: {
         const example = exampleOf(pool, row.id);
         const split = validationIds.has(row.id) ? "validation" : auditIds.has(row.id) ? "audit" : null;
         if (!split) throw new Error(`Row ${row.id} is not in validation or audit.`);
+        const measureNoise = noiseFloorEnabled(policy.objective, split === "audit");
         const planned =
-          (split === "validation" ? input.split.validation.length : input.split.audit.length) * 2;
+          (split === "validation" ? input.split.validation.length : input.split.audit.length) *
+          (measureNoise ? 3 : 2);
         const site: PredictCall = { arm: "controller", split, planned };
         input.runner.afterPredict?.();
         const left = await input.runner.answer(baseline, example, context, site);
         input.runner.afterPredict?.();
         const right = await input.runner.answer(candidate, example, context, site);
         input.runner.afterPredict?.();
-        const [base, next] = await input.task.scoreMany([
+        const scoredResponses = [
           { response: left.text, row: example },
           { response: right.text, row: example },
-        ]);
-        if (!base || !next) throw new Error("Scorer dropped a row.");
+        ];
+        let repeatLatency = 0;
+        if (measureNoise) {
+          input.runner.afterPredict?.();
+          const again = await input.runner.answer(baseline, example, context, site);
+          input.runner.afterPredict?.();
+          repeatLatency = again.latencyMs;
+          scoredResponses.push({ response: again.text, row: example });
+        }
+        const scores = await input.task.scoreMany(scoredResponses);
+        const base = scores[0];
+        const next = scores[1];
+        const repeatScore = measureNoise ? scores[2] : undefined;
+        if (!base || !next || (measureNoise && !repeatScore)) throw new Error("Scorer dropped a row.");
         const scored: BatchCase = {
           id: row.id,
           baseline: primaryOf(base),
           candidate: primaryOf(next),
-          latencyMs: Math.max(left.latencyMs, right.latencyMs),
+          latencyMs: Math.max(left.latencyMs, right.latencyMs, repeatLatency),
+          ...(repeatScore ? { baselineRepeat: primaryOf(repeatScore) } : {}),
         };
         return scored;
       },

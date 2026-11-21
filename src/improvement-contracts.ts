@@ -70,6 +70,12 @@ export interface AutonomyPolicy {
     minimumValidationDecisive?: number;
     /** Decisive items required on an audit check. Same default as validation. */
     minimumAuditDecisive?: number;
+    /**
+     * Re-score the incumbent on the named splits and raise the bar to the
+     * observed run-to-run noise. Omitted means the check does not run.
+     * Only valid with confidence acceptance.
+     */
+    noiseFloor?: { validation?: boolean; audit?: boolean };
   };
   guardrails: MetricGate[];
   trustedSources: string[];
@@ -119,6 +125,8 @@ export interface EvaluationCase {
   id: string;
   baseline: number;
   candidate: number;
+  /** Second incumbent score. Required on every case when that split's noise floor is on. */
+  baselineRepeat?: number;
 }
 export interface Comparison {
   cases: EvaluationCase[];

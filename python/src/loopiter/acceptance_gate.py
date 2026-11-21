@@ -10,6 +10,10 @@ accept a one-sided difference. ``minimum_decisive`` counts items whose scores
 differ. Below that count the outcome is ``insufficient`` and the interval is
 not used. 0 leaves that guard off. Aggregate counts, used only when no paired
 items are supplied, use a Newcombe interval built from Wilson bounds.
+An optional ``incumbentRepeat`` on every item measures run-to-run jitter.
+The same bootstrap, seed, and id order produce an upper bound on the absolute
+mean of that pair. The candidate must clear the larger of ``minimum_effect``
+and that bound. Omitting the second score records the floor as not measured.
 The stream matches the Node gate.
 """
 
@@ -91,6 +95,7 @@ def decide_acceptance(
         "item_count": 0,
         "decisive": None,
         "required": None,
+        **_noise_fields(_absent_noise(rule["minimum_effect"])),
     }
 
 
@@ -176,10 +181,51 @@ def normal_z(confidence: float) -> float:
     return _inverse_norm(1 - (1 - confidence) / 2)
 
 
+def observed_noise_floor(items: list[dict[str, Any]], parameters: dict[str, Any]) -> dict[str, Any]:
+    """Upper bound on the absolute mean of two incumbent runs.
+
+    Diffs are second minus first. The bound is the farther endpoint of the
+    same two-sided percentile interval the gate uses for a candidate. Items
+    are sorted by UTF-8 id and the draw restarts from the gate seed.
+    """
+    if not items:
+        raise ValueError("Noise floor needs at least one item.")
+    ordered = sorted(items, key=lambda item: str(item.get("id", "")).encode("utf-8"))
+    seen: set[str] = set()
+    diffs = []
+    for item in ordered:
+        item_id = item.get("id")
+        if type(item_id) is not str or not item_id:
+            raise ValueError("Paired item id must be a non-empty string.")
+        if item_id in seen:
+            raise ValueError(f"Duplicate paired item id {item_id}.")
+        seen.add(item_id)
+        first, second = item["first"], item["second"]
+        if (
+            isinstance(first, bool)
+            or isinstance(second, bool)
+            or not isinstance(first, (int, float))
+            or not isinstance(second, (int, float))
+            or not math.isfinite(first)
+            or not math.isfinite(second)
+        ):
+            raise ValueError("Paired scores must be finite.")
+        diffs.append(second - first)
+    interval = bootstrap_mean_interval(diffs, parameters)
+    return {
+        "value": max(abs(interval["lower"]), abs(interval["upper"])),
+        "effect": interval["effect"],
+        "lower": interval["lower"],
+        "upper": interval["upper"],
+        "items": len(diffs),
+    }
+
+
 def _decide_paired(
     items: list[dict[str, Any]], sign: int, parameters: dict[str, Any]
 ) -> dict[str, Any]:
     ordered = _ordered_pairs(items)
+    noise = _noise_from_repeats(ordered, parameters)
     diffs = []
     decisive = 0
     for item in ordered:
@@ -189,7 +235,7 @@ def _decide_paired(
     required = _decisive_requirement(parameters)
     if required is not None and decisive < required:
         return _insufficient(
-            sum(diffs) / len(diffs), len(diffs), decisive, required, "paired-bootstrap"
+            sum(diffs) / len(diffs), len(diffs), decisive, required, "paired-bootstrap", noise
         )
     if parameters["minimum_items"] > 0 and len(diffs) < parameters["minimum_items"]:
         return _blocked(
@@ -199,11 +245,10 @@ def _decide_paired(
             decisive,
             required,
             "paired-bootstrap",
+            noise,
         )
     interval = bootstrap_mean_interval(diffs, parameters)
-    return _finish(
-        interval, len(diffs), decisive, required, "paired-bootstrap", parameters["minimum_effect"]
-    )
+    return _finish(interval, len(diffs), decisive, required, "paired-bootstrap", noise)
 
 
 def _decide_unpaired(
@@ -216,8 +261,9 @@ def _decide_unpaired(
         - counts["incumbent_successes"] / counts["incumbent_trials"]
     )
     # Unpaired counts have no per-item scores, so the decisive-item guard does not run.
+    noise = _absent_noise(parameters["minimum_effect"])
     if parameters["minimum_items"] > 0 and item_count < parameters["minimum_items"]:
-        return _blocked("minimum_items", effect, item_count, None, None, "newcombe-wilson")
+        return _blocked("minimum_items", effect, item_count, None, None, "newcombe-wilson", noise)
     interval = newcombe_interval(counts, parameters["confidence"])
     directed = (
         interval
@@ -228,9 +274,7 @@ def _decide_unpaired(
             "upper": -interval["lower"],
         }
     )
-    return _finish(
-        directed, item_count, None, None, "newcombe-wilson", parameters["minimum_effect"]
-    )
+    return _finish(directed, item_count, None, None, "newcombe-wilson", noise)
 
 
 def _decisive_requirement(parameters: dict[str, Any]) -> int | None:
@@ -244,9 +288,9 @@ def _finish(
     decisive: int | None,
     required: int | None,
     method: str,
-    minimum_effect: float,
+    noise: dict[str, Any],
 ) -> dict[str, Any]:
-    accept = interval["lower"] > minimum_effect
+    accept = interval["lower"] > noise["bar"]
     return {
         "accept": accept,
         "outcome": "accepted" if accept else "rejected",
@@ -258,6 +302,7 @@ def _finish(
         "item_count": item_count,
         "decisive": decisive,
         "required": required,
+        **_noise_fields(noise),
     }
 
 
@@ -268,6 +313,7 @@ def _blocked(
     decisive: int | None,
     required: int | None,
     method: str,
+    noise: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "accept": False,
@@ -280,11 +326,17 @@ def _blocked(
         "item_count": item_count,
         "decisive": decisive,
         "required": required,
+        **_noise_fields(noise),
     }
 
 
 def _insufficient(
-    effect: float, item_count: int, decisive: int, required: int, method: str
+    effect: float,
+    item_count: int,
+    decisive: int,
+    required: int,
+    method: str,
+    noise: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "accept": False,
@@ -297,6 +349,56 @@ def _insufficient(
         "item_count": item_count,
         "decisive": decisive,
         "required": required,
+        **_noise_fields(noise),
+    }
+
+
+def _noise_from_repeats(items: list[dict[str, Any]], parameters: dict[str, Any]) -> dict[str, Any]:
+    present = [item for item in items if "incumbentRepeat" in item]
+    if not present:
+        return _absent_noise(parameters["minimum_effect"])
+    if len(present) != len(items):
+        raise ValueError("Incumbent repeat scores must cover every item.")
+    measured = observed_noise_floor(
+        [
+            {"id": item["id"], "first": item["incumbent"], "second": item["incumbentRepeat"]}
+            for item in items
+        ],
+        parameters,
+    )
+    return _applied_noise(parameters["minimum_effect"], measured["value"], measured["items"])
+
+
+def _absent_noise(minimum_effect: float) -> dict[str, Any]:
+    return {
+        "record": {"value": None, "method": "not_measured", "items": None, "calls": None},
+        "effective": None,
+        "binding": None,
+        "bar": minimum_effect,
+    }
+
+
+def _applied_noise(minimum_effect: float, value: float, count: int) -> dict[str, Any]:
+    if value > minimum_effect:
+        binding = "noise_floor"
+    elif value < minimum_effect:
+        binding = "minimum_effect"
+    else:
+        binding = "tie"
+    effective = max(minimum_effect, value)
+    return {
+        "record": {"value": value, "method": "paired-bootstrap", "items": count, "calls": count},
+        "effective": effective,
+        "binding": binding,
+        "bar": effective,
+    }
+
+
+def _noise_fields(noise: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "noise_floor": noise["record"],
+        "effective_threshold": noise["effective"],
+        "binding_threshold": noise["binding"],
     }
 
 
@@ -362,7 +464,21 @@ def _ordered_pairs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if item_id in seen:
             raise ValueError(f"Duplicate paired item id {item_id}.")
         seen.add(item_id)
-        if not math.isfinite(item["incumbent"]) or not math.isfinite(item["candidate"]):
+        repeat = item.get("incumbentRepeat", None) if "incumbentRepeat" in item else None
+        if (
+            isinstance(item["incumbent"], bool)
+            or isinstance(item["candidate"], bool)
+            or not math.isfinite(item["incumbent"])
+            or not math.isfinite(item["candidate"])
+            or (
+                "incumbentRepeat" in item
+                and (
+                    isinstance(repeat, bool)
+                    or not isinstance(repeat, (int, float))
+                    or not math.isfinite(repeat)
+                )
+            )
+        ):
             raise ValueError("Paired scores must be finite.")
     return ordered
 

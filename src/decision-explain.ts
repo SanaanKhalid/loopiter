@@ -5,6 +5,13 @@
 import { readFileSync } from "node:fs";
 import { MAX_BOOTSTRAP_SAMPLES, minimumDecisiveFloor, DEFAULT_GATE } from "./acceptance-gate.js";
 
+export interface ExplainedNoise {
+  value: number | null;
+  method: "paired-bootstrap" | "not_measured";
+  items: number | null;
+  calls: number | null;
+}
+
 export interface ExplainedCheck {
   round: number;
   outcome: "accepted" | "rejected" | "insufficient";
@@ -15,6 +22,9 @@ export interface ExplainedCheck {
   threshold: number | null;
   decisive: number | null;
   required: number | null;
+  noiseFloor: ExplainedNoise;
+  effectiveThreshold: number | null;
+  bindingThreshold: "minimum_effect" | "noise_floor" | "tie" | null;
 }
 
 export interface ExplainedCandidate {
@@ -74,7 +84,14 @@ export function formatExplanation(log: ExplainedLog): string {
 }
 
 export function formatExplanationJson(log: ExplainedLog): string {
-  return `${JSON.stringify(log, null, 2)}\n`;
+  return `${asciiJson(log)}\n`;
+}
+
+/** ASCII-only JSON. Non-ASCII and DEL match Python `json.dumps(..., ensure_ascii=True)`. */
+function asciiJson(value: unknown): string {
+  return JSON.stringify(value, null, 2).replace(/[\u007f-\uffff]/g, (character) => {
+    return "\\u" + character.charCodeAt(0).toString(16).padStart(4, "0");
+  });
 }
 
 /** Rule replay still accepts. Present decisive floors must match this value. */
@@ -165,6 +182,9 @@ function explainDecision(
     upper?: unknown;
     decisive?: unknown;
     required?: unknown;
+    noiseFloor?: unknown;
+    effectiveThreshold?: unknown;
+    bindingThreshold?: unknown;
   };
   if (typeof decision.accept !== "boolean" || typeof decision.reason !== "string")
     throw new Error(`Seed ${seed} round ${round} has a malformed decision.`);
@@ -185,6 +205,9 @@ function explainDecision(
     threshold: ruleThreshold(rule, seed, round),
     decisive: countOrNull(decision, "decisive", seed, round),
     required: countOrNull(decision, "required", seed, round),
+    noiseFloor: readNoise(decision.noiseFloor, seed, round),
+    effectiveThreshold: readEffective(decision.effectiveThreshold, seed, round),
+    bindingThreshold: readBinding(decision.bindingThreshold, seed, round),
   };
 }
 
@@ -209,6 +232,58 @@ function countOrNull(
 ): number | null {
   if (!Object.hasOwn(decision, name) || decision[name] === null) return null;
   const value = decision[name];
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
+    throw new Error(`Seed ${seed} round ${round} has an invalid ${name} count.`);
+  return value;
+}
+
+function readNoise(value: unknown, seed: number, round: number): ExplainedNoise {
+  if (value === undefined || value === null) return notMeasuredNoise();
+  if (!value || typeof value !== "object")
+    throw new Error(`Seed ${seed} round ${round} has a malformed noise floor.`);
+  const noise = value as {
+    value?: unknown;
+    method?: unknown;
+    items?: unknown;
+    calls?: unknown;
+  };
+  if (noise.method === "not_measured") {
+    if (noise.value != null || noise.items != null || noise.calls != null)
+      throw new Error(`Seed ${seed} round ${round} records an unmeasured noise floor as a number.`);
+    return notMeasuredNoise();
+  }
+  if (noise.method !== "paired-bootstrap")
+    throw new Error(`Seed ${seed} round ${round} has an unknown noise floor method.`);
+  if (typeof noise.value !== "number" || !Number.isFinite(noise.value))
+    throw new Error(`Seed ${seed} round ${round} has a non-finite noise floor.`);
+  return {
+    value: noise.value,
+    method: "paired-bootstrap",
+    items: noiseCount(noise.items, seed, round, "noise items"),
+    calls: noise.calls == null ? null : noiseCount(noise.calls, seed, round, "noise calls"),
+  };
+}
+
+function readEffective(value: unknown, seed: number, round: number): number | null {
+  if (value === undefined) return null;
+  return numberOrNull(value, seed, round, "effective threshold");
+}
+
+function readBinding(
+  value: unknown,
+  seed: number,
+  round: number,
+): ExplainedCheck["bindingThreshold"] {
+  if (value === undefined || value === null) return null;
+  if (value === "minimum_effect" || value === "noise_floor" || value === "tie") return value;
+  throw new Error(`Seed ${seed} round ${round} has an unknown binding threshold.`);
+}
+
+function notMeasuredNoise(): ExplainedNoise {
+  return { value: null, method: "not_measured", items: null, calls: null };
+}
+
+function noiseCount(value: unknown, seed: number, round: number, name: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
     throw new Error(`Seed ${seed} round ${round} has an invalid ${name} count.`);
   return value;
@@ -256,6 +331,12 @@ function formatCheck(
     `threshold ${show(check.threshold)}`,
     `decisive ${show(check.decisive)}`,
     `required ${show(check.required)}`,
+    `noise ${show(check.noiseFloor.value)}`,
+    `method ${check.noiseFloor.method}`,
+    `noiseItems ${show(check.noiseFloor.items)}`,
+    `calls ${show(check.noiseFloor.calls)}`,
+    `effective ${show(check.effectiveThreshold)}`,
+    `binding ${check.bindingThreshold ?? "null"}`,
   ].join(" ");
 }
 
@@ -263,10 +344,12 @@ function show(value: number | null): string {
   return value === null ? "null" : JSON.stringify(value);
 }
 
-/** Match Python `json.dumps(..., ensure_ascii=True)` so C1 and bidi stay escaped. */
+/**
+ * Quote text and escape every character outside printable ASCII (0x20–0x7E),
+ * including DEL. Matches Python `json.dumps(..., ensure_ascii=True)`.
+ */
 function showText(value: string): string {
-  return JSON.stringify(value).replace(
-    /[\u007f-\uffff]/g,
-    (character) => "\\u" + character.charCodeAt(0).toString(16).padStart(4, "0"),
-  );
+  return JSON.stringify(value).replace(/[\u007f-\uffff]/g, (character) => {
+    return "\\u" + character.charCodeAt(0).toString(16).padStart(4, "0");
+  });
 }

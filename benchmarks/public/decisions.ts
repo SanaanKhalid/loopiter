@@ -13,6 +13,7 @@ import {
   type GateDecision,
   type GateItem,
   type GateParameters,
+  type NoiseFloorRecord,
   type UnpairedCounts,
 } from "../../src/acceptance-gate.js";
 import type { SplitSizes } from "./splits.js";
@@ -198,7 +199,8 @@ export function replaySeed(
       again.effect !== round.decision.effect ||
       (round.decision.outcome !== undefined && again.outcome !== round.decision.outcome) ||
       (round.decision.decisive !== undefined && again.decisive !== round.decision.decisive) ||
-      (round.decision.required !== undefined && again.required !== round.decision.required)
+      (round.decision.required !== undefined && again.required !== round.decision.required) ||
+      !sameNoise(again, round.decision)
     )
       mismatches.push(`seed ${log.seed} round ${round.round} decision`);
   }
@@ -304,11 +306,36 @@ function validateSeed(log: SeedDecisionLog): void {
         if (ids.has(item.id))
           throw new Error(`Seed ${log.seed} round ${round.round} repeats item ${item.id}.`);
         ids.add(item.id);
-        if (!Number.isFinite(item.incumbent) || !Number.isFinite(item.candidate))
+        if (
+          !Number.isFinite(item.incumbent) ||
+          !Number.isFinite(item.candidate) ||
+          (item.incumbentRepeat !== undefined && !Number.isFinite(item.incumbentRepeat))
+        )
           throw new Error(`Seed ${log.seed} round ${round.round} has a non-finite score.`);
       }
     }
   }
+}
+
+function sameNoise(again: GateDecision, stored: GateDecision): boolean {
+  const noise = (stored as { noiseFloor?: NoiseFloorRecord }).noiseFloor;
+  if (noise === undefined) {
+    return (
+      again.noiseFloor.method === "not_measured" &&
+      again.effectiveThreshold === null &&
+      again.bindingThreshold === null
+    );
+  }
+  const effective = (stored as { effectiveThreshold?: number | null }).effectiveThreshold;
+  const binding = (stored as { bindingThreshold?: GateDecision["bindingThreshold"] }).bindingThreshold;
+  return (
+    noise.method === again.noiseFloor.method &&
+    noise.value === again.noiseFloor.value &&
+    noise.items === again.noiseFloor.items &&
+    noise.calls === again.noiseFloor.calls &&
+    (effective === undefined ? again.effectiveThreshold === null : effective === again.effectiveThreshold) &&
+    (binding === undefined ? again.bindingThreshold === null : binding === again.bindingThreshold)
+  );
 }
 
 function requireSplitSizes(sizes: SplitSizes, seed: number): void {
@@ -363,6 +390,33 @@ function requireDecision(decision: GateDecision, seed: number, round: number): v
     if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
       throw new Error(`Seed ${seed} round ${round} has an invalid ${name} count.`);
   }
+  const noise = (decision as { noiseFloor?: NoiseFloorRecord | null }).noiseFloor;
+  if (noise === undefined || noise === null) return;
+  if (noise.method !== "paired-bootstrap" && noise.method !== "not_measured")
+    throw new Error(`Seed ${seed} round ${round} has an unknown noise floor method.`);
+  if (noise.method === "not_measured") {
+    if (noise.value != null || noise.items != null || noise.calls != null)
+      throw new Error(`Seed ${seed} round ${round} records an unmeasured noise floor as a number.`);
+    return;
+  }
+  if (typeof noise.value !== "number" || !Number.isFinite(noise.value))
+    throw new Error(`Seed ${seed} round ${round} has a non-finite noise floor.`);
+  if (typeof noise.items !== "number" || !Number.isInteger(noise.items) || noise.items < 0)
+    throw new Error(`Seed ${seed} round ${round} has an invalid noise items count.`);
+  if (
+    noise.calls != null &&
+    (typeof noise.calls !== "number" || !Number.isInteger(noise.calls) || noise.calls < 0)
+  )
+    throw new Error(`Seed ${seed} round ${round} has an invalid noise calls count.`);
+  const binding = (decision as { bindingThreshold?: unknown }).bindingThreshold;
+  if (
+    binding !== undefined &&
+    binding !== null &&
+    binding !== "minimum_effect" &&
+    binding !== "noise_floor" &&
+    binding !== "tie"
+  )
+    throw new Error(`Seed ${seed} round ${round} has an unknown binding threshold.`);
 }
 
 function cloneSeed(log: SeedDecisionLog): SeedDecisionLog {

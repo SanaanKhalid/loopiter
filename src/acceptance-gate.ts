@@ -11,6 +11,10 @@
  * differ. Below that count the outcome is `insufficient` and the interval is
  * not used. 0 leaves that guard off. Aggregate counts, used only when no
  * paired items are supplied, use a Newcombe interval built from Wilson bounds.
+ * An optional second incumbent score on every item measures run-to-run jitter.
+ * The same bootstrap, seed, and id order produce an upper bound on the absolute
+ * mean of that pair. The candidate must clear the larger of `minimumEffect`
+ * and that bound. Omitting the second score records the floor as not measured.
  */
 
 /**
@@ -42,6 +46,21 @@ export interface GateItem {
   id: string;
   incumbent: number;
   candidate: number;
+  /**
+   * Second score of the same incumbent on this item. Present on every item
+   * when the noise floor was measured, and absent on every item when it was not.
+   */
+  incumbentRepeat?: number;
+}
+
+export interface NoiseFloorRecord {
+  /** Upper bound on |effect| of two incumbent runs. Null when the check did not run. */
+  value: number | null;
+  method: "paired-bootstrap" | "not_measured";
+  /** Items in the re-score. Null when the check did not run. */
+  items: number | null;
+  /** Extra incumbent scores. One per item when the re-score ran. Null when unknown. */
+  calls: number | null;
 }
 
 export interface UnpairedCounts {
@@ -95,6 +114,19 @@ export interface GateDecision {
   decisive: number | null;
   /** Decisive items required. Null when that guard did not run. Never 0 for "off". */
   required: number | null;
+  /** Run-to-run bound. `not_measured` and nulls when the incumbent was not re-scored. */
+  noiseFloor: NoiseFloorRecord;
+  /** max(minimumEffect, noiseFloor). Null when the noise check did not run. */
+  effectiveThreshold: number | null;
+  /** Which bar set the effective threshold. Null when the noise check did not run. */
+  bindingThreshold: "minimum_effect" | "noise_floor" | "tie" | null;
+}
+
+interface AppliedNoise {
+  record: NoiseFloorRecord;
+  effective: number | null;
+  binding: GateDecision["bindingThreshold"];
+  bar: number;
 }
 
 /** Two-sided normal quantiles. Other levels use Acklam's inverse normal. */
@@ -141,6 +173,7 @@ export function decideAcceptance(input: {
     itemCount: 0,
     decisive: null,
     required: null,
+    ...noiseFields(absentNoise(parameters.minimumEffect)),
   };
 }
 
@@ -150,6 +183,7 @@ function decidePaired(
   parameters: GateParameters,
 ): GateDecision {
   const ordered = orderPairedItems(items);
+  const noise = noiseFromRepeats(ordered, parameters);
   const diffs: number[] = [];
   let decisive = 0;
   for (const item of ordered) {
@@ -158,11 +192,11 @@ function decidePaired(
   }
   const required = decisiveRequirement(parameters);
   if (required !== null && decisive < required)
-    return insufficient(meanOf(diffs), diffs.length, decisive, required, "paired-bootstrap");
+    return insufficient(meanOf(diffs), diffs.length, decisive, required, "paired-bootstrap", noise);
   if (parameters.minimumItems > 0 && diffs.length < parameters.minimumItems)
-    return blocked("minimum_items", meanOf(diffs), diffs.length, decisive, required, "paired-bootstrap");
+    return blocked("minimum_items", meanOf(diffs), diffs.length, decisive, required, "paired-bootstrap", noise);
   const interval = bootstrapMeanInterval(diffs, parameters);
-  return finish(interval, diffs.length, decisive, required, "paired-bootstrap", parameters.minimumEffect);
+  return finish(interval, diffs.length, decisive, required, "paired-bootstrap", noise);
 }
 
 function decideUnpaired(
@@ -178,14 +212,29 @@ function decideUnpaired(
       sign *
       (counts.candidateSuccesses / counts.candidateTrials -
         counts.incumbentSuccesses / counts.incumbentTrials);
-    return blocked("minimum_items", effect, itemCount, null, null, "newcombe-wilson");
+    return blocked(
+      "minimum_items",
+      effect,
+      itemCount,
+      null,
+      null,
+      "newcombe-wilson",
+      absentNoise(parameters.minimumEffect),
+    );
   }
   const interval = newcombeInterval(counts, parameters.confidence);
   const directed =
     sign === 1
       ? interval
       : { effect: -interval.effect, lower: -interval.upper, upper: -interval.lower };
-  return finish(directed, itemCount, null, null, "newcombe-wilson", parameters.minimumEffect);
+  return finish(
+    directed,
+    itemCount,
+    null,
+    null,
+    "newcombe-wilson",
+    absentNoise(parameters.minimumEffect),
+  );
 }
 
 function decisiveRequirement(parameters: GateParameters): number | null {
@@ -199,9 +248,9 @@ function finish(
   decisive: number | null,
   required: number | null,
   method: GateDecision["method"],
-  minimumEffect: number,
+  noise: AppliedNoise,
 ): GateDecision {
-  const accept = interval.lower > minimumEffect;
+  const accept = interval.lower > noise.bar;
   return {
     accept,
     outcome: accept ? "accepted" : "rejected",
@@ -213,6 +262,7 @@ function finish(
     itemCount,
     decisive,
     required,
+    ...noiseFields(noise),
   };
 }
 
@@ -223,6 +273,7 @@ function blocked(
   decisive: number | null,
   required: number | null,
   method: GateDecision["method"],
+  noise: AppliedNoise,
 ): GateDecision {
   return {
     accept: false,
@@ -235,6 +286,7 @@ function blocked(
     itemCount,
     decisive,
     required,
+    ...noiseFields(noise),
   };
 }
 
@@ -244,6 +296,7 @@ function insufficient(
   decisive: number,
   required: number,
   method: GateDecision["method"],
+  noise: AppliedNoise,
 ): GateDecision {
   return {
     accept: false,
@@ -256,6 +309,92 @@ function insufficient(
     itemCount,
     decisive,
     required,
+    ...noiseFields(noise),
+  };
+}
+
+/**
+ * Upper bound on the absolute mean of two incumbent runs.
+ * Diffs are second − first. The bound is the farther endpoint of the same
+ * two-sided percentile interval the gate uses for a candidate. A constant
+ * zero difference has bound 0. Items are sorted by UTF-8 id and the draw
+ * restarts from `parameters.seed`.
+ */
+export function observedNoiseFloor(
+  items: readonly { id: string; first: number; second: number }[],
+  parameters: Pick<GateParameters, "samples" | "seed" | "confidence">,
+): { value: number; effect: number; lower: number; upper: number; items: number } {
+  if (items.length === 0) throw new Error("Noise floor needs at least one item.");
+  const ordered = [...items].sort((a, b) =>
+    Buffer.compare(Buffer.from(String(a.id)), Buffer.from(String(b.id))),
+  );
+  const seen = new Set<string>();
+  const diffs: number[] = [];
+  for (const item of ordered) {
+    if (typeof item.id !== "string" || item.id.length === 0)
+      throw new Error("Paired item id must be a non-empty string.");
+    if (seen.has(item.id)) throw new Error(`Duplicate paired item id ${item.id}.`);
+    seen.add(item.id);
+    if (!Number.isFinite(item.first) || !Number.isFinite(item.second))
+      throw new Error("Paired scores must be finite.");
+    diffs.push(item.second - item.first);
+  }
+  const interval = bootstrapMeanInterval(diffs, parameters);
+  return {
+    value: Math.max(Math.abs(interval.lower), Math.abs(interval.upper)),
+    effect: interval.effect,
+    lower: interval.lower,
+    upper: interval.upper,
+    items: diffs.length,
+  };
+}
+
+function noiseFromRepeats(items: readonly GateItem[], parameters: GateParameters): AppliedNoise {
+  let present = 0;
+  for (const item of items) if (item.incumbentRepeat !== undefined) present += 1;
+  if (present === 0) return absentNoise(parameters.minimumEffect);
+  if (present !== items.length)
+    throw new Error("Incumbent repeat scores must cover every item.");
+  const measured = observedNoiseFloor(
+    items.map((item) => ({
+      id: item.id,
+      first: item.incumbent,
+      second: item.incumbentRepeat as number,
+    })),
+    parameters,
+  );
+  return appliedNoise(parameters.minimumEffect, measured.value, measured.items);
+}
+
+function absentNoise(minimumEffect: number): AppliedNoise {
+  return {
+    record: { value: null, method: "not_measured", items: null, calls: null },
+    effective: null,
+    binding: null,
+    bar: minimumEffect,
+  };
+}
+
+function appliedNoise(minimumEffect: number, value: number, count: number): AppliedNoise {
+  const binding =
+    value > minimumEffect ? "noise_floor" : value < minimumEffect ? "minimum_effect" : "tie";
+  const effective = Math.max(minimumEffect, value);
+  return {
+    record: { value, method: "paired-bootstrap", items: count, calls: count },
+    effective,
+    binding,
+    bar: effective,
+  };
+}
+
+function noiseFields(noise: AppliedNoise): Pick<
+  GateDecision,
+  "noiseFloor" | "effectiveThreshold" | "bindingThreshold"
+> {
+  return {
+    noiseFloor: noise.record,
+    effectiveThreshold: noise.effective,
+    bindingThreshold: noise.binding,
   };
 }
 
@@ -384,7 +523,11 @@ function orderPairedItems(items: readonly GateItem[]): GateItem[] {
       throw new Error("Paired item id must be a non-empty string.");
     if (seen.has(item.id)) throw new Error(`Duplicate paired item id ${item.id}.`);
     seen.add(item.id);
-    if (!Number.isFinite(item.incumbent) || !Number.isFinite(item.candidate))
+    if (
+      !Number.isFinite(item.incumbent) ||
+      !Number.isFinite(item.candidate) ||
+      (item.incumbentRepeat !== undefined && !Number.isFinite(item.incumbentRepeat))
+    )
       throw new Error("Paired scores must be finite.");
   }
   return ordered;

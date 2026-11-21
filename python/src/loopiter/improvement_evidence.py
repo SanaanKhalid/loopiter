@@ -136,6 +136,7 @@ def validate_policy(p):
             "minimum_items",
             "minimum_validation_decisive",
             "minimum_audit_decisive",
+            "noise_floor",
         ],
         ("metric", "direction", "minimum_improvement", "range", "alpha"),
     )
@@ -177,6 +178,15 @@ def validate_policy(p):
         "minimum_validation_decisive" in o or "minimum_audit_decisive" in o
     ):
         v.fail("invalid_policy", "Decisive-item minimums require confidence acceptance.")
+    if "noise_floor" in o:
+        if o.get("acceptance") != "confidence":
+            v.fail("invalid_policy", "Noise floor requires confidence acceptance.")
+        floor = o["noise_floor"]
+        v.obj(floor, "noise floor")
+        v.fields(floor, ["validation", "audit"])
+        for key in ("validation", "audit"):
+            if key in floor and type(floor[key]) is not bool:
+                v.fail("invalid_policy", f"noise floor {key} must be a boolean.")
     _gates(p["guardrails"])
     if type(p["trusted_sources"]) is not list or not p["trusted_sources"]:
         v.fail("invalid_policy", "Trusted sources required.")
@@ -343,6 +353,14 @@ def prepare_dataset(raw, policy, now):
     return result
 
 
+def noise_floor_enabled(objective, audit=False):
+    """True when this split re-scores the incumbent. Omitted or false leaves the check off."""
+    setting = objective.get("noise_floor")
+    if not setting:
+        return False
+    return bool(setting.get("audit") if audit else setting.get("validation"))
+
+
 def confidence_decisive_minimum(objective, audit=False):
     floor = minimum_decisive_floor(objective.get("confidence", 0.9))
     key = "minimum_audit_decisive" if audit else "minimum_validation_decisive"
@@ -392,12 +410,29 @@ def compare(result, rows, p, audit=False):
         v.fail("invalid_evaluation", "One result per independent dataset unit required.")
     ids, seen, a, b = {r["id"] for r in rows}, set(), 0, 0
     lo, hi = p["objective"]["range"]
+    objective = p["objective"]
+    measure_noise = (
+        objective.get("acceptance") == "confidence"
+        and not (audit and "audit_method" in p)
+        and noise_floor_enabled(objective, audit)
+    )
     for row in cases:
-        v.fields(row, ["id", "baseline", "candidate"], ("id", "baseline", "candidate"))
+        v.fields(
+            row,
+            ["id", "baseline", "candidate", "baseline_repeat"],
+            ("id", "baseline", "candidate"),
+        )
         if row["id"] not in ids or row["id"] in seen:
             v.fail("invalid_evaluation", "Unrecognized/duplicate case.")
         seen.add(row["id"])
-        for value in (row["baseline"], row["candidate"]):
+        scores = [row["baseline"], row["candidate"]]
+        if "baseline_repeat" in row:
+            scores.append(row["baseline_repeat"])
+        elif measure_noise:
+            v.fail(
+                "invalid_evaluation", "Noise floor needs a second incumbent score on every item."
+            )
+        for value in scores:
             v.finite(value, "case", lo)
             if value > hi:
                 v.fail("invalid_evaluation", "Score outside declared range.")
@@ -410,7 +445,6 @@ def compare(result, rows, p, audit=False):
         if n
         else None
     )
-    objective = p["objective"]
     confidence = None
     if objective.get("acceptance") == "confidence" and not (audit and "audit_method" in p):
         partial = {}
@@ -426,7 +460,12 @@ def compare(result, rows, p, audit=False):
         partial["minimum_decisive"] = confidence_decisive_minimum(objective, audit)
         confidence = _cached_acceptance(
             [
-                {"id": row["id"], "incumbent": row["baseline"], "candidate": row["candidate"]}
+                {
+                    "id": row["id"],
+                    "incumbent": row["baseline"],
+                    "candidate": row["candidate"],
+                    **({"incumbentRepeat": row["baseline_repeat"]} if measure_noise else {}),
+                }
                 for row in cases
             ],
             objective["direction"],
@@ -474,6 +513,11 @@ def compare(result, rows, p, audit=False):
         "sample_count": n,
         "decisive": confidence["decisive"] if confidence else None,
         "required": confidence["required"] if confidence else None,
+        "noise_floor": confidence["noise_floor"]
+        if confidence
+        else {"value": None, "method": "not_measured", "items": None, "calls": None},
+        "effective_threshold": confidence["effective_threshold"] if confidence else None,
+        "binding_threshold": confidence["binding_threshold"] if confidence else None,
     }
 
 

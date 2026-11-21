@@ -15,6 +15,8 @@ export function promptPolicy(input: {
   minimumItems?: number;
   minimumValidationDecisive?: number;
   minimumAuditDecisive?: number;
+  /** Re-score the incumbent on these splits. Omitted leaves the noise floor off. */
+  noiseFloor?: { validation?: boolean; audit?: boolean };
   sizes: SplitSizes;
   latencyMs: number;
   /** Per-call controller reservations from `reservedModelTokens`. */
@@ -23,10 +25,12 @@ export function promptPolicy(input: {
   batchSize: number;
   observeChunk: number;
 }): AutonomyPolicy {
+  const validationFactor = 2 + (input.noiseFloor?.validation ? 1 : 0);
+  const auditFactor = 2 + (input.noiseFloor?.audit ? 1 : 0);
   const loopCalls =
     1 +
-    input.sizes.validation * 2 +
-    input.sizes.audit * 2 +
+    input.sizes.validation * validationFactor +
+    input.sizes.audit * auditFactor +
     input.sizes.production;
   const evaluateCalls = Math.max(1, input.batchSize) * 2;
   const observeCalls = Math.max(1, input.observeChunk);
@@ -45,8 +49,8 @@ export function promptPolicy(input: {
   const dailyTokens =
     input.proposeReservation +
     (input.sizes.optimization +
-      input.sizes.validation * 2 +
-      input.sizes.audit * 2 +
+      input.sizes.validation * validationFactor +
+      input.sizes.audit * auditFactor +
       input.sizes.production +
       input.sizes.heldOut * 2) *
       input.predictReservation;
@@ -77,6 +81,7 @@ export function promptPolicy(input: {
         input.minimumValidationDecisive ?? minimumDecisiveFloor(input.confidence ?? 0.9),
       minimumAuditDecisive:
         input.minimumAuditDecisive ?? minimumDecisiveFloor(input.confidence ?? 0.9),
+      ...(input.noiseFloor ? { noiseFloor: input.noiseFloor } : {}),
     },
     guardrails: [
       { metric: "accuracy", comparator: "gte", value: 0 },

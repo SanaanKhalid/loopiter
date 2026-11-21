@@ -54,7 +54,7 @@ def format_explanation(log: dict[str, Any]) -> str:
 
 
 def format_explanation_json(log: dict[str, Any]) -> str:
-    return json.dumps(log, indent=2) + "\n"
+    return json.dumps(log, indent=2, ensure_ascii=True) + "\n"
 
 
 def _explain_seed(value: Any) -> dict[str, Any]:
@@ -132,6 +132,9 @@ def _explain_decision(value: Any, rule: Any, seed: int, round_: int) -> dict[str
         "threshold": _rule_threshold(rule, seed, round_),
         "decisive": _count_or_null(value, "decisive", seed, round_),
         "required": _count_or_null(value, "required", seed, round_),
+        "noiseFloor": _read_noise(value.get("noiseFloor"), seed, round_),
+        "effectiveThreshold": _read_effective(value.get("effectiveThreshold"), seed, round_),
+        "bindingThreshold": _read_binding(value.get("bindingThreshold"), seed, round_),
     }
 
 
@@ -183,10 +186,65 @@ def _rule_threshold(rule: Any, seed: int, round_: int) -> int | float:
     return value
 
 
+def _read_noise(value: Any, seed: int, round_: int) -> dict[str, Any]:
+    if value is None:
+        return _not_measured_noise()
+    if not isinstance(value, dict):
+        raise ValueError(f"Seed {seed} round {round_} has a malformed noise floor.")
+    method = value.get("method")
+    if method == "not_measured":
+        if (
+            value.get("value") is not None
+            or value.get("items") is not None
+            or value.get("calls") is not None
+        ):
+            raise ValueError(
+                f"Seed {seed} round {round_} records an unmeasured noise floor as a number."
+            )
+        return _not_measured_noise()
+    if method != "paired-bootstrap":
+        raise ValueError(f"Seed {seed} round {round_} has an unknown noise floor method.")
+    measured = value.get("value")
+    if isinstance(measured, bool) or not isinstance(measured, (int, float)) or measured != measured:
+        raise ValueError(f"Seed {seed} round {round_} has a non-finite noise floor.")
+    if measured in (float("inf"), float("-inf")):
+        raise ValueError(f"Seed {seed} round {round_} has a non-finite noise floor.")
+    calls = value.get("calls")
+    return {
+        "value": measured,
+        "method": "paired-bootstrap",
+        "items": _noise_count(value.get("items"), seed, round_, "noise items"),
+        "calls": None if calls is None else _noise_count(calls, seed, round_, "noise calls"),
+    }
+
+
+def _read_effective(value: Any, seed: int, round_: int) -> int | float | None:
+    return _number_or_null(value, seed, round_, "effective threshold")
+
+
+def _read_binding(value: Any, seed: int, round_: int) -> str | None:
+    if value is None:
+        return None
+    if value in ("minimum_effect", "noise_floor", "tie"):
+        return value
+    raise ValueError(f"Seed {seed} round {round_} has an unknown binding threshold.")
+
+
+def _not_measured_noise() -> dict[str, Any]:
+    return {"value": None, "method": "not_measured", "items": None, "calls": None}
+
+
+def _noise_count(value: Any, seed: int, round_: int, name: str) -> int:
+    if isinstance(value, bool) or type(value) is not int or value < 0:
+        raise ValueError(f"Seed {seed} round {round_} has an invalid {name} count.")
+    return value
+
+
 def _format_check(seed: int, candidate_id: str, split: str, check: dict[str, Any] | None) -> str:
-    quoted = json.dumps(candidate_id)
+    quoted = _show_text(candidate_id)
     if check is None:
         return f"seed {seed} {quoted} {split} null"
+    binding = "null" if check["bindingThreshold"] is None else check["bindingThreshold"]
     return " ".join(
         [
             f"seed {seed}",
@@ -194,15 +252,33 @@ def _format_check(seed: int, candidate_id: str, split: str, check: dict[str, Any
             split,
             f"round {check['round']}",
             check["outcome"],
-            f"reason {json.dumps(check['reason'])}",
+            f"reason {_show_text(check['reason'])}",
             f"effect {_show(check['effect'])}",
             f"lower {_show(check['lower'])}",
             f"upper {_show(check['upper'])}",
             f"threshold {_show(check['threshold'])}",
             f"decisive {_show(check['decisive'])}",
             f"required {_show(check['required'])}",
+            f"noise {_show(check['noiseFloor']['value'])}",
+            f"method {check['noiseFloor']['method']}",
+            f"noiseItems {_show(check['noiseFloor']['items'])}",
+            f"calls {_show(check['noiseFloor']['calls'])}",
+            f"effective {_show(check['effectiveThreshold'])}",
+            f"binding {binding}",
         ]
     )
+
+
+def _show_text(value: str) -> str:
+    """Quote text and escape every character outside printable ASCII, including DEL."""
+    text = json.dumps(value, ensure_ascii=True)
+    return "".join(
+        _escape_unit(char) if ord(char) < 0x20 or ord(char) > 0x7E else char for char in text
+    )
+
+
+def _escape_unit(char: str) -> str:
+    return "\\u" + format(ord(char), "04x")
 
 
 def _show(value: Any) -> str:

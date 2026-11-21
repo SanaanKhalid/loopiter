@@ -253,6 +253,70 @@ test("served id is the baseline or a candidate that passed both splits", () => {
   assert.equal(replaySeed(rolled, rule).matched, true);
 });
 
+test("compare applies a noise floor only when the policy asks for that split", () => {
+  const rows = Array.from({ length: 20 }, (_, index) => ({
+    id: `item-${index}`,
+    episodeId: `item-${index}`,
+    entityId: `item-${index}`,
+    occurredAt: "2026-03-15T12:00:00.000Z",
+    observedAt: "2026-03-15T13:00:00.000Z",
+    source: "verified-export",
+    input: null,
+    label: null,
+  }));
+  const steady: Comparison = {
+    cases: rows.map((row) => ({ id: row.id, baseline: 0, candidate: 1, baselineRepeat: 0 })),
+    metrics: { accuracy: 1 },
+    estimatedServingCost: 0,
+  };
+  const noisy: Comparison = {
+    cases: rows.map((row, index) => ({
+      id: row.id,
+      baseline: 0.5,
+      candidate: 0.55,
+      baselineRepeat: index % 2 === 0 ? 0.9 : 0.1,
+    })),
+    metrics: { accuracy: 0.55 },
+    estimatedServingCost: 0,
+  };
+  const confidence = policy({
+    acceptance: "confidence",
+    minimumEffect: 0,
+    confidence: 0.9,
+    bootstrapSamples: 200,
+    bootstrapSeed: 17,
+    minimumItems: 0,
+    noiseFloor: { validation: true },
+  });
+  const measured = compare(steady, rows, confidence, false);
+  const ignored = compare(steady, rows, policy({
+    acceptance: "confidence",
+    minimumEffect: 0,
+    confidence: 0.9,
+    bootstrapSamples: 200,
+    bootstrapSeed: 17,
+    minimumItems: 0,
+  }), false);
+  assert.equal(measured.passed, ignored.passed);
+  assert.equal(measured.noiseFloor.value, 0);
+  assert.equal(measured.bindingThreshold, "tie");
+  assert.equal(ignored.noiseFloor.method, "not_measured");
+  assert.equal(ignored.noiseFloor.value, null);
+  const rejected = compare(noisy, rows, confidence, false);
+  assert.equal(rejected.passed, false);
+  assert.equal(rejected.bindingThreshold, "noise_floor");
+  assert.equal(compare(noisy, rows, confidence, true).noiseFloor.method, "not_measured");
+  assert.throws(() => compare({
+    ...steady,
+    cases: steady.cases.map(({ baselineRepeat: _repeat, ...row }) => row),
+  }, rows, confidence, false));
+  const fixed = policy();
+  fixed.objective = { ...fixed.objective, noiseFloor: { validation: true } };
+  const fixedResult = compare(steady, rows, fixed, false);
+  assert.equal(fixedResult.noiseFloor.method, "not_measured");
+  assert.equal(fixedResult.noiseFloor.value, null);
+});
+
 test("confidence acceptance keeps a small paired gain the fixed margin rejects", () => {
   const cases = [
     ...Array.from({ length: 8 }, (_, index) => ({ id: `up-${index}`, baseline: 0, candidate: 1 })),
@@ -454,6 +518,9 @@ test("an insufficient validation is not served, and a missing audit is null rath
     delete legacyDecision.outcome;
     delete legacyDecision.decisive;
     delete legacyDecision.required;
+    delete legacyDecision.noiseFloor;
+    delete legacyDecision.effectiveThreshold;
+    delete legacyDecision.bindingThreshold;
     const legacy = {
       schemaVersion: 1,
       kind: "acceptance-decisions",
@@ -486,6 +553,8 @@ test("an insufficient validation is not served, and a missing audit is null rath
     const legacyText = formatExplanation(explainDecisionText(JSON.stringify(legacy)));
     assert.match(legacyText, /decisive null required null/);
     assert.equal(legacyText.includes("decisive 0"), false);
+    assert.match(legacyText, /noise null method not_measured noiseItems null calls null effective null binding null/);
+    assert.equal(legacyText.includes("noise 0"), false);
     assert.match(legacyText, /audit null/);
     const malformed = spawnSync(process.execPath, [cliPath(), "explain", join(directory, "missing.json")], {
       encoding: "utf8",
@@ -526,7 +595,7 @@ test("an insufficient validation is not served, and a missing audit is null rath
           rounds: [
             {
               round: 0,
-              candidateId: "c\u009b2J\u202e\u00e9\nseed 1 c9 audit round 9 accepted",
+              candidateId: "c\u007f\u009b2J\u202e\u00e9\u{1F600}\nseed 1 c9 audit round 9 accepted",
               promptHash: "p",
               incumbentId: "baseline",
               incumbentPromptHash: "base",
@@ -535,7 +604,7 @@ test("an insufficient validation is not served, and a missing audit is null rath
               decision: {
                 accept: false,
                 outcome: "rejected",
-                reason: "below\u001b[2J",
+                reason: "below\u001b[2J\u007f",
                 lower: -1,
                 upper: 0,
                 effect: -1,
@@ -554,14 +623,18 @@ test("an insufficient validation is not served, and a missing audit is null rath
     const craftedText = formatExplanation(explainDecisionText(JSON.stringify(crafted)));
     assert.equal(craftedText.trim().split("\n").length, 2);
     assert.equal(craftedText.includes("\u001b"), false);
+    assert.equal(craftedText.includes("\u007f"), false);
     assert.equal(craftedText.includes("\u009b"), false);
     assert.equal(craftedText.includes("\u202e"), false);
     assert.equal(craftedText.includes("\u00e9"), false);
+    assert.equal(craftedText.includes("\u{1F600}"), false);
     assert.match(craftedText, /\\nseed 1 c9/);
     assert.match(craftedText, /\\u001b/);
+    assert.match(craftedText, /\\u007f/);
     assert.match(craftedText, /\\u009b/);
     assert.match(craftedText, /\\u202e/);
     assert.match(craftedText, /\\u00e9/);
+    assert.match(craftedText, /\\ud83d\\ude00/);
     const craftedPython = spawnSync("python3", ["-m", "loopiter", "explain", craftedPath], {
       cwd: root,
       env: { ...process.env, PYTHONPATH: join(root, "python/src") },
@@ -573,18 +646,184 @@ test("an insufficient validation is not served, and a missing audit is null rath
       encoding: "utf8",
     });
     assert.equal(craftedJson.status, 0, craftedJson.stderr);
+    const craftedPythonJson = spawnSync("python3", ["-m", "loopiter", "explain", craftedPath, "--json"], {
+      cwd: root,
+      env: { ...process.env, PYTHONPATH: join(root, "python/src") },
+      encoding: "utf8",
+    });
+    assert.equal(craftedPythonJson.status, 0, craftedPythonJson.stderr);
+    assert.equal(craftedPythonJson.stdout, craftedJson.stdout);
+    assert.equal([...craftedJson.stdout].every((character) => character.charCodeAt(0) <= 127), true);
     const craftedParsed = JSON.parse(craftedJson.stdout) as {
       seeds: { candidates: { candidateId: string; validation: { reason: string } | null }[] }[];
     };
+    const originalId = "c\u007f\u009b2J\u202e\u00e9\u{1F600}\nseed 1 c9 audit round 9 accepted";
+    assert.equal(craftedParsed.seeds[0]?.candidates[0]?.candidateId, originalId);
+    assert.equal(craftedParsed.seeds[0]?.candidates[0]?.validation?.reason, "below\u001b[2J\u007f");
     assert.equal(
-      craftedParsed.seeds[0]?.candidates[0]?.candidateId,
-      "c\u009b2J\u202e\u00e9\nseed 1 c9 audit round 9 accepted",
+      JSON.parse(craftedPythonJson.stdout).seeds[0].candidates[0].candidateId,
+      originalId,
     );
-    assert.equal(craftedParsed.seeds[0]?.candidates[0]?.validation?.reason, "below\u001b[2J");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a noise floor is zero for a deterministic scorer and rejects a gain inside the noise", () => {
+  const spec = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../../test/fixtures/noise-floor.json", import.meta.url)), "utf8"),
+  ) as NoiseSpec;
+  const parameters = {
+    minimumEffect: 0,
+    confidence: spec.confidence,
+    samples: spec.samples,
+    seed: spec.seed,
+    minimumItems: 0,
+  };
+  const deterministic = expandNoise(spec.deterministic);
+  const noisy = expandNoise(spec.noisy);
+  const steady = decideAcceptance({ items: deterministic, parameters });
+  const plain = decideAcceptance({
+    items: deterministic.map(({ incumbentRepeat: _repeat, ...item }) => item),
+    parameters,
+  });
+  assert.equal(steady.noiseFloor.method, "paired-bootstrap");
+  assert.equal(steady.noiseFloor.value, 0);
+  assert.equal(steady.noiseFloor.items, deterministic.length);
+  assert.equal(steady.noiseFloor.calls, deterministic.length);
+  assert.equal(steady.effectiveThreshold, 0);
+  assert.equal(steady.bindingThreshold, "tie");
+  assert.equal(steady.accept, plain.accept);
+  assert.equal(steady.reason, plain.reason);
+  assert.equal(steady.lower, plain.lower);
+  assert.equal(plain.noiseFloor.method, "not_measured");
+  assert.equal(plain.noiseFloor.value, null);
+  assert.equal(plain.effectiveThreshold, null);
+  assert.equal(plain.bindingThreshold, null);
+  const raised = { ...parameters, minimumEffect: 0.2 };
+  const above = decideAcceptance({ items: deterministic, parameters: raised });
+  const abovePlain = decideAcceptance({
+    items: deterministic.map(({ incumbentRepeat: _repeat, ...item }) => item),
+    parameters: raised,
+  });
+  assert.equal(above.noiseFloor.value, 0);
+  assert.equal(above.bindingThreshold, "minimum_effect");
+  assert.equal(above.effectiveThreshold, 0.2);
+  assert.equal(above.accept, abovePlain.accept);
+  assert.equal(above.lower, abovePlain.lower);
+  const jitter = decideAcceptance({ items: noisy, parameters });
+  const jitterPlain = decideAcceptance({
+    items: noisy.map(({ incumbentRepeat: _repeat, ...item }) => item),
+    parameters,
+  });
+  assert.equal(jitterPlain.accept, true);
+  assert.equal(jitterPlain.noiseFloor.value, null);
+  assert.ok((jitter.noiseFloor.value ?? 0) > parameters.minimumEffect);
+  assert.ok((jitter.noiseFloor.value ?? 0) > (jitter.lower ?? 0));
+  assert.equal(jitter.accept, false);
+  assert.equal(jitter.reason, "below_minimum_effect");
+  assert.equal(jitter.bindingThreshold, "noise_floor");
+  assert.equal(jitter.effectiveThreshold, jitter.noiseFloor.value);
+  const log = emptySeedLog(3, "baseline");
+  appendRound(log, {
+    candidateId: "steady",
+    promptHash: "steady",
+    split: "validation",
+    items: deterministic,
+    rule: parameters,
+  });
+  appendRound(log, {
+    candidateId: "jitter",
+    promptHash: "jitter",
+    split: "validation",
+    items: noisy,
+    rule: parameters,
+  });
+  assert.equal(replaySeed(log, parameters).matched, true);
+  const explained = formatExplanation(explainDecisionText(JSON.stringify({
+    schemaVersion: 1,
+    kind: "acceptance-decisions",
+    seeds: [log],
+  })));
+  assert.match(explained, /noise 0 method paired-bootstrap/);
+  assert.match(explained, /binding tie/);
+  assert.match(explained, /binding noise_floor/);
+  assert.equal(explained.includes("noise 0 method not_measured"), false);
+  const root = fileURLToPath(new URL("../..", import.meta.url));
+  const script = `
+import json
+from pathlib import Path
+from loopiter.acceptance_gate import decide_acceptance
+spec = json.loads(Path(${JSON.stringify(fileURLToPath(new URL("../../test/fixtures/noise-floor.json", import.meta.url)))}).read_text())
+def expand(kind):
+    rows = []
+    block = spec[kind]
+    for index in range(block["count"]):
+        repeat = block["repeat"] if "repeat" in block else (block["evenRepeat"] if index % 2 == 0 else block["oddRepeat"])
+        rows.append({"id": f"item-{index}", "incumbent": block["incumbent"], "candidate": block["candidate"], "incumbentRepeat": repeat})
+    return rows
+rule = {"minimum_effect": 0, "confidence": spec["confidence"], "samples": spec["samples"], "seed": spec["seed"], "minimum_items": 0}
+def pack(decision):
+    floor = decision["noise_floor"]
+    return {"accept": decision["accept"], "reason": decision["reason"], "lower": decision["lower"], "effect": decision["effect"], "noise": floor["value"], "method": floor["method"], "items": floor["items"], "calls": floor["calls"], "effective": decision["effective_threshold"], "binding": decision["binding_threshold"]}
+print(json.dumps({"deterministic": pack(decide_acceptance(expand("deterministic"), parameters=rule)), "noisy": pack(decide_acceptance(expand("noisy"), parameters=rule))}))
+`;
+  const result = spawnSync("python3", ["-c", script], {
+    cwd: root,
+    env: { ...process.env, PYTHONPATH: join(root, "python/src") },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const python = JSON.parse(result.stdout) as Record<string, ReturnType<typeof packDecision>>;
+  assert.deepEqual(python.deterministic, packDecision(steady));
+  assert.deepEqual(python.noisy, packDecision(jitter));
+});
+
+function packDecision(decision: ReturnType<typeof decideAcceptance>) {
+  return {
+    accept: decision.accept,
+    reason: decision.reason,
+    lower: decision.lower,
+    effect: decision.effect,
+    noise: decision.noiseFloor.value,
+    method: decision.noiseFloor.method,
+    items: decision.noiseFloor.items,
+    calls: decision.noiseFloor.calls,
+    effective: decision.effectiveThreshold,
+    binding: decision.bindingThreshold,
+  };
+}
+
+interface NoiseBlock {
+  count: number;
+  incumbent: number;
+  candidate: number;
+  repeat?: number;
+  evenRepeat?: number;
+  oddRepeat?: number;
+}
+
+interface NoiseSpec {
+  samples: number;
+  seed: number;
+  confidence: number;
+  deterministic: NoiseBlock;
+  noisy: NoiseBlock;
+}
+
+function expandNoise(block: NoiseBlock): GateItem[] {
+  return Array.from({ length: block.count }, (_, index) => ({
+    id: `item-${index}`,
+    incumbent: block.incumbent,
+    candidate: block.candidate,
+    incumbentRepeat:
+      block.repeat !== undefined
+        ? block.repeat
+        : index % 2 === 0
+          ? block.evenRepeat!
+          : block.oddRepeat!,
+  }));
+}
 
 function cliPath(): string {
   return fileURLToPath(new URL("../../dist/src/cli.js", import.meta.url));
