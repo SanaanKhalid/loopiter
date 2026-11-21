@@ -344,6 +344,97 @@ test("disable pauses every mode before a provider callback", async () => {
     assert.equal(x.registry.applications, 0, mode);
   }
 });
+test("opt-out idles autonomous, experiment, and observe", async () => {
+  for (const mode of ["autonomous", "experiment", "observe"] as const) {
+    const x = setup();
+    let calls = 0;
+    const touch = async () => {
+      calls += 1;
+      throw new Error("provider");
+    };
+    x.workflow.artifact = touch;
+    x.workflow.dataset = touch;
+    x.workflow.propose = touch;
+    const result = await new ImprovementController(x.loop, {
+      workflows: [x.workflow],
+      mode,
+      selfImproving: false,
+    }).tick("classification");
+    assert.equal(result.state, "paused", mode);
+    assert.equal(result.reason, "self_improvement_disabled", mode);
+    assert.equal(calls, 0, mode);
+    assert.equal(x.registry.applications, 0, mode);
+    assert.equal(x.counts().proposals, 0, mode);
+  }
+});
+test("self-improving on follows each mode gate", async () => {
+  const paused = setup();
+  const pausedController = new ImprovementController(paused.loop, {
+    workflows: [paused.workflow],
+    mode: "autonomous",
+    selfImproving: true,
+  });
+  await pausedController.pause("classification", "operator pause");
+  const held = await pausedController.tick("classification");
+  assert.equal(held.state, "paused");
+  assert.equal(held.reason, "workflow_paused");
+  assert.equal(paused.counts().proposals, 0);
+  assert.equal(paused.registry.applications, 0);
+
+  const running = setup();
+  const autonomous = new ImprovementController(running.loop, {
+    workflows: [running.workflow],
+    mode: "autonomous",
+    selfImproving: true,
+  });
+  let result = await autonomous.tick("classification");
+  for (
+    let i = 0;
+    i < 8 &&
+    !["completed", "no_improvement", "rolled_back", "waiting_for_evidence"].includes(
+      result.state,
+    );
+    i++
+  ) {
+    if (result.state === "observing") running.advance();
+    result = await autonomous.tick("classification");
+  }
+  assert.equal(result.state, "completed");
+  assert.equal(running.registry.applications, 1);
+  assert.ok(running.counts().proposals > 0);
+
+  const experiment = setup();
+  const experimental = new ImprovementController(experiment.loop, {
+    workflows: [experiment.workflow],
+    mode: "experiment",
+    selfImproving: true,
+  });
+  let audited = await experimental.tick("classification");
+  for (let i = 0; i < 8 && audited.state !== "completed"; i++)
+    audited = await experimental.tick("classification");
+  assert.equal(audited.state, "completed");
+  assert.equal(audited.reason, "experiment_only");
+  assert.equal(experiment.registry.applications, 0);
+  assert.ok(experiment.counts().proposals > 0);
+
+  const observe = setup();
+  let reads = 0;
+  const artifact = observe.workflow.artifact;
+  observe.workflow.artifact = async (context) => {
+    reads += 1;
+    return artifact(context);
+  };
+  const seen = await new ImprovementController(observe.loop, {
+    workflows: [observe.workflow],
+    mode: "observe",
+    selfImproving: true,
+  }).tick("classification");
+  assert.equal(seen.reason, "observation_only");
+  assert.equal(seen.state, "waiting_for_evidence");
+  assert.ok(reads > 0);
+  assert.equal(observe.counts().proposals, 0);
+  assert.equal(observe.registry.applications, 0);
+});
 test("null mode is rejected and LOOPITER_DISABLE fails closed", async () => {
   const x = setup();
   assert.throws(

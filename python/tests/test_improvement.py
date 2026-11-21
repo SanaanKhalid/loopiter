@@ -739,6 +739,92 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(calls["n"], 0, mode)
             self.assertEqual(self.registry.calls, 0, mode)
 
+    async def test_opt_out_idles_autonomous_experiment_and_observe(self):
+        for mode in ("autonomous", "experiment", "observe"):
+            self.setup_workflow(FIXTURES["scenarios"][0])
+            calls = {"n": 0}
+
+            async def touch(*_args, _calls=calls):
+                _calls["n"] += 1
+                raise AssertionError("provider")
+
+            self.workflow = replace(self.workflow, artifact=touch, dataset=touch, propose=touch)
+            result = await ImprovementController(
+                self.loop, workflows=[self.workflow], mode=mode, self_improving=False
+            ).tick("classification")
+            self.assertEqual(result["state"], "paused", mode)
+            self.assertEqual(result["reason"], "self_improvement_disabled", mode)
+            self.assertEqual(calls["n"], 0, mode)
+            self.assertEqual(self.registry.calls, 0, mode)
+            self.assertEqual(self.proposals, 0, mode)
+
+    async def test_self_improving_on_follows_each_mode_gate(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        paused = self.controller(mode="autonomous", self_improving=True)
+        await paused.pause("classification", "operator pause")
+        held = await paused.tick("classification")
+        self.assertEqual(held["state"], "paused")
+        self.assertEqual(held["reason"], "workflow_paused")
+        self.assertEqual(self.proposals, 0)
+        self.assertEqual(self.registry.calls, 0)
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        autonomous = self.controller(mode="autonomous", self_improving=True)
+        result = await autonomous.tick("classification")
+        for _ in range(8):
+            if result["state"] in (
+                "completed",
+                "no_improvement",
+                "rolled_back",
+                "waiting_for_evidence",
+            ):
+                break
+            if result["state"] == "observing":
+                self.now += timedelta(hours=2)
+            result = await autonomous.tick("classification")
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(self.registry.calls, 1)
+        self.assertGreater(self.proposals, 0)
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        experiment = self.controller(mode="experiment", self_improving=True)
+        audited = await experiment.tick("classification")
+        for _ in range(8):
+            if audited["state"] == "completed":
+                break
+            audited = await experiment.tick("classification")
+        self.assertEqual(audited["state"], "completed")
+        self.assertEqual(audited["reason"], "experiment_only")
+        self.assertEqual(self.registry.calls, 0)
+        self.assertGreater(self.proposals, 0)
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        reads = {"n": 0}
+        original = self.workflow.artifact
+
+        async def artifact(ctx, _reads=reads, _original=original):
+            _reads["n"] += 1
+            return await _original(ctx)
+
+        self.workflow = replace(self.workflow, artifact=artifact)
+        seen = await self.controller(mode="observe", self_improving=True).tick("classification")
+        self.assertEqual(seen["reason"], "observation_only")
+        self.assertEqual(seen["state"], "waiting_for_evidence")
+        self.assertGreater(reads["n"], 0)
+        self.assertEqual(self.proposals, 0)
+        self.assertEqual(self.registry.calls, 0)
+
+    def test_failure_detail_rules_match_node(self):
+        node = json.loads(
+            (Path(__file__).parents[2] / "src" / "failure-detail-rules.json").read_text()
+        )
+        python = json.loads(
+            (
+                Path(__file__).parents[1] / "src" / "loopiter" / "failure_detail_rules.json"
+            ).read_text()
+        )
+        self.assertEqual(node, python)
+
     async def test_null_mode_is_rejected_and_disable_env_fails_closed(self):
         from loopiter.improvement import improvement_work_disabled
 

@@ -100,6 +100,7 @@ def main():
             assert "loopiter/migrations/001-python-store.sql" in names
             assert "loopiter/migrations/002-autonomy.sql" in names
             assert "loopiter/improvement.py" in names
+            assert "loopiter/failure_detail_rules.json" in names
             assert "loopiter/AGENT_GUIDE.md" in names
             assert "loopiter/onboarding.py" in names
             assert "loopiter/integrations/openai.py" in names

@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import type { FeedbackLoop } from "./feedback-loop.js";
 import type {
   ControlRecord,
@@ -37,6 +36,7 @@ import {
   validatePolicy,
 } from "./improvement-evidence.js";
 import { redactCapture } from "./integrations/privacy.js";
+import failureDetailRuleFile from "./failure-detail-rules.json" with { type: "json" };
 import {
   cancellable,
   clone,
@@ -80,15 +80,6 @@ const MAX_STEP_MS = 7_200_000;
 const MAX_TICK_MS = 7_260_000;
 const FAILURE_DETAIL_UNAVAILABLE = "[detail unavailable]";
 
-interface FailureDetailRuleFile {
-  inputMax: number;
-  outputMax: number;
-  rules: { pattern: string; flags: string; replace: string }[];
-}
-
-const failureDetailRuleFile = JSON.parse(
-  readFileSync(new URL("./failure-detail-rules.json", import.meta.url), "utf8"),
-) as FailureDetailRuleFile;
 const failureDetailRules = failureDetailRuleFile.rules.map(
   (rule) => [new RegExp(rule.pattern, rule.flags), rule.replace] as const,
 );
