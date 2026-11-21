@@ -678,7 +678,7 @@ export class ImprovementController {
           this.loop.now(),
           this.targetKey(this.workflow(data.workflowId)),
           runId,
-          data.feedbackSeen ?? { id: null, recordedAt: null },
+          data.feedbackSeen ?? { id: null, recordedAt: null, seq: null },
         );
       return this.parse(row);
     });

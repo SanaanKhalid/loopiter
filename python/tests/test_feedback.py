@@ -4,10 +4,13 @@ import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from test_core import Registry, approved
+
 from loopiter import FeedbackLoop, InMemoryStore, LoopiterError, served_answer_id
 from loopiter._validation import fail
 from loopiter.feedback import (
     feedback_cursor_id,
+    feedback_head_id,
     feedback_input,
     feedback_record_id,
     persist_feedback,
@@ -298,6 +301,174 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
         async with store.transaction("app") as tx:
             spent = await tx.get("coordination", f"cap-spend:{scope}:2026-01")
         self.assertIsNone(spent)
+
+    async def test_malformed_cursor_does_not_block_rollback(self):
+        store = InMemoryStore()
+        loop = FeedbackLoop(store=store, namespace="app", clock=lambda: NOW)
+        adapter = Registry()
+        candidate = await approved(loop, "served")
+        await loop.deploy_candidate(candidate["id"], adapter)
+        chat = {"kind": "prompt", "key": "support"}
+        scope = target_scope(chat)
+        key = feedback_cursor_id(scope)
+        malformed = {"position": 42, "previous": {}, "promotion_id": 7}
+        async with store.transaction("app") as tx:
+            await tx.insert(
+                "coordination",
+                {
+                    "id": key,
+                    "namespace": "app",
+                    "revision": 1,
+                    "created_at": NOW,
+                    "updated_at": NOW,
+                    "format": 1,
+                    "data": malformed,
+                },
+            )
+        await loop.rollback_candidate(candidate["id"], adapter)
+        rolled = await loop.get_candidate(candidate["id"])
+        self.assertEqual(rolled["status"], "rolled_back")
+        self.assertIn("rollback_receipt", rolled)
+        attempts = await loop.list("attempts", limit=100)
+        self.assertTrue(attempts["items"])
+        self.assertFalse(any(item["status"] == "pending" for item in attempts["items"]))
+        targets = await loop.list("targets", limit=100)
+        for row in targets["items"]:
+            self.assertIsNone(row.get("pending_attempt_id"))
+        async with store.transaction("app") as tx:
+            cursor = await tx.get("coordination", key)
+        self.assertEqual(cursor["revision"], 1)
+        self.assertEqual(cursor["data"]["position"], 42)
+        nxt = await approved(loop, "next")
+        await loop.deploy_candidate(nxt["id"], adapter)
+        self.assertEqual((await loop.get_candidate(nxt["id"]))["status"], "deployed")
+        with self.assertRaises(LoopiterError) as error:
+            async with store.transaction("app") as tx:
+                await promote_feedback_cursor(
+                    tx,
+                    "app",
+                    NOW,
+                    scope,
+                    "run_next",
+                    {"id": "feedback:later", "recorded_at": NOW, "seq": 1},
+                )
+        self.assertEqual(error.exception.code, "invalid_state")
+        async with store.transaction("app") as tx:
+            still = await tx.get("coordination", key)
+        self.assertEqual(still["revision"], 1)
+        self.assertEqual(still["data"]["position"], 42)
+
+    async def test_sequence_ignores_clock_order(self):
+        store = InMemoryStore()
+        now = {"value": NOW}
+
+        def clock():
+            return now["value"]
+
+        loop = FeedbackLoop(store=store, namespace="app", clock=clock)
+        scope = target_scope(TARGET)
+        first = await loop.record_feedback(
+            answerId="ans_a", target=TARGET, rating={"kind": "thumbs", "value": "down"}
+        )
+        async with store.transaction("app") as tx:
+            seen = await read_feedback_head(tx, scope)
+        self.assertEqual(seen["seq"], 1)
+        later_id = ""
+        later_seq = 0
+        for index in range(40):
+            saved = await loop.record_feedback(
+                answerId="ans_a", target=TARGET, edit=f"same-ms-{index}"
+            )
+            async with store.transaction("app") as tx:
+                row = await tx.get("coordination", saved["id"])
+            if saved["id"] < first["id"]:
+                later_id = saved["id"]
+                later_seq = row["data"]["seq"]
+                break
+        self.assertLess(later_id, first["id"])
+        self.assertGreater(later_seq, 1)
+        async with store.transaction("app") as tx:
+            promoted = await promote_feedback_cursor(tx, "app", NOW, scope, "run_1", seen)
+        self.assertEqual(promoted["position"], first["id"])
+        self.assertEqual(promoted["seq"], 1)
+        self.assertGreater(later_seq, promoted["seq"])
+        now["value"] = "2026-01-15T11:00:00.000Z"
+        skewed = await loop.record_feedback(
+            answerId="ans_a", target=TARGET, edit="clock went backwards"
+        )
+        async with store.transaction("app") as tx:
+            skewed_row = await tx.get("coordination", skewed["id"])
+            held = await promote_feedback_cursor(tx, "app", now["value"], scope, "run_2", seen)
+        self.assertLess(skewed_row["data"]["recorded_at"], NOW)
+        self.assertGreater(skewed_row["data"]["seq"], 1)
+        self.assertEqual(held["seq"], 1)
+        self.assertEqual(held["position"], first["id"])
+        self.assertGreater(skewed_row["data"]["seq"], held["seq"])
+
+    async def test_bad_sequence_fails_closed(self):
+        scope = target_scope(TARGET)
+        head = feedback_head_id(scope)
+        for seq in ("3", -1, 1.5, True):
+            store = InMemoryStore()
+            async with store.transaction("app") as tx:
+                await tx.insert(
+                    "coordination",
+                    {
+                        "id": head,
+                        "namespace": "app",
+                        "revision": 1,
+                        "created_at": NOW,
+                        "updated_at": NOW,
+                        "format": 1,
+                        "data": {
+                            "kind": "feedback-head",
+                            "id": "feedback:old",
+                            "recorded_at": NOW,
+                            "seq": seq,
+                        },
+                    },
+                )
+            with self.assertRaises(LoopiterError) as error:
+                async with store.transaction("app") as tx:
+                    await read_feedback_head(tx, scope)
+            self.assertEqual(error.exception.code, "invalid_state")
+
+        class Fake:
+            def __init__(self, seq):
+                self.seq = seq
+
+            async def get(self, _collection, _key):
+                return {
+                    "data": {
+                        "kind": "feedback-head",
+                        "id": "feedback:old",
+                        "recorded_at": NOW,
+                        "seq": self.seq,
+                    }
+                }
+
+        for seq in (math.nan, math.inf):
+            with self.assertRaises(LoopiterError) as error:
+                await read_feedback_head(Fake(seq), scope)
+            self.assertEqual(error.exception.code, "invalid_state")
+
+        store = InMemoryStore()
+        loop = FeedbackLoop(store=store, namespace="app", clock=lambda: NOW)
+        saved = await loop.record_feedback(
+            answerId="ans_a", target=TARGET, rating={"kind": "thumbs", "value": "up"}
+        )
+        async with store.transaction("app") as tx:
+            row = await tx.get("coordination", saved["id"])
+            await tx.replace(
+                "coordination",
+                {**row, "revision": row["revision"] + 1, "data": {**row["data"], "seq": "1"}},
+                row["revision"],
+            )
+        with self.assertRaises(LoopiterError) as error:
+            await loop.record_feedback(
+                answerId="ans_a", target=TARGET, rating={"kind": "thumbs", "value": "up"}
+            )
+        self.assertEqual(error.exception.code, "invalid_state")
 
 
 if __name__ == "__main__":

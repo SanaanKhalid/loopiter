@@ -10,6 +10,7 @@ import {
 } from "../src/index.js";
 import {
   feedbackCursorId,
+  feedbackHeadId,
   feedbackInput,
   feedbackRecordId,
   persistFeedback,
@@ -21,6 +22,7 @@ import {
 import { admitModelCall, capBlock } from "../src/run-caps.js";
 import type { StoreTransaction } from "../src/store.js";
 import { fail } from "../src/utils.js";
+import { Registry, approved } from "./helpers.js";
 
 const served = JSON.parse(
   await readFile(new URL("../../test/fixtures/served-answer.json", import.meta.url), "utf8"),
@@ -243,7 +245,11 @@ test("a malformed stored cursor fails closed", async () => {
     );
     await assert.rejects(
       store.transaction("app", (tx) =>
-        promoteFeedbackCursor(tx, "app", NOW, scope, "run_1", { id: null, recordedAt: null }),
+        promoteFeedbackCursor(tx, "app", NOW, scope, "run_1", {
+          id: null,
+          recordedAt: null,
+          seq: null,
+        }),
       ),
       { code: "invalid_state" },
     );
@@ -253,8 +259,10 @@ test("a malformed stored cursor fails closed", async () => {
     kind: "feedback-cursor",
     position: null,
     positionAt: null,
+    seq: null,
     previous: null,
     previousAt: null,
+    previousSeq: null,
     promotionId: null,
     extra: true,
   });
@@ -351,4 +359,167 @@ test("corrupt cap counters fail closed and a conflict spends nothing", async () 
     tx.get("coordination", `cap-spend:${scope}:2026-01`),
   );
   assert.equal(spent, undefined);
+});
+
+test("a malformed cursor does not block the rollback receipt", async () => {
+  const store = new InMemoryStore();
+  const loop = new FeedbackLoop({ store, namespace: "app", clock: () => new Date(NOW) });
+  const adapter = new Registry();
+  const candidate = await approved(loop, "served");
+  await loop.deployCandidate(candidate.id, { adapter });
+  const chat = { kind: "prompt", key: "chat" };
+  const scope = targetScope(chat);
+  const id = feedbackCursorId(scope);
+  const malformed = { position: 42, previous: {}, promotionId: 7 };
+  await store.transaction("app", (tx) =>
+    tx.insert("coordination", {
+      id,
+      namespace: "app",
+      revision: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+      format: 1,
+      data: malformed,
+    }),
+  );
+  await loop.rollbackCandidate(candidate.id, { adapter });
+  const rolled = await loop.getCandidate(candidate.id);
+  assert.equal(rolled?.status, "rolled_back");
+  assert.ok(rolled?.rollbackReceipt);
+  const attempts = await loop.list("attempts", { limit: 100 });
+  assert.equal(
+    attempts.items.some((item) => item.status === "pending"),
+    false,
+  );
+  const targets = await loop.list("targets", { limit: 100 });
+  for (const row of targets.items) assert.equal(row.pendingAttemptId, undefined);
+  const cursor = await store.transaction("app", (tx) => tx.get("coordination", id));
+  assert.equal(cursor?.revision, 1);
+  assert.equal(cursor?.data.position, 42);
+  const next = await approved(loop, "next");
+  await loop.deployCandidate(next.id, { adapter });
+  assert.equal((await loop.getCandidate(next.id))?.status, "deployed");
+  await assert.rejects(
+    store.transaction("app", (tx) =>
+      promoteFeedbackCursor(tx, "app", NOW, scope, "run_next", {
+        id: "feedback:later",
+        recordedAt: NOW,
+        seq: 1,
+      }),
+    ),
+    { code: "invalid_state" },
+  );
+  const still = await store.transaction("app", (tx) => tx.get("coordination", id));
+  assert.equal(still?.revision, 1);
+  assert.equal(still?.data.position, 42);
+});
+
+test("feedback order follows the sequence when the clock does not", async () => {
+  const store = new InMemoryStore();
+  let now = NOW;
+  const loop = new FeedbackLoop({ store, namespace: "app", clock: () => new Date(now) });
+  const scope = targetScope(target);
+  const first = await loop.recordFeedback({
+    answerId: "ans_a",
+    target,
+    rating: { kind: "thumbs", value: "down" },
+  });
+  const seen = await store.transaction("app", (tx) => readFeedbackHead(tx, scope));
+  assert.equal(seen.seq, 1);
+  let laterId = "";
+  let laterSeq = 0;
+  for (let i = 0; i < 40 && !laterId; i++) {
+    const saved = await loop.recordFeedback({
+      answerId: "ans_a",
+      target,
+      edit: `same-ms-${i}`,
+    });
+    const row = await store.transaction("app", (tx) => tx.get("coordination", saved.id));
+    if (saved.id < first.id) {
+      laterId = saved.id;
+      laterSeq = row?.data.seq as number;
+    }
+  }
+  assert.ok(laterId < first.id);
+  assert.ok(laterSeq > 1);
+  const promoted = await store.transaction("app", (tx) =>
+    promoteFeedbackCursor(tx, "app", NOW, scope, "run_1", seen),
+  );
+  assert.equal(promoted.position, first.id);
+  assert.equal(promoted.seq, 1);
+  assert.ok(laterSeq > (promoted.seq ?? 0));
+
+  now = "2026-01-15T11:00:00.000Z";
+  const skewed = await loop.recordFeedback({
+    answerId: "ans_a",
+    target,
+    edit: "clock went backwards",
+  });
+  const skewedRow = await store.transaction("app", (tx) => tx.get("coordination", skewed.id));
+  assert.ok(String(skewedRow?.data.recordedAt) < NOW);
+  assert.ok((skewedRow?.data.seq as number) > 1);
+  const held = await store.transaction("app", (tx) =>
+    promoteFeedbackCursor(tx, "app", now, scope, "run_2", seen),
+  );
+  assert.equal(held.seq, 1);
+  assert.equal(held.position, first.id);
+  assert.ok((skewedRow?.data.seq as number) > (held.seq ?? 0));
+});
+
+test("a bad feedback sequence fails closed", async () => {
+  const scope = targetScope(target);
+  const headId = feedbackHeadId(scope);
+  for (const seq of ["3", -1, 1.5, true]) {
+    const store = new InMemoryStore();
+    await store.transaction("app", (tx) =>
+      tx.insert("coordination", {
+        id: headId,
+        namespace: "app",
+        revision: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+        format: 1,
+        data: {
+          kind: "feedback-head",
+          id: "feedback:old",
+          recordedAt: NOW,
+          seq,
+        },
+      }),
+    );
+    await assert.rejects(store.transaction("app", (tx) => readFeedbackHead(tx, scope)), {
+      code: "invalid_state",
+    });
+  }
+  for (const seq of [Number.NaN, Number.POSITIVE_INFINITY]) {
+    const tx = {
+      get: async () => ({
+        data: { kind: "feedback-head", id: "feedback:old", recordedAt: NOW, seq },
+      }),
+    } as unknown as StoreTransaction;
+    await assert.rejects(readFeedbackHead(tx, scope), { code: "invalid_state" });
+  }
+  const store = new InMemoryStore();
+  const loop = new FeedbackLoop({ store, namespace: "app", clock: () => new Date(NOW) });
+  const saved = await loop.recordFeedback({
+    answerId: "ans_a",
+    target,
+    rating: { kind: "thumbs", value: "up" },
+  });
+  await store.transaction("app", async (tx) => {
+    const row = (await tx.get("coordination", saved.id))!;
+    await tx.replace(
+      "coordination",
+      { ...row, revision: row.revision + 1, data: { ...row.data, seq: "1" } },
+      row.revision,
+    );
+  });
+  await assert.rejects(
+    loop.recordFeedback({
+      answerId: "ans_a",
+      target,
+      rating: { kind: "thumbs", value: "up" },
+    }),
+    { code: "invalid_state" },
+  );
 });

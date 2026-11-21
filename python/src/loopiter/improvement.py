@@ -590,7 +590,11 @@ class ImprovementController:
                         next_lock["retention"] = retained
                     await self._put(tx, "coordination", self._target(w), next_lock)
             if is_promotion(data["state"], data["reason"]):
-                seen = data.get("feedback_seen") or {"id": None, "recorded_at": None}
+                seen = data.get("feedback_seen") or {
+                    "id": None,
+                    "recorded_at": None,
+                    "seq": None,
+                }
                 await promote_feedback_cursor(
                     tx,
                     self.loop.namespace,

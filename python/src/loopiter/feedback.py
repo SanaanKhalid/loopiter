@@ -138,10 +138,31 @@ def empty_feedback_cursor():
     return {
         "position": None,
         "position_at": None,
+        "seq": None,
         "previous": None,
         "previous_at": None,
+        "previous_seq": None,
         "promotion_id": None,
     }
+
+
+def _seq(value, name, required=False):
+    if value is None:
+        if required:
+            v.fail("invalid_state", f"{name} must be an integer >= 1.")
+        return None
+    if type(value) is not int or not 1 <= value <= 2**53 - 1:
+        v.fail("invalid_state", f"{name} must be an integer >= 1.")
+    return value
+
+
+def _stored_time(value, name):
+    try:
+        v.timestamp(value, name)
+    except v.LoopiterError as error:
+        if error.code == "invalid_input":
+            v.fail("invalid_state", f"{name} must be an ISO UTC timestamp ending in Z.")
+        raise
 
 
 def _nullable(value, name):
@@ -164,7 +185,16 @@ def read_cursor(data):
         return empty_feedback_cursor()
     _stored_fields(
         data,
-        ["kind", "position", "position_at", "previous", "previous_at", "promotion_id"],
+        [
+            "kind",
+            "position",
+            "position_at",
+            "seq",
+            "previous",
+            "previous_at",
+            "previous_seq",
+            "promotion_id",
+        ],
     )
     if data["kind"] != "feedback-cursor":
         v.fail("invalid_state", "Feedback cursor kind is wrong.")
@@ -173,31 +203,35 @@ def read_cursor(data):
     promotion_id = _nullable(data["promotion_id"], "promotion_id")
     position_at = _nullable(data["position_at"], "position_at")
     previous_at = _nullable(data["previous_at"], "previous_at")
+    seq = _seq(data["seq"], "seq")
+    previous_seq = _seq(data["previous_seq"], "previous_seq")
     if position_at is not None:
-        v.timestamp(position_at, "position_at")
+        _stored_time(position_at, "position_at")
     if previous_at is not None:
-        v.timestamp(previous_at, "previous_at")
-    if (position is None) != (position_at is None):
+        _stored_time(previous_at, "previous_at")
+    if (position is None) != (position_at is None) or (position is None) != (seq is None):
         v.fail("invalid_state", "Feedback cursor position is incomplete.")
-    if (previous is None) != (previous_at is None):
+    if (previous is None) != (previous_at is None) or (previous is None) != (previous_seq is None):
         v.fail("invalid_state", "Feedback cursor previous position is incomplete.")
     return {
         "position": position,
         "position_at": position_at,
+        "seq": seq,
         "previous": previous,
         "previous_at": previous_at,
+        "previous_seq": previous_seq,
         "promotion_id": promotion_id,
     }
 
 
 def _later(nxt, current):
-    if not nxt["id"] or not nxt["recorded_at"]:
+    seen = _seq(nxt.get("seq"), "seq")
+    held = _seq(current.get("seq"), "seq")
+    if seen is None:
         return False
-    if not current["id"] or not current["recorded_at"]:
+    if held is None:
         return True
-    if nxt["recorded_at"] != current["recorded_at"]:
-        return nxt["recorded_at"] > current["recorded_at"]
-    return nxt["id"] > current["id"]
+    return seen > held
 
 
 def advance_feedback_cursor(cursor, seen, promotion_id):
@@ -205,19 +239,26 @@ def advance_feedback_cursor(cursor, seen, promotion_id):
         v.fail("invalid_input", "promotion_id must be nonempty text.")
     if cursor["promotion_id"] == promotion_id:
         return cursor
-    current = {"id": cursor["position"], "recorded_at": cursor["position_at"]}
+    current = {
+        "id": cursor["position"],
+        "recorded_at": cursor["position_at"],
+        "seq": cursor["seq"],
+    }
     if not _later(seen, current):
         return {
             **cursor,
             "previous": cursor["position"],
             "previous_at": cursor["position_at"],
+            "previous_seq": cursor["seq"],
             "promotion_id": promotion_id,
         }
     return {
         "position": seen["id"],
         "position_at": seen["recorded_at"],
+        "seq": seen["seq"],
         "previous": cursor["position"],
         "previous_at": cursor["position_at"],
+        "previous_seq": cursor["seq"],
         "promotion_id": promotion_id,
     }
 
@@ -228,8 +269,10 @@ def rewind_feedback_cursor(cursor, promotion_id):
     return {
         "position": cursor["previous"],
         "position_at": cursor["previous_at"],
+        "seq": cursor["previous_seq"],
         "previous": None,
         "previous_at": None,
+        "previous_seq": None,
         "promotion_id": None,
     }
 
@@ -277,8 +320,10 @@ def _cursor_data(cursor):
         "kind": "feedback-cursor",
         "position": cursor["position"],
         "position_at": cursor["position_at"],
+        "seq": cursor["seq"],
         "previous": cursor["previous"],
         "previous_at": cursor["previous_at"],
+        "previous_seq": cursor["previous_seq"],
         "promotion_id": cursor["promotion_id"],
     }
 
@@ -286,15 +331,19 @@ def _cursor_data(cursor):
 async def read_feedback_head(tx, scope):
     row = await tx.get("coordination", feedback_head_id(scope))
     if not row:
-        return {"id": None, "recorded_at": None}
+        return {"id": None, "recorded_at": None, "seq": None}
     data = row["data"]
-    _stored_fields(data, ["kind", "id", "recorded_at"])
+    _stored_fields(data, ["kind", "id", "recorded_at", "seq"])
     if data["kind"] != "feedback-head":
         v.fail("invalid_state", "Feedback head kind is wrong.")
     if type(data["id"]) is not str or type(data["recorded_at"]) is not str:
         v.fail("invalid_state", "Feedback head is malformed.")
-    v.timestamp(data["recorded_at"], "recorded_at")
-    return {"id": data["id"], "recorded_at": data["recorded_at"]}
+    _stored_time(data["recorded_at"], "recorded_at")
+    return {
+        "id": data["id"],
+        "recorded_at": data["recorded_at"],
+        "seq": _seq(data["seq"], "seq", True),
+    }
 
 
 async def promote_feedback_cursor(tx, namespace, now, scope, promotion_id, seen):
@@ -311,7 +360,12 @@ async def rewind_promoted_cursor(tx, namespace, now, candidate):
     scope = target_scope(candidate["target"])
     key = feedback_cursor_id(scope)
     current = await tx.get("coordination", key)
-    cursor = read_cursor(current["data"] if current else None)
+    try:
+        cursor = read_cursor(current["data"] if current else None)
+    except v.LoopiterError as error:
+        if error.code == "invalid_state":
+            return empty_feedback_cursor()
+        raise
     if not cursor["promotion_id"]:
         return cursor
     run = await tx.get("runs", cursor["promotion_id"])
@@ -328,12 +382,17 @@ async def persist_feedback(tx, namespace, now, parsed):
     key = feedback_record_id(parsed)
     existing = await tx.get("coordination", key)
     if existing:
+        _seq(existing["data"].get("seq"), "seq", True)
         return {"id": key, "recorded_at": existing["data"]["recorded_at"]}
+    scope = target_scope(parsed["target"])
+    head = await read_feedback_head(tx, scope)
+    seq = (head["seq"] or 0) + 1
     data = {
         "kind": "feedback",
         "answer_id": parsed["answerId"],
         "target": parsed["target"],
         "recorded_at": now,
+        "seq": seq,
     }
     if "rating" in parsed:
         data["rating"] = parsed["rating"]
@@ -342,15 +401,11 @@ async def persist_feedback(tx, namespace, now, parsed):
     if "note" in parsed:
         data["note"] = parsed["note"]
     await _write(tx, namespace, now, key, data)
-    scope = target_scope(parsed["target"])
-    head = await read_feedback_head(tx, scope)
-    point = {"id": key, "recorded_at": now}
-    if _later(point, head):
-        await _write(
-            tx,
-            namespace,
-            now,
-            feedback_head_id(scope),
-            {"kind": "feedback-head", "id": key, "recorded_at": now},
-        )
-    return point
+    await _write(
+        tx,
+        namespace,
+        now,
+        feedback_head_id(scope),
+        {"kind": "feedback-head", "id": key, "recorded_at": now, "seq": seq},
+    )
+    return {"id": key, "recorded_at": now}

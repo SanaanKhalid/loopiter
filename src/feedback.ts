@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ControlRecord, JsonObject, JsonValue } from "./contracts.js";
 import { canonicalJson } from "./eval-lock.js";
 import type { StoreTransaction } from "./store.js";
-import { fail, finite, hash, object, timestamp } from "./utils.js";
+import { fail, finite, hash, LoopiterError, object, timestamp } from "./utils.js";
 import { fields as allow } from "./validation.js";
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
@@ -53,13 +53,17 @@ export interface FeedbackInput {
 export interface FeedbackPoint {
   id: string | null;
   recordedAt: string | null;
+  /** Monotonic per-target order. Null means no feedback has been seen. */
+  seq: number | null;
 }
 
 export interface FeedbackCursor {
   position: string | null;
   positionAt: string | null;
+  seq: number | null;
   previous: string | null;
   previousAt: string | null;
+  previousSeq: number | null;
   promotionId: string | null;
 }
 
@@ -175,10 +179,38 @@ export function emptyFeedbackCursor(): FeedbackCursor {
   return {
     position: null,
     positionAt: null,
+    seq: null,
     previous: null,
     previousAt: null,
+    previousSeq: null,
     promotionId: null,
   };
+}
+
+/** Stored sequence. Missing is allowed only when `required` is false. */
+function sequence(value: unknown, name: string, required = false): number | null {
+  if (value === null || value === undefined) {
+    if (required) fail("invalid_state", `${name} must be an integer >= 1.`);
+    return null;
+  }
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > Number.MAX_SAFE_INTEGER
+  )
+    fail("invalid_state", `${name} must be an integer >= 1.`);
+  return value;
+}
+
+function storedTime(value: string, name: string): void {
+  try {
+    timestamp(value, name);
+  } catch (error) {
+    if (error instanceof LoopiterError && error.code === "invalid_input")
+      fail("invalid_state", `${name} must be an ISO UTC timestamp ending in Z.`);
+    throw error;
+  }
 }
 
 function nullableId(value: unknown, name: string): string | null {
@@ -188,7 +220,16 @@ function nullableId(value: unknown, name: string): string | null {
   return value;
 }
 
-const CURSOR_FIELDS = ["kind", "position", "positionAt", "previous", "previousAt", "promotionId"];
+const CURSOR_FIELDS = [
+  "kind",
+  "position",
+  "positionAt",
+  "seq",
+  "previous",
+  "previousAt",
+  "previousSeq",
+  "promotionId",
+];
 
 function storedFields(data: JsonObject, allowed: string[]): void {
   if (data === null || typeof data !== "object" || Array.isArray(data))
@@ -208,13 +249,18 @@ function readCursor(data: JsonObject | undefined): FeedbackCursor {
   const promotionId = nullableId(data.promotionId, "promotionId");
   const positionAt = nullableId(data.positionAt, "positionAt");
   const previousAt = nullableId(data.previousAt, "previousAt");
-  if (positionAt !== null) timestamp(positionAt, "positionAt");
-  if (previousAt !== null) timestamp(previousAt, "previousAt");
-  if ((position === null) !== (positionAt === null))
+  const seq = sequence(data.seq, "seq");
+  const previousSeq = sequence(data.previousSeq, "previousSeq");
+  if (positionAt !== null) storedTime(positionAt, "positionAt");
+  if (previousAt !== null) storedTime(previousAt, "previousAt");
+  if ((position === null) !== (positionAt === null) || (position === null) !== (seq === null))
     fail("invalid_state", "Feedback cursor position is incomplete.");
-  if ((previous === null) !== (previousAt === null))
+  if (
+    (previous === null) !== (previousAt === null) ||
+    (previous === null) !== (previousSeq === null)
+  )
     fail("invalid_state", "Feedback cursor previous position is incomplete.");
-  return { position, positionAt, previous, previousAt, promotionId };
+  return { position, positionAt, seq, previous, previousAt, previousSeq, promotionId };
 }
 
 export async function readFeedbackHead(
@@ -222,20 +268,21 @@ export async function readFeedbackHead(
   scope: string,
 ): Promise<FeedbackPoint> {
   const row = (await tx.get("coordination", feedbackHeadId(scope))) as ControlRecord | undefined;
-  if (!row) return { id: null, recordedAt: null };
-  storedFields(row.data, ["kind", "id", "recordedAt"]);
+  if (!row) return { id: null, recordedAt: null, seq: null };
+  storedFields(row.data, ["kind", "id", "recordedAt", "seq"]);
   if (row.data.kind !== "feedback-head") fail("invalid_state", "Feedback head kind is wrong.");
   if (typeof row.data.id !== "string" || typeof row.data.recordedAt !== "string")
     fail("invalid_state", "Feedback head is malformed.");
-  timestamp(row.data.recordedAt, "recordedAt");
-  return { id: row.data.id, recordedAt: row.data.recordedAt };
+  storedTime(row.data.recordedAt, "recordedAt");
+  return { id: row.data.id, recordedAt: row.data.recordedAt, seq: sequence(row.data.seq, "seq", true) };
 }
 
 function later(next: FeedbackPoint, current: FeedbackPoint): boolean {
-  if (!next.id || !next.recordedAt) return false;
-  if (!current.id || !current.recordedAt) return true;
-  if (next.recordedAt !== current.recordedAt) return next.recordedAt > current.recordedAt;
-  return next.id > current.id;
+  const seen = sequence(next.seq, "seq");
+  const held = sequence(current.seq, "seq");
+  if (seen === null) return false;
+  if (held === null) return true;
+  return seen > held;
 }
 
 export function advanceFeedbackCursor(
@@ -246,18 +293,21 @@ export function advanceFeedbackCursor(
   if (typeof promotionId !== "string" || blank(promotionId))
     fail("invalid_input", "promotionId must be nonempty text.");
   if (cursor.promotionId === promotionId) return cursor;
-  if (!later(seen, { id: cursor.position, recordedAt: cursor.positionAt }))
+  if (!later(seen, { id: cursor.position, recordedAt: cursor.positionAt, seq: cursor.seq }))
     return {
       ...cursor,
       previous: cursor.position,
       previousAt: cursor.positionAt,
+      previousSeq: cursor.seq,
       promotionId,
     };
   return {
     position: seen.id,
     positionAt: seen.recordedAt,
+    seq: seen.seq,
     previous: cursor.position,
     previousAt: cursor.positionAt,
+    previousSeq: cursor.seq,
     promotionId,
   };
 }
@@ -270,8 +320,10 @@ export function rewindFeedbackCursor(
   return {
     position: cursor.previous,
     positionAt: cursor.previousAt,
+    seq: cursor.previousSeq,
     previous: null,
     previousAt: null,
+    previousSeq: null,
     promotionId: null,
   };
 }
@@ -280,8 +332,10 @@ function sameCursor(a: FeedbackCursor, b: FeedbackCursor): boolean {
   return (
     a.position === b.position &&
     a.positionAt === b.positionAt &&
+    a.seq === b.seq &&
     a.previous === b.previous &&
     a.previousAt === b.previousAt &&
+    a.previousSeq === b.previousSeq &&
     a.promotionId === b.promotionId
   );
 }
@@ -313,8 +367,10 @@ function cursorData(cursor: FeedbackCursor): JsonObject {
     kind: "feedback-cursor",
     position: cursor.position,
     positionAt: cursor.positionAt,
+    seq: cursor.seq,
     previous: cursor.previous,
     previousAt: cursor.previousAt,
+    previousSeq: cursor.previousSeq,
     promotionId: cursor.promotionId,
   };
 }
@@ -345,7 +401,14 @@ export async function rewindPromotedCursor(
   const scope = targetScope(candidate.target);
   const id = feedbackCursorId(scope);
   const current = (await tx.get("coordination", id)) as ControlRecord | undefined;
-  const cursor = readCursor(current?.data);
+  let cursor: FeedbackCursor;
+  try {
+    cursor = readCursor(current?.data);
+  } catch (error) {
+    if (error instanceof LoopiterError && error.code === "invalid_state")
+      return emptyFeedbackCursor();
+    throw error;
+  }
   if (!cursor.promotionId) return cursor;
   const run = (await tx.get("runs", cursor.promotionId)) as ControlRecord | undefined;
   if (run?.data.selectedId !== candidate.id) return cursor;
@@ -362,27 +425,31 @@ export async function persistFeedback(
 ): Promise<{ id: string; recordedAt: string }> {
   const id = feedbackRecordId(input);
   const existing = (await tx.get("coordination", id)) as ControlRecord | undefined;
-  if (existing) return { id, recordedAt: String(existing.data.recordedAt) };
+  if (existing) {
+    sequence(existing.data.seq, "seq", true);
+    return { id, recordedAt: String(existing.data.recordedAt) };
+  }
+  const scope = targetScope(input.target);
+  const head = await readFeedbackHead(tx, scope);
+  const seq = (head.seq ?? 0) + 1;
   const data: JsonObject = {
     kind: "feedback",
     answerId: input.answerId,
     target: { kind: input.target.kind, key: input.target.key },
     recordedAt: now,
+    seq,
   };
   if (input.rating) data.rating = input.rating as unknown as JsonValue;
   if (input.edit !== undefined) data.edit = input.edit;
   if (input.note !== undefined) data.note = input.note;
   await writeCoordination(tx, namespace, now, id, data);
-  const scope = targetScope(input.target);
-  const head = await readFeedbackHead(tx, scope);
-  const point = { id, recordedAt: now };
-  if (later(point, head))
-    await writeCoordination(tx, namespace, now, feedbackHeadId(scope), {
-      kind: "feedback-head",
-      id,
-      recordedAt: now,
-    });
-  return point;
+  await writeCoordination(tx, namespace, now, feedbackHeadId(scope), {
+    kind: "feedback-head",
+    id,
+    recordedAt: now,
+    seq,
+  });
+  return { id, recordedAt: now };
 }
 
 export function isPromotion(state: string, reason: string): boolean {
