@@ -6,6 +6,7 @@ import type {
   JsonObject,
   RecordBase,
 } from "./contracts.js";
+import type { EvalLock, EvalSuite } from "./eval-lock.js";
 
 export type ImprovementMode =
   | "observe"
@@ -307,6 +308,11 @@ export interface ImprovementControllerOptions {
   selfImproving?: boolean;
   mode?: ImprovementMode;
   workflows: ImprovementWorkflow[];
+  /**
+   * When set, a new run starts only if this eval lock still matches the suite.
+   * Omitted leaves the check off.
+   */
+  requireEvalLock?: { suite: EvalSuite; lock: EvalLock };
   /** Per-step callback deadline. `stepTimeoutMs` wins when both are set. */
   callbackTimeoutMs?: number;
   stepTimeoutMs?: number;

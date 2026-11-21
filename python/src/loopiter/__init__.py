@@ -3,6 +3,7 @@
 from ._validation import LoopiterError, fingerprint
 from .client import DeploymentAdapter, FeedbackLoop
 from .cohorts import assign_cohort
+from .eval_lock import check_eval_leakage, lock_eval_set, verify_eval_lock
 from .improvement import (
     CallbackContext,
     ImprovementController,
@@ -31,8 +32,11 @@ __all__ = [
     "CallbackContext",
     "ImprovementController",
     "ImprovementWorkflow",
+    "check_eval_leakage",
     "compare",
+    "lock_eval_set",
     "minimum_certifiable_audit_units",
+    "verify_eval_lock",
     "prepare_dataset",
     "validate_change",
     "validate_policy",

@@ -542,6 +542,11 @@ async def run_self_hosted_worker(
 
 
 def main(argv=None):
+    raw = sys.argv[1:] if argv is None else list(argv)
+    if raw and raw[0] == "eval" and "--help" not in raw and "-h" not in raw:
+        from .eval_lock import run_eval_command
+
+        return run_eval_command(raw[1:])
     parser = argparse.ArgumentParser(
         description="Loopiter self-hosted SDK tools; no platform account required."
     )
@@ -590,6 +595,10 @@ def main(argv=None):
     explain = commands.add_parser("explain")
     explain.add_argument("path")
     explain.add_argument("--json", action="store_true")
+    commands.add_parser(
+        "eval",
+        help="Lock an eval set, verify it, or check exact train/eval overlap.",
+    ).add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
         if args.command == "explain":

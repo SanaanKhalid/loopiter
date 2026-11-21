@@ -28,6 +28,7 @@ import {
   validateChange,
   validatePolicy,
 } from "./improvement-evidence.js";
+import { readEvalLock, readEvalSuite, verifyEvalLock } from "./eval-lock.js";
 import { redactCapture } from "./integrations/privacy.js";
 import {
   cancellable,
@@ -308,6 +309,20 @@ export class ImprovementController {
         }),
       );
     }
+    if (options.requireEvalLock !== undefined) {
+      readEvalSuite(options.requireEvalLock.suite);
+      readEvalLock(options.requireEvalLock.lock);
+    }
+  }
+  private assertRequiredEvalLock(): void {
+    const required = this.options.requireEvalLock;
+    if (!required) return;
+    const report = verifyEvalLock(required.suite, required.lock);
+    if (!report.ok)
+      fail(
+        "eval_lock_drift",
+        `Eval lock drift added ${report.added} removed ${report.removed} changed ${report.changed}.`,
+      );
   }
   private workflow(key: string) {
     return (
@@ -973,6 +988,7 @@ export class ImprovementController {
         const next = lock.target?.data.nextEligibleAt;
         if (typeof next === "string" && next > this.loop.now())
           return idle("cooldown", "waiting_for_evidence", next);
+        this.assertRequiredEvalLock();
         const baseline = await this.plain(w, (c) => w.artifact(c), signal2);
         this.baseline(baseline);
         const dataset = prepareDataset(

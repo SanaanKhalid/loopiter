@@ -1,0 +1,1572 @@
+{
+  "items": [
+    {
+      "id": "pool-0",
+      "input": {
+        "text": "Which city does fixture pool-0 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-0."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-0."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-0."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-0."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-0."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-0."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-0."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-0."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-0."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-1",
+      "input": {
+        "text": "Which city does fixture pool-1 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-1."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-1."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-1."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-1."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-1."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-1."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-1."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-1."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-1."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-2",
+      "input": {
+        "text": "Which city does fixture pool-2 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-2."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-2."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-2."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-2."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-2."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-2."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-2."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-2."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-2."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-3",
+      "input": {
+        "text": "Which city does fixture pool-3 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-3."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-3."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-3."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-3."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-3."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-3."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-3."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-3."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-3."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-4",
+      "input": {
+        "text": "Which city does fixture pool-4 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-4."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-4."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-4."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-4."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-4."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-4."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-4."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-4."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-4."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-5",
+      "input": {
+        "text": "Which city does fixture pool-5 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-5."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-5."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-5."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-5."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-5."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-5."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-5."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-5."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-5."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-6",
+      "input": {
+        "text": "Which city does fixture pool-6 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-6."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-6."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-6."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-6."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-6."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-6."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-6."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-6."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-6."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-7",
+      "input": {
+        "text": "Which city does fixture pool-7 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-7."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-7."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-7."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-7."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-7."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-7."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-7."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-7."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-7."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-8",
+      "input": {
+        "text": "Which city does fixture pool-8 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-8."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-8."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-8."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-8."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-8."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-8."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-8."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-8."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-8."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-9",
+      "input": {
+        "text": "Which city does fixture pool-9 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-9."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-9."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-9."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-9."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-9."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-9."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-9."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-9."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-9."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-10",
+      "input": {
+        "text": "Which city does fixture pool-10 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-10."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-10."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-10."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-10."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-10."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-10."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-10."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-10."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-10."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-11",
+      "input": {
+        "text": "Which city does fixture pool-11 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-11."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-11."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-11."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-11."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-11."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-11."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-11."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-11."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-11."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-12",
+      "input": {
+        "text": "Which city does fixture pool-12 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-12."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-12."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-12."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-12."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-12."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-12."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-12."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-12."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-12."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-13",
+      "input": {
+        "text": "Which city does fixture pool-13 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-13."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-13."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-13."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-13."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-13."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-13."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-13."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-13."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-13."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-14",
+      "input": {
+        "text": "Which city does fixture pool-14 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-14."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-14."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-14."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-14."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-14."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-14."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-14."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-14."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-14."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-15",
+      "input": {
+        "text": "Which city does fixture pool-15 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-15."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-15."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-15."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-15."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-15."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-15."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-15."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-15."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-15."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-16",
+      "input": {
+        "text": "Which city does fixture pool-16 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-16."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-16."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-16."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-16."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-16."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-16."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-16."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-16."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-16."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-17",
+      "input": {
+        "text": "Which city does fixture pool-17 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-17."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-17."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-17."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-17."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-17."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-17."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-17."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-17."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-17."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-18",
+      "input": {
+        "text": "Which city does fixture pool-18 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-18."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-18."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-18."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-18."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-18."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-18."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-18."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-18."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-18."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-19",
+      "input": {
+        "text": "Which city does fixture pool-19 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-19."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-19."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-19."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-19."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-19."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-19."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-19."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-19."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-19."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-20",
+      "input": {
+        "text": "Which city does fixture pool-20 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-20."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-20."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-20."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-20."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-20."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-20."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-20."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-20."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-20."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-21",
+      "input": {
+        "text": "Which city does fixture pool-21 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-21."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-21."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-21."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-21."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-21."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-21."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-21."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-21."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-21."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-22",
+      "input": {
+        "text": "Which city does fixture pool-22 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-22."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-22."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-22."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-22."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-22."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-22."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-22."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-22."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-22."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-23",
+      "input": {
+        "text": "Which city does fixture pool-23 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-23."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-23."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-23."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-23."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-23."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-23."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-23."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-23."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-23."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-24",
+      "input": {
+        "text": "Which city does fixture pool-24 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-24."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-24."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-24."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-24."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-24."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-24."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-24."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-24."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-24."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-25",
+      "input": {
+        "text": "Which city does fixture pool-25 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-25."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-25."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-25."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-25."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-25."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-25."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-25."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-25."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-25."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-26",
+      "input": {
+        "text": "Which city does fixture pool-26 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-26."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-26."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-26."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-26."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-26."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-26."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-26."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-26."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-26."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-27",
+      "input": {
+        "text": "Which city does fixture pool-27 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-27."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-27."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-27."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-27."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-27."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-27."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-27."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-27."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-27."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-28",
+      "input": {
+        "text": "Which city does fixture pool-28 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-28."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-28."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-28."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-28."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-28."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-28."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-28."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-28."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-28."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-29",
+      "input": {
+        "text": "Which city does fixture pool-29 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-29."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-29."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-29."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-29."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-29."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-29."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-29."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-29."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-29."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-30",
+      "input": {
+        "text": "Which city does fixture pool-30 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-30."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-30."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-30."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-30."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-30."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-30."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-30."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-30."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-30."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "pool-31",
+      "input": {
+        "text": "Which city does fixture pool-31 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for pool-31."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for pool-31."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for pool-31."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for pool-31."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for pool-31."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for pool-31."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for pool-31."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for pool-31."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for pool-31."
+          }
+        ]
+      },
+      "expected": "Paris"
+    }
+  ]
+}

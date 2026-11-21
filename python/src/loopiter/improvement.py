@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from . import _validation as v
 from .client import FeedbackLoop, _callback
+from .eval_lock import read_eval_lock, read_eval_suite, verify_eval_lock
 from .improvement_evidence import (
     compare,
     minimum_certifiable_audit_units,
@@ -232,6 +233,7 @@ class ImprovementController:
         callback_timeout_ms=None,
         tick_timeout_ms=None,
         step_timeout_ms=None,
+        require_eval_lock=None,
         **obsolete,
     ):
         if obsolete:
@@ -283,6 +285,25 @@ class ImprovementController:
                     "evaluator": w.evaluator_version,
                     "policy": w.policy,
                 }
+            )
+        self.require_eval_lock = None
+        if require_eval_lock is not None:
+            if not isinstance(require_eval_lock, dict):
+                v.fail("invalid_input", "require_eval_lock must be an object.")
+            read_eval_suite(require_eval_lock.get("suite"))
+            read_eval_lock(require_eval_lock.get("lock"))
+            self.require_eval_lock = require_eval_lock
+
+    def _assert_eval_lock(self):
+        required = self.require_eval_lock
+        if not required:
+            return
+        report = verify_eval_lock(required["suite"], required["lock"])
+        if not report["ok"]:
+            v.fail(
+                "eval_lock_drift",
+                "Eval lock drift added "
+                f"{report['added']} removed {report['removed']} changed {report['changed']}.",
             )
 
     def _workflow(self, key):
@@ -858,6 +879,7 @@ class ImprovementController:
                     lock["next_eligible_at"]
                 ) > v.timestamp(self.loop.now()):
                     return await self._idle(w, "cooldown", next_time=lock["next_eligible_at"])
+                self._assert_eval_lock()
                 baseline = await self._plain(w, w.artifact)
                 v.baseline(baseline)
                 dataset = prepare_dataset(await self._plain(w, w.dataset), p, self.loop.now())
