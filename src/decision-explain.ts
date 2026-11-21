@@ -241,7 +241,7 @@ function formatCheck(
   split: "validation" | "audit",
   check: ExplainedCheck | null,
 ): string {
-  const id = JSON.stringify(candidateId);
+  const id = showText(candidateId);
   if (!check) return `seed ${seed} ${id} ${split} null`;
   return [
     `seed ${seed}`,
@@ -249,7 +249,7 @@ function formatCheck(
     split,
     `round ${check.round}`,
     check.outcome,
-    `reason ${JSON.stringify(check.reason)}`,
+    `reason ${showText(check.reason)}`,
     `effect ${show(check.effect)}`,
     `lower ${show(check.lower)}`,
     `upper ${show(check.upper)}`,
@@ -261,4 +261,12 @@ function formatCheck(
 
 function show(value: number | null): string {
   return value === null ? "null" : JSON.stringify(value);
+}
+
+/** Match Python `json.dumps(..., ensure_ascii=True)` so C1 and bidi stay escaped. */
+function showText(value: string): string {
+  return JSON.stringify(value).replace(
+    /[\u007f-\uffff]/g,
+    (character) => "\\u" + character.charCodeAt(0).toString(16).padStart(4, "0"),
+  );
 }

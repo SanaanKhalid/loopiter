@@ -238,7 +238,7 @@ class AcceptanceGateTest(unittest.TestCase):
                         "rounds": [
                             {
                                 "round": 0,
-                                "candidateId": "c1\nseed 1 c9 audit round 9 accepted",
+                                "candidateId": "c\u009b2J\u202e\u00e9\nseed 1 c9 audit round 9 accepted",
                                 "promptHash": "p",
                                 "incumbentId": "baseline",
                                 "incumbentPromptHash": "base",
@@ -272,8 +272,14 @@ class AcceptanceGateTest(unittest.TestCase):
             shown = format_explanation(explain_decision_text(json.dumps(crafted)))
             self.assertEqual(len(shown.strip().splitlines()), 2)
             self.assertNotIn("\u001b", shown)
+            self.assertNotIn("\u009b", shown)
+            self.assertNotIn("\u202e", shown)
+            self.assertNotIn("\u00e9", shown)
             self.assertIn("\\nseed 1 c9", shown)
             self.assertIn("\\u001b", shown)
+            self.assertIn("\\u009b", shown)
+            self.assertIn("\\u202e", shown)
+            self.assertIn("\\u00e9", shown)
             crafted_json = subprocess.run(
                 [sys.executable, "-m", "loopiter", "explain", str(crafted_path), "--json"],
                 cwd=root,
@@ -285,7 +291,7 @@ class AcceptanceGateTest(unittest.TestCase):
             self.assertEqual(crafted_json.returncode, 0, crafted_json.stderr)
             parsed_crafted = json.loads(crafted_json.stdout)
             candidate = parsed_crafted["seeds"][0]["candidates"][0]
-            self.assertEqual(candidate["candidateId"], "c1\nseed 1 c9 audit round 9 accepted")
+            self.assertEqual(candidate["candidateId"], "c\u009b2J\u202e\u00e9\nseed 1 c9 audit round 9 accepted")
             self.assertEqual(candidate["validation"]["reason"], "below\u001b[2J")
 
     def policy(self):

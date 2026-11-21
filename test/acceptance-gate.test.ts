@@ -526,7 +526,7 @@ test("an insufficient validation is not served, and a missing audit is null rath
           rounds: [
             {
               round: 0,
-              candidateId: "c1\nseed 1 c9 audit round 9 accepted",
+              candidateId: "c\u009b2J\u202e\u00e9\nseed 1 c9 audit round 9 accepted",
               promptHash: "p",
               incumbentId: "baseline",
               incumbentPromptHash: "base",
@@ -554,8 +554,21 @@ test("an insufficient validation is not served, and a missing audit is null rath
     const craftedText = formatExplanation(explainDecisionText(JSON.stringify(crafted)));
     assert.equal(craftedText.trim().split("\n").length, 2);
     assert.equal(craftedText.includes("\u001b"), false);
+    assert.equal(craftedText.includes("\u009b"), false);
+    assert.equal(craftedText.includes("\u202e"), false);
+    assert.equal(craftedText.includes("\u00e9"), false);
     assert.match(craftedText, /\\nseed 1 c9/);
     assert.match(craftedText, /\\u001b/);
+    assert.match(craftedText, /\\u009b/);
+    assert.match(craftedText, /\\u202e/);
+    assert.match(craftedText, /\\u00e9/);
+    const craftedPython = spawnSync("python3", ["-m", "loopiter", "explain", craftedPath], {
+      cwd: root,
+      env: { ...process.env, PYTHONPATH: join(root, "python/src") },
+      encoding: "utf8",
+    });
+    assert.equal(craftedPython.status, 0, craftedPython.stderr);
+    assert.equal(craftedPython.stdout, craftedText);
     const craftedJson = spawnSync(process.execPath, [cliPath(), "explain", craftedPath, "--json"], {
       encoding: "utf8",
     });
@@ -565,7 +578,7 @@ test("an insufficient validation is not served, and a missing audit is null rath
     };
     assert.equal(
       craftedParsed.seeds[0]?.candidates[0]?.candidateId,
-      "c1\nseed 1 c9 audit round 9 accepted",
+      "c\u009b2J\u202e\u00e9\nseed 1 c9 audit round 9 accepted",
     );
     assert.equal(craftedParsed.seeds[0]?.candidates[0]?.validation?.reason, "below\u001b[2J");
   } finally {
