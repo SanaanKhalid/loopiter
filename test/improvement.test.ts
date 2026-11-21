@@ -10,6 +10,7 @@ import {
   prepareDataset,
   compare,
   minimumCertifiableAuditUnits,
+  validatePolicy,
   type AutonomyPolicy,
   type DatasetSnapshot,
   type ImprovementWorkflow,
@@ -404,6 +405,126 @@ test("default autonomous mode blocks a losing candidate", async () => {
   assert.equal(result.reason, "validation_failed");
   assert.equal(x.registry.applications, 0);
 });
+test("confidence mode waits when decisive items are short and still rejects a real loss", async () => {
+  const waiting = setup({ name: "sparse", scores: [1], errors: 0 });
+  waiting.workflow.policy.objective = {
+    ...waiting.workflow.policy.objective,
+    acceptance: "confidence",
+    minimumEffect: 0,
+    confidence: 0.9,
+    bootstrapSamples: 200,
+    bootstrapSeed: 17,
+  };
+  waiting.workflow.evaluate = async (input) => ({
+    cases: input.examples.map((row, index) => ({
+      id: row.id,
+      baseline: 0,
+      candidate: input.partition === "validation" && index < 2 ? 1 : 0,
+    })),
+    metrics: { errors: 0 },
+    estimatedServingCost: 1,
+  });
+  let result = await waiting.controller().tick("classification");
+  for (let i = 0; i < 6 && result.reason !== "insufficient_decisive"; i++)
+    result = await waiting.controller().tick("classification");
+  assert.equal(result.state, "waiting_for_evidence");
+  assert.equal(result.reason, "insufficient_decisive");
+  assert.equal(waiting.registry.applications, 0);
+  const run = (await waiting.controller().getRun(result.runId!))!;
+  assert.equal(run.data.acceptance?.outcome, "insufficient");
+  assert.equal(run.data.acceptance?.split, "validation");
+  assert.equal(run.data.acceptance?.decisive, 2);
+  assert.equal(run.data.acceptance?.required, 5);
+  assert.equal(run.data.acceptance?.lower, null);
+  for (const id of run.data.candidateIds)
+    assert.equal((await waiting.loop.getCandidate(id))?.status, "proposed");
+  const again = await waiting.controller().tick("classification");
+  assert.equal(again.reason, "unchanged_evidence");
+  assert.equal(again.state, "waiting_for_evidence");
+  const coordination = await waiting.loop.list("coordination", { limit: 100 });
+  const target = coordination.items.find((row) => String(row.id).startsWith("target:"));
+  assert.equal(target?.data.consecutiveFailures ?? 0, 0);
+  assert.equal(target?.data.activeRun ?? null, null);
+
+  const loss = setup({ name: "loss", scores: [0], errors: 0 });
+  loss.workflow.policy.objective = {
+    ...loss.workflow.policy.objective,
+    acceptance: "confidence",
+    minimumEffect: 0,
+    confidence: 0.9,
+    bootstrapSamples: 200,
+    bootstrapSeed: 17,
+  };
+  loss.workflow.evaluate = async (input) => ({
+    cases: input.examples.map((row) => ({ id: row.id, baseline: 1, candidate: 0 })),
+    metrics: { errors: 0 },
+    estimatedServingCost: 1,
+  });
+  let rejected = await loss.controller().tick("classification");
+  for (let i = 0; i < 6 && rejected.reason !== "validation_failed"; i++)
+    rejected = await loss.controller().tick("classification");
+  assert.equal(rejected.state, "no_improvement");
+  assert.equal(rejected.reason, "validation_failed");
+  assert.equal(loss.registry.applications, 0);
+  const lossLock = (await loss.loop.list("coordination", { limit: 100 })).items.find((row) =>
+    String(row.id).startsWith("target:"),
+  );
+  assert.equal(lossLock?.data.consecutiveFailures, 1);
+
+  const audit = setup({ name: "audit-short", scores: [1], errors: 0 });
+  audit.workflow.policy.objective = {
+    ...audit.workflow.policy.objective,
+    acceptance: "confidence",
+    minimumEffect: 0,
+    confidence: 0.9,
+    bootstrapSamples: 200,
+    bootstrapSeed: 17,
+  };
+  audit.workflow.evaluate = async (input) => ({
+    cases: input.examples.map((row, index) => ({
+      id: row.id,
+      baseline: 0,
+      candidate: input.partition === "audit" ? (index < 2 ? 1 : 0) : 1,
+    })),
+    metrics: { errors: 0 },
+    estimatedServingCost: 1,
+  });
+  let held = await audit.controller().tick("classification");
+  for (let i = 0; i < 8 && held.reason !== "insufficient_decisive"; i++)
+    held = await audit.controller().tick("classification");
+  assert.equal(held.state, "waiting_for_evidence");
+  assert.equal(held.reason, "insufficient_decisive");
+  assert.equal(audit.registry.applications, 0);
+  const audited = (await audit.controller().getRun(held.runId!))!;
+  assert.equal(audited.data.acceptance?.split, "audit");
+  assert.equal(audited.data.acceptance?.decisive, 2);
+  const candidate = await audit.loop.getCandidate(audited.data.selectedId!);
+  assert.equal(candidate?.status, "evaluated");
+  assert.equal(candidate?.evaluations.at(-1)?.passed, false);
+});
+
+test("confidence policies reject a short partition and a non-integer decisive floor", () => {
+  const base = structuredClone(fixtures.policy) as AutonomyPolicy;
+  base.objective = { ...base.objective, acceptance: "confidence", minimumEffect: 0 };
+  assert.doesNotThrow(() => validatePolicy(base));
+  const short = structuredClone(base);
+  short.minimumValidationUnits = 4;
+  assert.throws(() => validatePolicy(short), { code: "invalid_policy" });
+  const above = structuredClone(base);
+  above.objective = { ...above.objective, minimumValidationDecisive: 100 };
+  assert.throws(() => validatePolicy(above), { code: "invalid_policy" });
+  const zero = structuredClone(base);
+  zero.objective = { ...zero.objective, minimumAuditDecisive: 0 };
+  assert.throws(() => validatePolicy(zero), { code: "invalid_input" });
+  const fractional = structuredClone(base);
+  fractional.objective = { ...fractional.objective, minimumValidationDecisive: 1.5 };
+  assert.throws(() => validatePolicy(fractional), { code: "invalid_input" });
+  const fixed = structuredClone(fixtures.policy) as AutonomyPolicy;
+  fixed.objective = { ...fixed.objective, minimumValidationDecisive: 5 };
+  assert.throws(() => validatePolicy(fixed), { code: "invalid_policy" });
+  assert.doesNotThrow(() => validatePolicy(structuredClone(fixtures.policy)));
+});
+
 test("autonomous fails closed without audit, budget, or enable", async () => {
   const disabled = setup();
   const paused = await new ImprovementController(disabled.loop, {

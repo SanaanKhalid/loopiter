@@ -8,7 +8,12 @@ import math
 from copy import deepcopy
 
 from . import _validation as v
-from .acceptance_gate import MAX_BOOTSTRAP_SAMPLES, decide_acceptance, gate_parameters
+from .acceptance_gate import (
+    MAX_BOOTSTRAP_SAMPLES,
+    decide_acceptance,
+    gate_parameters,
+    minimum_decisive_floor,
+)
 
 
 def validate_schema(schema):
@@ -129,6 +134,8 @@ def validate_policy(p):
             "bootstrap_samples",
             "bootstrap_seed",
             "minimum_items",
+            "minimum_validation_decisive",
+            "minimum_audit_decisive",
         ],
         ("metric", "direction", "minimum_improvement", "range", "alpha"),
     )
@@ -162,6 +169,14 @@ def validate_policy(p):
             v.fail("invalid_policy", "bootstrap seed must be an integer.")
     if "minimum_items" in o:
         v.integer(o["minimum_items"], "minimum items", 0)
+    if "minimum_validation_decisive" in o:
+        v.integer(o["minimum_validation_decisive"], "minimum validation decisive")
+    if "minimum_audit_decisive" in o:
+        v.integer(o["minimum_audit_decisive"], "minimum audit decisive")
+    if o.get("acceptance") != "confidence" and (
+        "minimum_validation_decisive" in o or "minimum_audit_decisive" in o
+    ):
+        v.fail("invalid_policy", "Decisive-item minimums require confidence acceptance.")
     _gates(p["guardrails"])
     if type(p["trusted_sources"]) is not list or not p["trusted_sources"]:
         v.fail("invalid_policy", "Trusted sources required.")
@@ -237,6 +252,24 @@ def validate_policy(p):
                 "invalid_policy",
                 "Confidence acceptance does not combine with a custom audit method.",
             )
+        floor = minimum_decisive_floor(o.get("confidence", 0.9))
+        validation_decisive = o.get("minimum_validation_decisive", floor)
+        audit_decisive = o.get("minimum_audit_decisive", floor)
+        if p["minimum_validation_units"] < floor or p["minimum_audit_units"] < floor:
+            v.fail(
+                "invalid_policy",
+                f"Confidence acceptance needs at least {floor} validation units and {floor} audit units.",
+            )
+        if p["minimum_validation_units"] < validation_decisive:
+            v.fail(
+                "invalid_policy",
+                "minimum_validation_decisive cannot exceed minimum_validation_units.",
+            )
+        if p["minimum_audit_units"] < audit_decisive:
+            v.fail(
+                "invalid_policy",
+                "minimum_audit_decisive cannot exceed minimum_audit_units.",
+            )
 
 
 def prepare_dataset(raw, policy, now):
@@ -298,6 +331,12 @@ def prepare_dataset(raw, policy, now):
             last_time = max(v.timestamp(row["occurred_at"]).timestamp() for row in eligible)
         result[name] = deepcopy(sorted(eligible, key=lambda r: r["id"]))
     return result
+
+
+def confidence_decisive_minimum(objective, audit=False):
+    floor = minimum_decisive_floor(objective.get("confidence", 0.9))
+    key = "minimum_audit_decisive" if audit else "minimum_validation_decisive"
+    return objective.get(key, floor)
 
 
 def passes_gates(metrics, rules):
@@ -374,6 +413,7 @@ def compare(result, rows, p, audit=False):
         ):
             if source in objective:
                 partial[target] = objective[source]
+        partial["minimum_decisive"] = confidence_decisive_minimum(objective, audit)
         confidence = _cached_acceptance(
             [
                 {"id": row["id"], "incumbent": row["baseline"], "candidate": row["candidate"]}
@@ -415,11 +455,15 @@ def compare(result, rows, p, audit=False):
     )
     return {
         "passed": passed,
+        "outcome": confidence["outcome"] if confidence else ("accepted" if passed else "rejected"),
         "baseline": a / n if n else 0,
         "candidate": b / n if n else 0,
         "improvement": improvement,
         "lower": reported_lower,
+        "upper": confidence["upper"] if confidence else None,
         "sample_count": n,
+        "decisive": confidence["decisive"] if confidence else None,
+        "required": confidence["required"] if confidence else None,
     }
 
 

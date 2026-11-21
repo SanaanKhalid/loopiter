@@ -20,6 +20,11 @@ import {
 } from "./onboarding.js";
 import type { ImprovementMode } from "./improvement-contracts.js";
 import { improvementWorkDisabled } from "./improvement-controller.js";
+import {
+  explainDecisionLog,
+  formatExplanation,
+  formatExplanationJson,
+} from "./decision-explain.js";
 const [command, ...args] = process.argv.slice(2);
 function flag(name: string): string | undefined {
   const index = args.indexOf(`--${name}`);
@@ -43,7 +48,7 @@ function validateOptions(values: string[], switches: string[] = []) {
 async function main() {
   if (!command || command === "--help" || args.includes("--help")) {
     console.log(
-      "Loopiter alpha — self-hosted SDK tools\n guide — print the installed agent setup guide\n init --directory ./loopiter — create a self-hosted setup (never overwrites)\n doctor --directory ./loopiter — check configuration without calling models\n verify — run isolated offline controller/rollback checks\n reference [--name workflows|registry|registrySql|providers|classification|classificationReadme]\n starter demo [--reject|--interrupt] — packaged classification example\n worker --module ./loopiter/application.mjs [--mode observe|recommend|experiment|autonomous] [--disable] [--step-timeout-ms 120000] [--once] [--interval-ms 30000]\n Fresh init writes schemaVersion 2 (autonomous-default): mode autonomous and selfImproving true. An ImprovementController created with no mode uses that same default. Omitting --mode uses plan.mode, or autonomous when no plan is present; --mode overrides it. The worker pauses before importing the application, in every mode, when --disable is set or LOOPITER_DISABLE is any non-empty value except 0, false, no, or off. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, budgets, and rollback still apply.\n analyze --file STATE --namespace NAME --dimensions metadata.task\n candidates|events --file STATE --namespace NAME\n export --file STATE --namespace NAME (writes JSON to stdout)\n import-v1 --input OLD --file NEW --namespace NAME",
+      "Loopiter alpha — self-hosted SDK tools\n guide — print the installed agent setup guide\n init --directory ./loopiter — create a self-hosted setup (never overwrites)\n doctor --directory ./loopiter — check configuration without calling models\n verify — run isolated offline controller/rollback checks\n reference [--name workflows|registry|registrySql|providers|classification|classificationReadme]\n starter demo [--reject|--interrupt] — packaged classification example\n worker --module ./loopiter/application.mjs [--mode observe|recommend|experiment|autonomous] [--disable] [--step-timeout-ms 120000] [--once] [--interval-ms 30000]\n explain <decisions.json> [--json] — read a decision log and print each seed's accepted, rejected, or insufficient checks\n Fresh init writes schemaVersion 2 (autonomous-default): mode autonomous and selfImproving true. An ImprovementController created with no mode uses that same default. Omitting --mode uses plan.mode, or autonomous when no plan is present; --mode overrides it. The worker pauses before importing the application, in every mode, when --disable is set or LOOPITER_DISABLE is any non-empty value except 0, false, no, or off. --enable, --confirm-activation, and --yes are ignored and log a deprecation warning. Validation, audit, budgets, and rollback still apply.\n analyze --file STATE --namespace NAME --dimensions metadata.task\n candidates|events --file STATE --namespace NAME\n export --file STATE --namespace NAME (writes JSON to stdout)\n import-v1 --input OLD --file NEW --namespace NAME",
     );
     return;
   }
@@ -62,6 +67,30 @@ async function main() {
         ? ["--enable", "--disable", "--once", "--yes", "--confirm-activation"]
         : [],
     );
+  if (command === "explain") {
+    const flags = args.filter((arg) => arg.startsWith("--"));
+    const positionals = args.filter((arg) => !arg.startsWith("--"));
+    if (flags.some((flag) => flag !== "--json") || flags.length > 1)
+      throw Error(`Unknown option: ${flags.find((flag) => flag !== "--json") ?? flags[0]}`);
+    const path = positionals[0];
+    if (!path || positionals.length !== 1) {
+      console.error("Usage: loopiter explain <decisions.json> [--json]");
+      process.exitCode = 2;
+      return;
+    }
+    try {
+      const explained = explainDecisionLog(path);
+      process.stdout.write(
+        flags.includes("--json")
+          ? formatExplanationJson(explained)
+          : formatExplanation(explained),
+      );
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : "Explain failed.");
+      process.exitCode = 1;
+    }
+    return;
+  }
   if (command === "guide") {
     console.log(await readAgentGuide());
     return;

@@ -63,6 +63,13 @@ export interface AutonomyPolicy {
     bootstrapSeed?: number;
     /** Extra item-count guard. 0 leaves it off. */
     minimumItems?: number;
+    /**
+     * Decisive items (scores differ) required on a validation check.
+     * Confidence policies default this to `minimumDecisiveFloor`.
+     */
+    minimumValidationDecisive?: number;
+    /** Decisive items required on an audit check. Same default as validation. */
+    minimumAuditDecisive?: number;
   };
   guardrails: MetricGate[];
   trustedSources: string[];
@@ -254,6 +261,19 @@ export interface ImprovementRunData {
   stepTimeouts?: number;
   /** Redacted, truncated text from a failed callback. Absent on a clean tick. */
   detail?: string;
+  /** Recorded when a confidence check waits instead of rejecting the candidate. */
+  acceptance?: {
+    split: "validation" | "audit";
+    candidateId: string;
+    outcome: "insufficient";
+    reason: string;
+    decisive: number | null;
+    required: number | null;
+    effect: number | null;
+    lower: number | null;
+    upper: number | null;
+    threshold: number;
+  };
 }
 export interface ImprovementRun extends RecordBase {
   format: 1;

@@ -6,8 +6,10 @@ That lower bound is the same cutoff as a one-sided bound at
 Paired scores use a fixed-seed percentile bootstrap. Items are sorted by id
 before resampling, so the bound does not depend on input order.
 ``minimum_items`` defaults to 0. A percentile interval on one or two items can
-accept a one-sided difference. Aggregate counts, used only when no paired items
-are supplied, use a Newcombe interval built from Wilson bounds.
+accept a one-sided difference. ``minimum_decisive`` counts items whose scores
+differ. Below that count the outcome is ``insufficient`` and the interval is
+not used. 0 leaves that guard off. Aggregate counts, used only when no paired
+items are supplied, use a Newcombe interval built from Wilson bounds.
 The stream matches the Node gate.
 """
 
@@ -26,6 +28,27 @@ DEFAULT_GATE = {
     "minimum_items": 0,
 }
 
+
+def minimum_decisive_floor(confidence: float) -> int:
+    """Smallest unanimous decisive sample that can clear a tie at this confidence.
+
+    The two-sided tail is ``(1 - confidence) / 2``. At 0.90 that is 0.05, and
+    ``2 ** -5`` is the first power of one half strictly below it, so the floor
+    is 5. The loop matches the Node gate.
+    """
+    if not 0 < confidence < 1:
+        raise ValueError("Confidence must be between 0 and 1.")
+    alpha = (1 - confidence) / 2
+    count = 1
+    tail = 0.5
+    while tail >= alpha:
+        count += 1
+        tail /= 2
+        if count > 64:
+            raise ValueError("Decisive floor is not usable at this confidence.")
+    return count
+
+
 _Z_95 = 1.959963984540054
 _Z_90 = 1.6448536269514722
 
@@ -36,6 +59,8 @@ def gate_parameters(partial: dict[str, Any] | None = None) -> dict[str, Any]:
         for key in DEFAULT_GATE:
             if key in partial and partial[key] is not None:
                 values[key] = partial[key]
+        if partial.get("minimum_decisive") is not None:
+            values["minimum_decisive"] = partial["minimum_decisive"]
     return values
 
 
@@ -56,12 +81,15 @@ def decide_acceptance(
         return _decide_unpaired(unpaired, sign, rule)
     return {
         "accept": False,
+        "outcome": "rejected",
         "reason": "empty_sample",
         "lower": None,
         "upper": None,
         "effect": 0.0,
         "method": "paired-bootstrap",
         "item_count": 0,
+        "decisive": None,
+        "required": None,
     }
 
 
@@ -151,11 +179,30 @@ def _decide_paired(
     items: list[dict[str, Any]], sign: int, parameters: dict[str, Any]
 ) -> dict[str, Any]:
     ordered = _ordered_pairs(items)
-    diffs = [sign * (item["candidate"] - item["incumbent"]) for item in ordered]
+    diffs = []
+    decisive = 0
+    for item in ordered:
+        if item["candidate"] != item["incumbent"]:
+            decisive += 1
+        diffs.append(sign * (item["candidate"] - item["incumbent"]))
+    required = _decisive_requirement(parameters)
+    if required is not None and decisive < required:
+        return _insufficient(
+            sum(diffs) / len(diffs), len(diffs), decisive, required, "paired-bootstrap"
+        )
     if parameters["minimum_items"] > 0 and len(diffs) < parameters["minimum_items"]:
-        return _blocked("minimum_items", sum(diffs) / len(diffs), len(diffs), "paired-bootstrap")
+        return _blocked(
+            "minimum_items",
+            sum(diffs) / len(diffs),
+            len(diffs),
+            decisive,
+            required,
+            "paired-bootstrap",
+        )
     interval = bootstrap_mean_interval(diffs, parameters)
-    return _finish(interval, len(diffs), "paired-bootstrap", parameters["minimum_effect"])
+    return _finish(
+        interval, len(diffs), decisive, required, "paired-bootstrap", parameters["minimum_effect"]
+    )
 
 
 def _decide_unpaired(
@@ -167,8 +214,9 @@ def _decide_unpaired(
         counts["candidate_successes"] / counts["candidate_trials"]
         - counts["incumbent_successes"] / counts["incumbent_trials"]
     )
+    # Unpaired counts have no per-item scores, so the decisive-item guard does not run.
     if parameters["minimum_items"] > 0 and item_count < parameters["minimum_items"]:
-        return _blocked("minimum_items", effect, item_count, "newcombe-wilson")
+        return _blocked("minimum_items", effect, item_count, None, None, "newcombe-wilson")
     interval = newcombe_interval(counts, parameters["confidence"])
     directed = (
         interval
@@ -179,33 +227,75 @@ def _decide_unpaired(
             "upper": -interval["lower"],
         }
     )
-    return _finish(directed, item_count, "newcombe-wilson", parameters["minimum_effect"])
+    return _finish(
+        directed, item_count, None, None, "newcombe-wilson", parameters["minimum_effect"]
+    )
+
+
+def _decisive_requirement(parameters: dict[str, Any]) -> int | None:
+    required = parameters.get("minimum_decisive") or 0
+    return required if required > 0 else None
 
 
 def _finish(
-    interval: dict[str, float], item_count: int, method: str, minimum_effect: float
+    interval: dict[str, float],
+    item_count: int,
+    decisive: int | None,
+    required: int | None,
+    method: str,
+    minimum_effect: float,
 ) -> dict[str, Any]:
     accept = interval["lower"] > minimum_effect
     return {
         "accept": accept,
+        "outcome": "accepted" if accept else "rejected",
         "reason": "accepted" if accept else "below_minimum_effect",
         "lower": interval["lower"],
         "upper": interval["upper"],
         "effect": interval["effect"],
         "method": method,
         "item_count": item_count,
+        "decisive": decisive,
+        "required": required,
     }
 
 
-def _blocked(reason: str, effect: float, item_count: int, method: str) -> dict[str, Any]:
+def _blocked(
+    reason: str,
+    effect: float,
+    item_count: int,
+    decisive: int | None,
+    required: int | None,
+    method: str,
+) -> dict[str, Any]:
     return {
         "accept": False,
+        "outcome": "rejected",
         "reason": reason,
         "lower": None,
         "upper": None,
         "effect": effect,
         "method": method,
         "item_count": item_count,
+        "decisive": decisive,
+        "required": required,
+    }
+
+
+def _insufficient(
+    effect: float, item_count: int, decisive: int, required: int, method: str
+) -> dict[str, Any]:
+    return {
+        "accept": False,
+        "outcome": "insufficient",
+        "reason": "insufficient_decisive",
+        "lower": None,
+        "upper": None,
+        "effect": effect,
+        "method": method,
+        "item_count": item_count,
+        "decisive": decisive,
+        "required": required,
     }
 
 
@@ -226,6 +316,9 @@ def _validate_parameters(parameters: dict[str, Any]) -> None:
     minimum = parameters["minimum_items"]
     if type(minimum) is not int or minimum < 0:
         raise ValueError("minimum_items must be a non-negative integer.")
+    decisive = parameters.get("minimum_decisive", 0)
+    if type(decisive) is not int or decisive < 0:
+        raise ValueError("minimum_decisive must be a non-negative integer.")
 
 
 def _validate_counts(counts: dict[str, int]) -> None:

@@ -22,6 +22,7 @@ import {
   decideAcceptance,
   gateParameters,
   MAX_BOOTSTRAP_SAMPLES,
+  minimumDecisiveFloor,
   type GateDecision,
 } from "./acceptance-gate.js";
 import { fields, target } from "./validation.js";
@@ -171,6 +172,8 @@ export function validatePolicy(p: AutonomyPolicy): void {
     "bootstrapSamples",
     "bootstrapSeed",
     "minimumItems",
+    "minimumValidationDecisive",
+    "minimumAuditDecisive",
   ]);
   nonempty(p.objective.metric, "objective");
   enumeration(p.objective.direction, ["maximize", "minimize"], "direction");
@@ -207,6 +210,19 @@ export function validatePolicy(p: AutonomyPolicy): void {
   }
   if (p.objective.minimumItems !== undefined)
     integer(p.objective.minimumItems, "minimumItems", 0);
+  if (p.objective.minimumValidationDecisive !== undefined)
+    integer(p.objective.minimumValidationDecisive, "minimumValidationDecisive");
+  if (p.objective.minimumAuditDecisive !== undefined)
+    integer(p.objective.minimumAuditDecisive, "minimumAuditDecisive");
+  if (
+    p.objective.acceptance !== "confidence" &&
+    (p.objective.minimumValidationDecisive !== undefined ||
+      p.objective.minimumAuditDecisive !== undefined)
+  )
+    fail(
+      "invalid_policy",
+      "Decisive-item minimums require confidence acceptance.",
+    );
   gates(p.guardrails);
   gates(p.observation?.guardrails);
   if (!Array.isArray(p.trustedSources) || !p.trustedSources.length)
@@ -270,7 +286,36 @@ export function validatePolicy(p: AutonomyPolicy): void {
         "invalid_policy",
         "Confidence acceptance does not combine with a custom audit method.",
       );
+    const floor = minimumDecisiveFloor(p.objective.confidence ?? 0.9);
+    const validationDecisive = p.objective.minimumValidationDecisive ?? floor;
+    const auditDecisive = p.objective.minimumAuditDecisive ?? floor;
+    if (p.minimumValidationUnits < floor || p.minimumAuditUnits < floor)
+      fail(
+        "invalid_policy",
+        `Confidence acceptance needs at least ${floor} validation units and ${floor} audit units.`,
+      );
+    if (p.minimumValidationUnits < validationDecisive)
+      fail(
+        "invalid_policy",
+        "minimumValidationDecisive cannot exceed minimumValidationUnits.",
+      );
+    if (p.minimumAuditUnits < auditDecisive)
+      fail(
+        "invalid_policy",
+        "minimumAuditDecisive cannot exceed minimumAuditUnits.",
+      );
   }
+}
+
+export function confidenceDecisiveMinimum(
+  objective: AutonomyPolicy["objective"],
+  audit: boolean,
+): number {
+  const floor = minimumDecisiveFloor(objective.confidence ?? 0.9);
+  const configured = audit
+    ? objective.minimumAuditDecisive
+    : objective.minimumValidationDecisive;
+  return configured ?? floor;
 }
 /** Reject leakage; quarantine conflicting corrections and deduplicate episodes before scoring. */
 export function prepareDataset(
@@ -467,6 +512,7 @@ export function compare(
             ...(p.objective.minimumItems !== undefined
               ? { minimumItems: p.objective.minimumItems }
               : {}),
+            minimumDecisive: confidenceDecisiveMinimum(p.objective, audit),
           }),
         )
       : undefined;
@@ -501,11 +547,15 @@ export function compare(
   const reportedLower = confidence ? confidence.lower : Number.isFinite(lower) ? lower : null;
   return {
     passed,
+    outcome: confidence ? confidence.outcome : passed ? "accepted" : "rejected",
     baseline: n ? a / n : 0,
     candidate: n ? b / n : 0,
     improvement,
     lower: reportedLower,
+    upper: confidence ? confidence.upper : null,
     sampleCount: n,
+    decisive: confidence ? confidence.decisive : null,
+    required: confidence ? confidence.required : null,
   };
 }
 

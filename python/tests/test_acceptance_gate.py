@@ -1,8 +1,13 @@
 import json
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
-from loopiter.acceptance_gate import decide_acceptance
+from loopiter.acceptance_gate import decide_acceptance, minimum_decisive_floor
+from loopiter.decision_explain import explain_decision_text, format_explanation
 from loopiter.improvement_evidence import compare
 
 
@@ -103,10 +108,125 @@ class AcceptanceGateTest(unittest.TestCase):
             "bootstrap_seed": 17,
             "minimum_items": 0,
         }
-        self.assertFalse(compare(report, rows, fixed, False)["passed"])
-        self.assertTrue(compare(report, rows, confidence, False)["passed"])
+        fixed_validation = compare(report, rows, fixed, False)
+        confidence_validation = compare(report, rows, confidence, False)
+        self.assertFalse(fixed_validation["passed"])
+        self.assertEqual(fixed_validation["outcome"], "rejected")
+        self.assertIsNone(fixed_validation["decisive"])
+        self.assertIsNone(fixed_validation["required"])
+        self.assertTrue(confidence_validation["passed"])
+        self.assertEqual(confidence_validation["outcome"], "accepted")
+        self.assertEqual(confidence_validation["decisive"], 8)
+        self.assertEqual(confidence_validation["required"], minimum_decisive_floor(0.9))
         self.assertFalse(compare(report, rows, fixed, True)["passed"])
         self.assertTrue(compare(report, rows, confidence, True)["passed"])
+
+    def test_decisive_floor_and_node_parity(self):
+        self.assertEqual(minimum_decisive_floor(0.9), 5)
+        self.assertEqual(minimum_decisive_floor(0.95), 6)
+        rule = {
+            "minimum_effect": 0,
+            "confidence": 0.9,
+            "samples": 200,
+            "seed": 17,
+            "minimum_items": 0,
+            "minimum_decisive": 5,
+        }
+        short = decide_acceptance(pairs(4, 0, 1), parameters=rule)
+        self.assertEqual(short["outcome"], "insufficient")
+        self.assertEqual(short["decisive"], 4)
+        self.assertEqual(short["required"], 5)
+        self.assertIsNone(short["lower"])
+        enough = decide_acceptance(pairs(5, 0, 1), parameters=rule)
+        self.assertEqual(enough["outcome"], "accepted")
+        self.assertGreater(enough["lower"], 0)
+        ties = decide_acceptance(pairs(12, 1, 1), parameters=rule)
+        self.assertEqual(ties["decisive"], 0)
+        self.assertEqual(ties["outcome"], "insufficient")
+        self.assertEqual(short["effect"], 1)
+        self.assertEqual(enough["decisive"], 5)
+        self.assertEqual(short["reason"], "insufficient_decisive")
+        legacy = {
+            "schemaVersion": 1,
+            "kind": "acceptance-decisions",
+            "seeds": [
+                {
+                    "seed": 4,
+                    "baseline": {"id": "baseline", "promptHash": "base"},
+                    "served": {"id": "baseline", "promptHash": "base"},
+                    "rounds": [
+                        {
+                            "round": 0,
+                            "candidateId": "legacy",
+                            "promptHash": "old",
+                            "incumbentId": "baseline",
+                            "incumbentPromptHash": "base",
+                            "split": "validation",
+                            "rule": {
+                                "minimumEffect": 0,
+                                "confidence": 0.9,
+                                "samples": 200,
+                                "seed": 17,
+                                "minimumItems": 0,
+                            },
+                            "decision": {
+                                "accept": True,
+                                "reason": "accepted",
+                                "lower": 1,
+                                "upper": 1,
+                                "effect": 1,
+                                "method": "paired-bootstrap",
+                                "itemCount": 4,
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        text = format_explanation(explain_decision_text(json.dumps(legacy)))
+        self.assertIn("decisive null required null", text)
+        self.assertIn("audit null", text)
+        self.assertNotIn("decisive 0", text)
+        self.assertIsNone(
+            explain_decision_text(json.dumps(legacy))["seeds"][0]["candidates"][0]["audit"]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy.json"
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+            broken = Path(directory) / "broken.json"
+            broken.write_text("{", encoding="utf-8")
+            root = Path(__file__).resolve().parents[2]
+            env = {**os.environ, "PYTHONPATH": str(root / "python" / "src")}
+            bad = subprocess.run(
+                [sys.executable, "-m", "loopiter", "explain", str(broken)],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(bad.returncode, 1)
+            usage = subprocess.run(
+                [sys.executable, "-m", "loopiter", "explain"],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(usage.returncode, 2)
+            explained = subprocess.run(
+                [sys.executable, "-m", "loopiter", "explain", str(path), "--json"],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(explained.returncode, 0, explained.stderr)
+            parsed = json.loads(explained.stdout)
+            self.assertIsNone(parsed["seeds"][0]["candidates"][0]["audit"])
+            self.assertIsNone(parsed["seeds"][0]["candidates"][0]["validation"]["decisive"])
 
     def policy(self):
         return {

@@ -357,8 +357,8 @@ test("a rate-limited controller call retries without failing the arm", async () 
       scenario: "rate-limit-retry",
       tickLimit: 40,
     });
-    assert.equal(result.state, "no_improvement");
-    assert.equal(result.reason, "validation_failed");
+    assert.equal(result.state, "waiting_for_evidence");
+    assert.equal(result.reason, "insufficient_decisive");
     assert.ok(fetches > rejections);
   } finally {
     console.error = original;

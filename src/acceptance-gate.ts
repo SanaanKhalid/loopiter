@@ -7,9 +7,31 @@
  * before resampling, so the bound does not depend on input order.
  * `minimumItems` defaults to 0. A percentile interval on one or two items can
  * accept a one-sided difference; callers that need a floor set `minimumItems`
- * or the policy unit counts. Aggregate counts, used only when no paired items
- * are supplied, use a Newcombe interval built from Wilson bounds.
+ * or the policy unit counts. `minimumDecisive` counts items whose scores
+ * differ. Below that count the outcome is `insufficient` and the interval is
+ * not used. 0 leaves that guard off. Aggregate counts, used only when no
+ * paired items are supplied, use a Newcombe interval built from Wilson bounds.
  */
+
+/**
+ * Smallest unanimous decisive sample whose one-sided binomial tail is strictly
+ * below the two-sided interval's tail. At confidence 0.90 that tail is 0.05:
+ * 2^-5 = 0.03125 is below it and 2^-4 = 0.0625 is not, so the floor is 5.
+ * Fewer decisive items cannot put a one-sided bound strictly above a tie.
+ */
+export function minimumDecisiveFloor(confidence: number): number {
+  if (!(confidence > 0 && confidence < 1))
+    throw new Error("Confidence must be between 0 and 1.");
+  const alpha = (1 - confidence) / 2;
+  let count = 1;
+  let tail = 0.5;
+  while (tail >= alpha) {
+    count += 1;
+    tail /= 2;
+    if (count > 64) throw new Error("Decisive floor is not usable at this confidence.");
+  }
+  return count;
+}
 
 /** Hard ceiling so a policy or a replayed log cannot allocate an unbounded sample list. */
 export const MAX_BOOTSTRAP_SAMPLES = 100_000;
@@ -34,6 +56,11 @@ export interface GateParameters {
   seed: number;
   /** Reject before the interval when the item count is below this. 0 leaves the guard off. */
   minimumItems: number;
+  /**
+   * Paired items whose scores differ. Below this the outcome is insufficient
+   * and the interval is not used. 0 or omitted leaves the guard off.
+   */
+  minimumDecisive?: number;
 }
 
 export const DEFAULT_GATE: GateParameters = {
@@ -48,16 +75,24 @@ export type GateReason =
   | "accepted"
   | "below_minimum_effect"
   | "minimum_items"
+  | "insufficient_decisive"
   | "empty_sample";
+
+export type GateOutcome = "accepted" | "rejected" | "insufficient";
 
 export interface GateDecision {
   accept: boolean;
+  outcome: GateOutcome;
   reason: GateReason;
   lower: number | null;
   upper: number | null;
   effect: number;
   method: "paired-bootstrap" | "newcombe-wilson";
   itemCount: number;
+  /** Items whose scores differ. Null when this check did not count them. */
+  decisive: number | null;
+  /** Decisive items required. Null when that guard did not run. Never 0 for "off". */
+  required: number | null;
 }
 
 /** Two-sided normal quantiles. Other levels use Acklam's inverse normal. */
@@ -73,6 +108,9 @@ export function gateParameters(
     samples: partial?.samples ?? DEFAULT_GATE.samples,
     seed: partial?.seed ?? DEFAULT_GATE.seed,
     minimumItems: partial?.minimumItems ?? DEFAULT_GATE.minimumItems,
+    ...(partial?.minimumDecisive !== undefined
+      ? { minimumDecisive: partial.minimumDecisive }
+      : {}),
   };
 }
 
@@ -92,12 +130,15 @@ export function decideAcceptance(input: {
   if (input.unpaired) return decideUnpaired(input.unpaired, sign, parameters);
   return {
     accept: false,
+    outcome: "rejected",
     reason: "empty_sample",
     lower: null,
     upper: null,
     effect: 0,
     method: "paired-bootstrap",
     itemCount: 0,
+    decisive: null,
+    required: null,
   };
 }
 
@@ -108,11 +149,18 @@ function decidePaired(
 ): GateDecision {
   const ordered = orderPairedItems(items);
   const diffs: number[] = [];
-  for (const item of ordered) diffs.push(sign * (item.candidate - item.incumbent));
+  let decisive = 0;
+  for (const item of ordered) {
+    if (item.candidate !== item.incumbent) decisive += 1;
+    diffs.push(sign * (item.candidate - item.incumbent));
+  }
+  const required = decisiveRequirement(parameters);
+  if (required !== null && decisive < required)
+    return insufficient(meanOf(diffs), diffs.length, decisive, required, "paired-bootstrap");
   if (parameters.minimumItems > 0 && diffs.length < parameters.minimumItems)
-    return blocked("minimum_items", meanOf(diffs), diffs.length, "paired-bootstrap");
+    return blocked("minimum_items", meanOf(diffs), diffs.length, decisive, required, "paired-bootstrap");
   const interval = bootstrapMeanInterval(diffs, parameters);
-  return finish(interval, diffs.length, "paired-bootstrap", parameters.minimumEffect);
+  return finish(interval, diffs.length, decisive, required, "paired-bootstrap", parameters.minimumEffect);
 }
 
 function decideUnpaired(
@@ -122,36 +170,47 @@ function decideUnpaired(
 ): GateDecision {
   validateCounts(counts);
   const itemCount = Math.min(counts.candidateTrials, counts.incumbentTrials);
+  // Unpaired counts have no per-item scores, so the decisive-item guard does not run.
   if (parameters.minimumItems > 0 && itemCount < parameters.minimumItems) {
     const effect =
       sign *
       (counts.candidateSuccesses / counts.candidateTrials -
         counts.incumbentSuccesses / counts.incumbentTrials);
-    return blocked("minimum_items", effect, itemCount, "newcombe-wilson");
+    return blocked("minimum_items", effect, itemCount, null, null, "newcombe-wilson");
   }
   const interval = newcombeInterval(counts, parameters.confidence);
   const directed =
     sign === 1
       ? interval
       : { effect: -interval.effect, lower: -interval.upper, upper: -interval.lower };
-  return finish(directed, itemCount, "newcombe-wilson", parameters.minimumEffect);
+  return finish(directed, itemCount, null, null, "newcombe-wilson", parameters.minimumEffect);
+}
+
+function decisiveRequirement(parameters: GateParameters): number | null {
+  const required = parameters.minimumDecisive ?? 0;
+  return required > 0 ? required : null;
 }
 
 function finish(
   interval: { effect: number; lower: number; upper: number },
   itemCount: number,
+  decisive: number | null,
+  required: number | null,
   method: GateDecision["method"],
   minimumEffect: number,
 ): GateDecision {
   const accept = interval.lower > minimumEffect;
   return {
     accept,
+    outcome: accept ? "accepted" : "rejected",
     reason: accept ? "accepted" : "below_minimum_effect",
     lower: interval.lower,
     upper: interval.upper,
     effect: interval.effect,
     method,
     itemCount,
+    decisive,
+    required,
   };
 }
 
@@ -159,16 +218,42 @@ function blocked(
   reason: "minimum_items",
   effect: number,
   itemCount: number,
+  decisive: number | null,
+  required: number | null,
   method: GateDecision["method"],
 ): GateDecision {
   return {
     accept: false,
+    outcome: "rejected",
     reason,
     lower: null,
     upper: null,
     effect,
     method,
     itemCount,
+    decisive,
+    required,
+  };
+}
+
+function insufficient(
+  effect: number,
+  itemCount: number,
+  decisive: number,
+  required: number,
+  method: GateDecision["method"],
+): GateDecision {
+  return {
+    accept: false,
+    outcome: "insufficient",
+    reason: "insufficient_decisive",
+    lower: null,
+    upper: null,
+    effect,
+    method,
+    itemCount,
+    decisive,
+    required,
   };
 }
 
@@ -267,6 +352,11 @@ function validateParameters(parameters: GateParameters): void {
     throw new Error("Bootstrap seed must be an integer.");
   if (!Number.isInteger(parameters.minimumItems) || parameters.minimumItems < 0)
     throw new Error("minimumItems must be a non-negative integer.");
+  if (
+    parameters.minimumDecisive !== undefined &&
+    (!Number.isInteger(parameters.minimumDecisive) || parameters.minimumDecisive < 0)
+  )
+    throw new Error("minimumDecisive must be a non-negative integer.");
 }
 
 function validateCounts(counts: UnpairedCounts): void {

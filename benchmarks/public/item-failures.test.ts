@@ -570,7 +570,7 @@ async function runScript(
   try {
     const task = {
       ...hotpotTask,
-      fullSizes: { optimization: 2, validation: 2, audit: 2, production: 2, heldOut },
+      fullSizes: { optimization: 2, validation: 5, audit: 10, production: 2, heldOut },
     };
     const report = await runLiveTask(
       task,
@@ -608,7 +608,7 @@ async function runScript(
         ...extra,
       },
       {
-        pool: Array.from({ length: 8 }, (_, index) => row(`pool-${index}`, "Paris", false)),
+        pool: Array.from({ length: 19 }, (_, index) => row(`pool-${index}`, "Paris", false)),
         heldOut: Array.from({ length: heldOut }, (_, index) => row(`held-${index}`, "Paris", false)),
       },
     );
@@ -638,8 +638,8 @@ async function runIfbench(
   let fetches = 0;
   let predicts = 0;
   let proposes = 0;
-  const sizes = { optimization: 6, validation: 6, audit: 6, production: 6, heldOut: 6 };
-  const pool = Array.from({ length: 24 }, (_, index) => ifRow(`pool-${index}`));
+  const sizes = { optimization: 6, validation: 6, audit: 10, production: 6, heldOut: 6 };
+  const pool = Array.from({ length: 28 }, (_, index) => ifRow(`pool-${index}`));
   const heldOut = Array.from({ length: sizes.heldOut }, (_, index) => ifRow(`held-${index}`));
   try {
     const report = await runLiveTask(

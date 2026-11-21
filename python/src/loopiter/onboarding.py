@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import FeedbackLoop, ImprovementController
 from ._validation import fingerprint
+from .decision_explain import explain_decision_log, format_explanation, format_explanation_json
 from .improvement import improvement_work_disabled, warn_ambiguous_improvement_disable
 from .improvement_evidence import describe_audit_floor, minimum_certifiable_audit_units
 
@@ -586,8 +587,17 @@ def main(argv=None):
         action="store_true",
         help="Deprecated no-op. Same as --confirm-activation.",
     )
+    explain = commands.add_parser("explain")
+    explain.add_argument("path")
+    explain.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
+        if args.command == "explain":
+            explained = explain_decision_log(args.path)
+            sys.stdout.write(
+                format_explanation_json(explained) if args.json else format_explanation(explained)
+            )
+            return 0
         if args.command == "guide":
             print(read_agent_guide(), end="")
             return 0

@@ -9,6 +9,7 @@ import type {
 } from "./contracts.js";
 import type { StoreTransaction } from "./store.js";
 import type {
+  AutonomyPolicy,
   CallbackContext,
   Comparison,
   ImprovementControllerOptions,
@@ -168,6 +169,32 @@ export function warnAmbiguousImprovementDisable(
   console.error(
     `warning: LOOPITER_DISABLE=${shown} disables improvement work. It does not turn work on. Unset it, or set 0, false, no, or off, to leave improvement work running.`,
   );
+}
+
+function acceptanceRecord(
+  split: "validation" | "audit",
+  candidateId: string,
+  gate: {
+    improvement: number;
+    lower: number | null;
+    upper: number | null;
+    decisive: number | null;
+    required: number | null;
+  },
+  policy: AutonomyPolicy,
+): NonNullable<ImprovementRunData["acceptance"]> {
+  return {
+    split,
+    candidateId,
+    outcome: "insufficient",
+    reason: "insufficient_decisive",
+    decisive: gate.decisive,
+    required: gate.required,
+    effect: gate.improvement,
+    lower: gate.lower,
+    upper: gate.upper,
+    threshold: policy.objective.minimumEffect ?? 0,
+  };
 }
 
 export class ImprovementController {
@@ -558,7 +585,8 @@ export class ImprovementController {
         details: { reason: data.reason },
       };
       await tx.insert("events", event);
-      if (terminal.includes(data.state)) {
+      const waiting = data.state === "waiting_for_evidence";
+      if (terminal.includes(data.state) || waiting) {
         const w = this.workflow(data.workflowId),
           key = this.targetKey(w),
           lock = await this.read(tx, "coordination", key);
@@ -567,7 +595,7 @@ export class ImprovementController {
           const consecutiveFailures =
             data.state === "completed"
               ? 0
-              : timedOut
+              : timedOut || waiting
                 ? Number(lock.data.consecutiveFailures ?? 0)
                 : Number(lock.data.consecutiveFailures ?? 0) + 1;
           const consecutiveTimeouts =
@@ -1249,31 +1277,41 @@ export class ImprovementController {
             reason: "validation_recorded",
           });
         }
-        const ranked = d.candidateIds
-          .filter(
-            (cid) =>
-              compare(comparisons[cid]!, d.dataset.validation, w.policy).passed,
-          )
-          .sort((a, b) => {
-            const x = compare(comparisons[a]!, d.dataset.validation, w.policy),
-              y = compare(comparisons[b]!, d.dataset.validation, w.policy);
-            return (
-              y.improvement - x.improvement ||
-              comparisons[a]!.estimatedServingCost -
-                comparisons[b]!.estimatedServingCost ||
-              a.localeCompare(b)
-            );
-          });
-        if (!ranked.length)
+        const judged = d.candidateIds.map((cid) => ({
+          cid,
+          gate: compare(comparisons[cid]!, d.dataset.validation, w.policy),
+        }));
+        const ranked = judged
+          .filter((row) => row.gate.passed)
+          .sort(
+            (a, b) =>
+              b.gate.improvement - a.gate.improvement ||
+              comparisons[a.cid]!.estimatedServingCost -
+                comparisons[b.cid]!.estimatedServingCost ||
+              a.cid.localeCompare(b.cid),
+          );
+        const waiting = judged.find((row) => row.gate.outcome === "insufficient");
+        if (ranked.length)
           run = await this.save(rid, owner, {
-            state: "no_improvement",
-            reason: "validation_failed",
+            selectedId: ranked[0]!.cid,
+            state: "selected",
+            reason: "winner_selected",
+          });
+        else if (waiting)
+          run = await this.save(rid, owner, {
+            state: "waiting_for_evidence",
+            reason: "insufficient_decisive",
+            acceptance: acceptanceRecord(
+              "validation",
+              waiting.cid,
+              waiting.gate,
+              w.policy,
+            ),
           });
         else
           run = await this.save(rid, owner, {
-            selectedId: ranked[0]!,
-            state: "selected",
-            reason: "winner_selected",
+            state: "no_improvement",
+            reason: "validation_failed",
           });
       } else if (d.state === "selected") {
         const cid = d.selectedId!,
@@ -1297,8 +1335,10 @@ export class ImprovementController {
         const auditMetrics = {
           ...audit.metrics,
           improvement: gates.improvement,
-          lowerBound: gates.lower!,
+          ...(typeof gates.lower === "number" ? { lowerBound: gates.lower } : {}),
           sampleCount: gates.sampleCount,
+          ...(typeof gates.decisive === "number" ? { decisiveItems: gates.decisive } : {}),
+          ...(typeof gates.required === "number" ? { requiredDecisive: gates.required } : {}),
         };
         if (candidate.status === "proposed")
           await this.loop.evaluateCandidate(
@@ -1339,7 +1379,14 @@ export class ImprovementController {
           audit,
           auditEvaluationId: auditEvaluation.id,
         });
-        if (!gates.passed)
+        if (gates.outcome === "insufficient")
+          run = await this.save(rid, owner, {
+            audit,
+            state: "waiting_for_evidence",
+            reason: "insufficient_decisive",
+            acceptance: acceptanceRecord("audit", cid, gates, w.policy),
+          });
+        else if (!gates.passed)
           run = await this.save(rid, owner, {
             audit,
             state: "no_improvement",

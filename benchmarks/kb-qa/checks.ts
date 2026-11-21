@@ -34,9 +34,14 @@ export interface CheckJudgment {
 export function judgeRegression(evidence: RegressionEvidence): CheckJudgment {
   const failures: string[] = [];
   const harmful = evidence.harmful;
-  if (harmful.finalState !== "no_improvement" || !harmful.sawValidationFailure)
+  const rejected =
+    harmful.finalState === "no_improvement" && harmful.sawValidationFailure;
+  const waiting =
+    harmful.finalState === "waiting_for_evidence" &&
+    harmful.finalReason === "insufficient_decisive";
+  if (!rejected && !waiting)
     failures.push(
-      "Harmful candidate was not rejected by the validation gate.",
+      "Harmful candidate was not kept off the served artifact.",
     );
   if (harmful.servedVersion !== harmful.baselineVersion)
     failures.push("Harmful candidate changed the served artifact.");
