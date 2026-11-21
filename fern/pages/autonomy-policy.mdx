@@ -166,7 +166,7 @@ equivalent to harmless or useful.
 | `bootstrapSamples` / `bootstrap_samples` | Integer from 100 to 100000. Default 2000. |
 | `bootstrapSeed` / `bootstrap_seed` | Integer resample seed. Items are sorted by id before the draw. |
 | `minimumItems` / `minimum_items` | Optional extra item floor before the interval. Default 0. The validation and audit unit counts still apply inside `compare`. |
-| `minimumValidationDecisive` / `minimum_validation_decisive` | Confidence only. Decisive items (scores differ) required on validation. Default is the smallest unanimous sample whose one-sided tail is below the interval tail (5 at confidence 0.90). Fewer than that is `insufficient`: not a pass, not a rejection, and the controller waits. |
+| `minimumValidationDecisive` / `minimum_validation_decisive` | Confidence only. Decisive items (scores differ) required on validation. Default is the sign-test floor: the smallest unanimous count whose one-sided tail falls under the interval tail (5 at confidence 0.90). A lower value is rejected. Fewer decisive items than this is `insufficient`: not a pass, not a rejection, and the controller waits. |
 | `minimumAuditDecisive` / `minimum_audit_decisive` | Same rule for the audit check. |
 | `guardrails` | Nonempty array of exact metric names, `gte`/`lte`, and finite thresholds. All must pass. Missing metrics do not pass; non-finite values are invalid. |
 | `auditMethod` / `audit_method` | Optional trusted method name/version. Requires matching evaluator uncertainty fields and valid assumptions; not a license to return an arbitrary favorable bound. |

@@ -241,14 +241,15 @@ function formatCheck(
   split: "validation" | "audit",
   check: ExplainedCheck | null,
 ): string {
-  if (!check) return `seed ${seed} ${candidateId} ${split} null`;
+  const id = JSON.stringify(candidateId);
+  if (!check) return `seed ${seed} ${id} ${split} null`;
   return [
     `seed ${seed}`,
-    candidateId,
+    id,
     split,
     `round ${check.round}`,
     check.outcome,
-    `reason ${check.reason}`,
+    `reason ${JSON.stringify(check.reason)}`,
     `effect ${show(check.effect)}`,
     `lower ${show(check.lower)}`,
     `upper ${show(check.upper)}`,

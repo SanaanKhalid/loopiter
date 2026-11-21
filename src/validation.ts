@@ -117,7 +117,7 @@ export function candidateInput(value: unknown): void {
   if (value.metadata !== undefined) object(value.metadata, "metadata");
 }
 export function evaluation(value: unknown): asserts value is EvaluationResult {
-  fields(value, ["passed", "metrics", "notes"]);
+  fields(value, ["passed", "metrics", "notes", "outcome", "reason"]);
   json(value);
   if (typeof value.passed !== "boolean")
     fail("invalid_input", "Evaluation passed must be boolean.");
@@ -130,6 +130,10 @@ export function evaluation(value: unknown): asserts value is EvaluationResult {
   }
   if (value.notes !== undefined && typeof value.notes !== "string")
     fail("invalid_input", "Notes must be text.");
+  if (value.outcome !== undefined)
+    enumeration(value.outcome, ["insufficient"], "outcome");
+  if (value.reason !== undefined && typeof value.reason !== "string")
+    fail("invalid_input", "Evaluation reason must be text.");
 }
 export function stored<K extends Collection>(
   kind: K,

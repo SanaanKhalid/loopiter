@@ -33,6 +33,17 @@ TERMINAL = {"completed", "no_improvement", "failed", "timed_out", "rolled_back"}
 _DISABLE_OFF = {"0", "false", "no", "off"}
 
 
+def _audit_notes(policy, gate):
+    if gate["outcome"] == "insufficient":
+        return f"Insufficient decisive items ({gate['decisive']} of {gate['required']}); not a rejection."
+    if policy.get("audit_method"):
+        method = policy["audit_method"]
+        return f"Trusted application audit: {method['name']}@{method['version']}"
+    if policy["objective"].get("acceptance") == "confidence":
+        return "Paired bootstrap lower bound; independent units required."
+    return "Fixed-sample paired Hoeffding; independent units required."
+
+
 def _acceptance_record(split, candidate_id, gate, policy):
     return {
         "split": split,
@@ -1234,22 +1245,15 @@ class ImprovementController:
             if candidate["status"] == "proposed":
 
                 async def evaluate(*_):
-                    return {
+                    recorded = {
                         "passed": gates["passed"],
                         "metrics": audit_metrics,
-                        "notes": (
-                            "Trusted application audit: "
-                            + p["audit_method"]["name"]
-                            + "@"
-                            + p["audit_method"]["version"]
-                        )
-                        if p.get("audit_method")
-                        else (
-                            "Paired bootstrap lower bound; independent units required."
-                            if p["objective"].get("acceptance") == "confidence"
-                            else "Fixed-sample paired Hoeffding; independent units required."
-                        ),
+                        "notes": _audit_notes(p, gates),
                     }
+                    if gates["outcome"] == "insufficient":
+                        recorded["outcome"] = "insufficient"
+                        recorded["reason"] = "insufficient_decisive"
+                    return recorded
 
                 await self.loop.evaluate_candidate(
                     cid,

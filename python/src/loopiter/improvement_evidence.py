@@ -255,6 +255,16 @@ def validate_policy(p):
         floor = minimum_decisive_floor(o.get("confidence", 0.9))
         validation_decisive = o.get("minimum_validation_decisive", floor)
         audit_decisive = o.get("minimum_audit_decisive", floor)
+        if validation_decisive < floor:
+            v.fail(
+                "invalid_policy",
+                "minimum_validation_decisive is below the confidence decisive floor.",
+            )
+        if audit_decisive < floor:
+            v.fail(
+                "invalid_policy",
+                "minimum_audit_decisive is below the confidence decisive floor.",
+            )
         if p["minimum_validation_units"] < floor or p["minimum_audit_units"] < floor:
             v.fail(
                 "invalid_policy",

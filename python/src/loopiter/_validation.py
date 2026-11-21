@@ -205,7 +205,7 @@ def candidate_input(value: Any) -> None:
 
 
 def evaluation(value: Any) -> None:
-    fields(value, ["passed", "metrics", "notes"], ("passed",))
+    fields(value, ["passed", "metrics", "notes", "outcome", "reason"], ("passed",))
     json_value(value)
     if type(value["passed"]) is not bool:
         fail("invalid_input", "passed must be a boolean.")
@@ -216,6 +216,10 @@ def evaluation(value: Any) -> None:
             finite(number, key)
     if "notes" in value and type(value["notes"]) is not str:
         fail("invalid_input", "notes must be text.")
+    if "outcome" in value:
+        enum(value["outcome"], ["insufficient"], "outcome")
+    if "reason" in value and type(value["reason"]) is not str:
+        fail("invalid_input", "reason must be text.")
 
 
 def receipt(value: Any) -> None:

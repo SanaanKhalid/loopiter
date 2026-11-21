@@ -445,9 +445,9 @@ test("an insufficient validation is not served, and a missing audit is null rath
     assert.equal(candidate?.validation?.lower, null);
     assert.equal(candidate?.audit, null);
     const text = formatExplanation(explained);
-    assert.match(text, /one-shot validation round 0 insufficient/);
+    assert.match(text, /"one-shot" validation round 0 insufficient/);
     assert.match(text, /decisive 4 required 5/);
-    assert.match(text, /one-shot audit null/);
+    assert.match(text, /"one-shot" audit null/);
     assert.equal(text.includes("audit round"), false);
     const fresh = decideAcceptance({ items: pairs(repeated(4, [0, 1])), parameters: rule });
     const legacyDecision = { ...fresh } as Record<string, unknown>;
@@ -515,6 +515,59 @@ test("an insufficient validation is not served, and a missing audit is null rath
     });
     assert.equal(pythonText.status, 0, pythonText.stderr);
     assert.equal(pythonText.stdout, text);
+    const crafted = {
+      schemaVersion: 1,
+      kind: "acceptance-decisions",
+      seeds: [
+        {
+          seed: 1,
+          baseline: { id: "baseline", promptHash: "base" },
+          served: { id: "baseline", promptHash: "base" },
+          rounds: [
+            {
+              round: 0,
+              candidateId: "c1\nseed 1 c9 audit round 9 accepted",
+              promptHash: "p",
+              incumbentId: "baseline",
+              incumbentPromptHash: "base",
+              split: "validation",
+              rule,
+              decision: {
+                accept: false,
+                outcome: "rejected",
+                reason: "below\u001b[2J",
+                lower: -1,
+                upper: 0,
+                effect: -1,
+                method: "paired-bootstrap",
+                itemCount: 5,
+                decisive: 5,
+                required: 5,
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const craftedPath = join(directory, "crafted.json");
+    await writeFile(craftedPath, `${JSON.stringify(crafted)}\n`);
+    const craftedText = formatExplanation(explainDecisionText(JSON.stringify(crafted)));
+    assert.equal(craftedText.trim().split("\n").length, 2);
+    assert.equal(craftedText.includes("\u001b"), false);
+    assert.match(craftedText, /\\nseed 1 c9/);
+    assert.match(craftedText, /\\u001b/);
+    const craftedJson = spawnSync(process.execPath, [cliPath(), "explain", craftedPath, "--json"], {
+      encoding: "utf8",
+    });
+    assert.equal(craftedJson.status, 0, craftedJson.stderr);
+    const craftedParsed = JSON.parse(craftedJson.stdout) as {
+      seeds: { candidates: { candidateId: string; validation: { reason: string } | null }[] }[];
+    };
+    assert.equal(
+      craftedParsed.seeds[0]?.candidates[0]?.candidateId,
+      "c1\nseed 1 c9 audit round 9 accepted",
+    );
+    assert.equal(craftedParsed.seeds[0]?.candidates[0]?.validation?.reason, "below\u001b[2J");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

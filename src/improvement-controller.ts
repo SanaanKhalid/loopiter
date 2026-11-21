@@ -171,6 +171,19 @@ export function warnAmbiguousImprovementDisable(
   );
 }
 
+function auditEvaluationNotes(
+  policy: AutonomyPolicy,
+  gate: { outcome: string; decisive: number | null; required: number | null },
+): string {
+  if (gate.outcome === "insufficient")
+    return `Insufficient decisive items (${gate.decisive} of ${gate.required}); not a rejection.`;
+  if (policy.auditMethod)
+    return `Trusted application audit: ${policy.auditMethod.name}@${policy.auditMethod.version}`;
+  if (policy.objective.acceptance === "confidence")
+    return "Paired bootstrap lower bound; independent units required.";
+  return "Fixed-sample paired Hoeffding; independent units required.";
+}
+
 function acceptanceRecord(
   split: "validation" | "audit",
   candidateId: string,
@@ -1352,11 +1365,10 @@ export class ImprovementController {
             () => ({
               passed: gates.passed,
               metrics: auditMetrics,
-              notes: w.policy.auditMethod
-                ? `Trusted application audit: ${w.policy.auditMethod.name}@${w.policy.auditMethod.version}`
-                : w.policy.objective.acceptance === "confidence"
-                  ? "Paired bootstrap lower bound; independent units required."
-                  : "Fixed-sample paired Hoeffding; independent units required.",
+              notes: auditEvaluationNotes(w.policy, gates),
+              ...(gates.outcome === "insufficient"
+                ? { outcome: "insufficient" as const, reason: "insufficient_decisive" }
+                : {}),
             }),
           );
         const audited = (await this.loop.getCandidate(cid))!;

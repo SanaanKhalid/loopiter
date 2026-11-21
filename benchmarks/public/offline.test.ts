@@ -722,8 +722,8 @@ async function assertRegression<T extends PublicExample>(task: BenchmarkTask<T>)
   assert.equal(report.passed, true);
   assert.equal(report.minimumImprovement, PRODUCT_MINIMUM_IMPROVEMENT);
   assert.equal(report.regression.passed, true);
-  assert.equal(report.regression.harmful.finalState, "waiting_for_evidence");
-  assert.equal(report.regression.harmful.finalReason, "insufficient_decisive");
+  assert.equal(report.regression.harmful.finalState, "no_improvement");
+  assert.equal(report.regression.harmful.finalReason, "validation_failed");
   assert.equal(report.regression.harmful.servedVersion, report.regression.harmful.baselineVersion);
   assert.equal(report.regression.rollback.finalState, "rolled_back");
   assert.equal(report.perSeed[0]?.leakedIds.length, 0);

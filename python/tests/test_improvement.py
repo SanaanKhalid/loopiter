@@ -231,6 +231,53 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(loss_lock["data"].get("consecutive_failures"), 1)
 
+        self.setup_workflow({"name": "audit-short", "scores": [1], "errors": 0})
+        self.workflow.policy["objective"] = {
+            **self.workflow.policy["objective"],
+            "acceptance": "confidence",
+            "minimum_effect": 0,
+            "confidence": 0.9,
+            "bootstrap_samples": 200,
+            "bootstrap_seed": 17,
+        }
+
+        async def audit_short(input_, _context):
+            return {
+                "cases": [
+                    {
+                        "id": row["id"],
+                        "baseline": 0,
+                        "candidate": 1 if input_["partition"] != "audit" or index < 2 else 0,
+                    }
+                    for index, row in enumerate(input_["examples"])
+                ],
+                "metrics": {"errors": 0},
+                "estimated_serving_cost": 1,
+            }
+
+        self.workflow = replace(self.workflow, evaluate=audit_short)
+        held = await self.controller().tick("classification")
+        for _ in range(8):
+            if held["reason"] == "insufficient_decisive":
+                break
+            held = await self.controller().tick("classification")
+        self.assertEqual(held["state"], "waiting_for_evidence")
+        self.assertEqual(held["reason"], "insufficient_decisive")
+        self.assertEqual(self.registry.calls, 0)
+        audited = await self.controller().get_run(held["run_id"])
+        self.assertEqual(audited["data"]["acceptance"]["split"], "audit")
+        self.assertEqual(audited["data"]["acceptance"]["decisive"], 2)
+        candidate = await self.loop.get_candidate(audited["data"]["selected_id"])
+        evaluation = candidate["evaluations"][-1]
+        self.assertEqual(candidate["status"], "evaluated")
+        self.assertIs(evaluation["passed"], False)
+        self.assertEqual(evaluation["outcome"], "insufficient")
+        self.assertEqual(evaluation["reason"], "insufficient_decisive")
+        self.assertIn("2 of 5", evaluation["notes"])
+        self.assertIn("not a rejection", evaluation["notes"])
+        self.assertEqual(evaluation["metrics"]["decisive_items"], 2)
+        self.assertEqual(evaluation["metrics"]["required_decisive"], 5)
+
     def test_confidence_policy_floor(self):
         base = deepcopy(FIXTURES["policy"])
         base["objective"] = {**base["objective"], "acceptance": "confidence", "minimum_effect": 0}
@@ -250,6 +297,23 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(LoopiterError) as invalid:
             validate_policy(zero)
         self.assertEqual(invalid.exception.code, "invalid_input")
+        under = deepcopy(base)
+        under["objective"] = {**under["objective"], "minimum_validation_decisive": 4}
+        with self.assertRaises(LoopiterError) as under_floor:
+            validate_policy(under)
+        self.assertEqual(under_floor.exception.code, "invalid_policy")
+        audit_under = deepcopy(base)
+        audit_under["objective"] = {**audit_under["objective"], "minimum_audit_decisive": 4}
+        with self.assertRaises(LoopiterError) as audit_floor:
+            validate_policy(audit_under)
+        self.assertEqual(audit_floor.exception.code, "invalid_policy")
+        at_floor = deepcopy(base)
+        at_floor["objective"] = {
+            **at_floor["objective"],
+            "minimum_validation_decisive": 5,
+            "minimum_audit_decisive": 5,
+        }
+        validate_policy(at_floor)
         fixed = deepcopy(FIXTURES["policy"])
         fixed["objective"] = {**fixed["objective"], "minimum_validation_decisive": 5}
         with self.assertRaises(LoopiterError) as fixed_error:

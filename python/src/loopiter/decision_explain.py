@@ -184,16 +184,17 @@ def _rule_threshold(rule: Any, seed: int, round_: int) -> int | float:
 
 
 def _format_check(seed: int, candidate_id: str, split: str, check: dict[str, Any] | None) -> str:
+    quoted = json.dumps(candidate_id)
     if check is None:
-        return f"seed {seed} {candidate_id} {split} null"
+        return f"seed {seed} {quoted} {split} null"
     return " ".join(
         [
             f"seed {seed}",
-            candidate_id,
+            quoted,
             split,
             f"round {check['round']}",
             check["outcome"],
-            f"reason {check['reason']}",
+            f"reason {json.dumps(check['reason'])}",
             f"effect {_show(check['effect'])}",
             f"lower {_show(check['lower'])}",
             f"upper {_show(check['upper'])}",

@@ -15,8 +15,9 @@ count is 2000, the maximum is 100000, and the resample seed is fixed. Items are
 sorted by id before resampling. Validation and audit use that rule. A
 `minimumItems` guard can require more items before the interval is used; the
 default is 0. A confidence policy also requires a minimum number of decisive
-items, rows where the two scores differ. That default is 5 at confidence 0.90,
-the smallest unanimous sample whose one-sided tail is below the interval tail.
+items, rows where the two scores differ. That default is 5 at confidence 0.90, the smallest unanimous decisive
+count whose one-sided sign-test tail falls under the interval tail. A
+confidence policy cannot set a lower decisive minimum.
 Fewer decisive items is `insufficient`: the candidate is not served and the
 failure stop is not incremented. `compare()` also requires the policy's
 validation and audit unit counts, which must be at least that floor.

@@ -227,6 +227,66 @@ class AcceptanceGateTest(unittest.TestCase):
             parsed = json.loads(explained.stdout)
             self.assertIsNone(parsed["seeds"][0]["candidates"][0]["audit"])
             self.assertIsNone(parsed["seeds"][0]["candidates"][0]["validation"]["decisive"])
+            crafted = {
+                "schemaVersion": 1,
+                "kind": "acceptance-decisions",
+                "seeds": [
+                    {
+                        "seed": 1,
+                        "baseline": {"id": "baseline", "promptHash": "base"},
+                        "served": {"id": "baseline", "promptHash": "base"},
+                        "rounds": [
+                            {
+                                "round": 0,
+                                "candidateId": "c1\nseed 1 c9 audit round 9 accepted",
+                                "promptHash": "p",
+                                "incumbentId": "baseline",
+                                "incumbentPromptHash": "base",
+                                "split": "validation",
+                                "rule": {
+                                    "minimumEffect": 0,
+                                    "confidence": 0.9,
+                                    "samples": 200,
+                                    "seed": 17,
+                                    "minimumItems": 0,
+                                },
+                                "decision": {
+                                    "accept": False,
+                                    "outcome": "rejected",
+                                    "reason": "below\u001b[2J",
+                                    "lower": -1,
+                                    "upper": 0,
+                                    "effect": -1,
+                                    "method": "paired-bootstrap",
+                                    "itemCount": 5,
+                                    "decisive": 5,
+                                    "required": 5,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+            crafted_path = Path(directory) / "crafted.json"
+            crafted_path.write_text(json.dumps(crafted), encoding="utf-8")
+            shown = format_explanation(explain_decision_text(json.dumps(crafted)))
+            self.assertEqual(len(shown.strip().splitlines()), 2)
+            self.assertNotIn("\u001b", shown)
+            self.assertIn("\\nseed 1 c9", shown)
+            self.assertIn("\\u001b", shown)
+            crafted_json = subprocess.run(
+                [sys.executable, "-m", "loopiter", "explain", str(crafted_path), "--json"],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(crafted_json.returncode, 0, crafted_json.stderr)
+            parsed_crafted = json.loads(crafted_json.stdout)
+            candidate = parsed_crafted["seeds"][0]["candidates"][0]
+            self.assertEqual(candidate["candidateId"], "c1\nseed 1 c9 audit round 9 accepted")
+            self.assertEqual(candidate["validation"]["reason"], "below\u001b[2J")
 
     def policy(self):
         return {

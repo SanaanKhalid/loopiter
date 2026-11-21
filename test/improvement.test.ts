@@ -499,8 +499,15 @@ test("confidence mode waits when decisive items are short and still rejects a re
   assert.equal(audited.data.acceptance?.split, "audit");
   assert.equal(audited.data.acceptance?.decisive, 2);
   const candidate = await audit.loop.getCandidate(audited.data.selectedId!);
+  const evaluation = candidate?.evaluations.at(-1);
   assert.equal(candidate?.status, "evaluated");
-  assert.equal(candidate?.evaluations.at(-1)?.passed, false);
+  assert.equal(evaluation?.passed, false);
+  assert.equal(evaluation?.outcome, "insufficient");
+  assert.equal(evaluation?.reason, "insufficient_decisive");
+  assert.match(evaluation?.notes ?? "", /2 of 5/);
+  assert.match(evaluation?.notes ?? "", /not a rejection/);
+  assert.equal(evaluation?.metrics?.decisiveItems, 2);
+  assert.equal(evaluation?.metrics?.requiredDecisive, 5);
 });
 
 test("confidence policies reject a short partition and a non-integer decisive floor", () => {
@@ -519,6 +526,19 @@ test("confidence policies reject a short partition and a non-integer decisive fl
   const fractional = structuredClone(base);
   fractional.objective = { ...fractional.objective, minimumValidationDecisive: 1.5 };
   assert.throws(() => validatePolicy(fractional), { code: "invalid_input" });
+  const under = structuredClone(base);
+  under.objective = { ...under.objective, minimumValidationDecisive: 4 };
+  assert.throws(() => validatePolicy(under), { code: "invalid_policy" });
+  const auditUnder = structuredClone(base);
+  auditUnder.objective = { ...auditUnder.objective, minimumAuditDecisive: 4 };
+  assert.throws(() => validatePolicy(auditUnder), { code: "invalid_policy" });
+  const atFloor = structuredClone(base);
+  atFloor.objective = {
+    ...atFloor.objective,
+    minimumValidationDecisive: 5,
+    minimumAuditDecisive: 5,
+  };
+  assert.doesNotThrow(() => validatePolicy(atFloor));
   const fixed = structuredClone(fixtures.policy) as AutonomyPolicy;
   fixed.objective = { ...fixed.objective, minimumValidationDecisive: 5 };
   assert.throws(() => validatePolicy(fixed), { code: "invalid_policy" });

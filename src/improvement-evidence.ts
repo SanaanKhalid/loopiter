@@ -289,6 +289,16 @@ export function validatePolicy(p: AutonomyPolicy): void {
     const floor = minimumDecisiveFloor(p.objective.confidence ?? 0.9);
     const validationDecisive = p.objective.minimumValidationDecisive ?? floor;
     const auditDecisive = p.objective.minimumAuditDecisive ?? floor;
+    if (validationDecisive < floor)
+      fail(
+        "invalid_policy",
+        "minimumValidationDecisive is below the confidence decisive floor.",
+      );
+    if (auditDecisive < floor)
+      fail(
+        "invalid_policy",
+        "minimumAuditDecisive is below the confidence decisive floor.",
+      );
     if (p.minimumValidationUnits < floor || p.minimumAuditUnits < floor)
       fail(
         "invalid_policy",

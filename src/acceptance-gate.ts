@@ -14,10 +14,12 @@
  */
 
 /**
- * Smallest unanimous decisive sample whose one-sided binomial tail is strictly
- * below the two-sided interval's tail. At confidence 0.90 that tail is 0.05:
- * 2^-5 = 0.03125 is below it and 2^-4 = 0.0625 is not, so the floor is 5.
- * Fewer decisive items cannot put a one-sided bound strictly above a tie.
+ * Smallest unanimous decisive count whose one-sided sign-test tail falls under
+ * the two-sided interval tail. At confidence 0.90 that tail is 0.05:
+ * 2^-5 = 0.03125 is under it and 2^-4 = 0.0625 is not, so the floor is 5.
+ * This is a sign-test floor. The percentile bootstrap can still clear a tie
+ * on a smaller unanimous sample, which is why a confidence policy cannot set
+ * a lower decisive minimum.
  */
 export function minimumDecisiveFloor(confidence: number): number {
   if (!(confidence > 0 && confidence < 1))

@@ -30,11 +30,12 @@ DEFAULT_GATE = {
 
 
 def minimum_decisive_floor(confidence: float) -> int:
-    """Smallest unanimous decisive sample that can clear a tie at this confidence.
+    """Smallest unanimous decisive count whose one-sided sign-test tail is under the interval tail.
 
     The two-sided tail is ``(1 - confidence) / 2``. At 0.90 that is 0.05, and
     ``2 ** -5`` is the first power of one half strictly below it, so the floor
-    is 5. The loop matches the Node gate.
+    is 5. This is a sign test, not a property of the percentile bootstrap.
+    The loop matches the Node gate.
     """
     if not 0 < confidence < 1:
         raise ValueError("Confidence must be between 0 and 1.")
