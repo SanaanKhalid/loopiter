@@ -69,7 +69,9 @@ export function buildSeededSplit<T extends { id: string }>(input: {
     input.sizes.audit +
     input.sizes.production;
   if (input.pool.length < need)
-    throw new Error(`Pool has ${input.pool.length} rows; ${need} are required.`);
+    throw new Error(
+      `Pool has ${input.pool.length} rows; ${need} are required for optimization ${input.sizes.optimization}, validation ${input.sizes.validation}, audit ${input.sizes.audit}, and production ${input.sizes.production}, disjoint from held-out.`,
+    );
   if (input.heldOut.length < input.sizes.heldOut)
     throw new Error(
       `Held-out source has ${input.heldOut.length} rows; ${input.sizes.heldOut} are required.`,
@@ -98,6 +100,78 @@ export function buildSeededSplit<T extends { id: string }>(input: {
       example,
     })),
   };
+}
+
+/** Replace validation and audit. Optimization, production, and held-out stay on `base`. */
+export function applyRowCounts(
+  base: SplitSizes,
+  overrides: { validationRows?: number; auditRows?: number },
+): SplitSizes {
+  return {
+    optimization: base.optimization,
+    validation: overrides.validationRows ?? base.validation,
+    audit: overrides.auditRows ?? base.audit,
+    production: base.production,
+    heldOut: base.heldOut,
+  };
+}
+
+/**
+ * One-shot audit rows are the first half of this list, sorted by id.
+ * An odd count gives that half the extra row (`ceil(n / 2)`). The follow-up
+ * scores the rest. Fewer than 2 rows leaves a half empty, and the caller
+ * rejects that split.
+ */
+export function splitAuditRows<T extends { example: { id: string } }>(
+  rows: readonly T[],
+): [T[], T[]] {
+  const ordered = [...rows].sort((left, right) =>
+    Buffer.compare(Buffer.from(left.example.id), Buffer.from(right.example.id)),
+  );
+  const mid = Math.ceil(ordered.length / 2);
+  return [ordered.slice(0, mid), ordered.slice(mid)];
+}
+
+/** Sizes after `--rows` or `--smoke` caps every partition. Uncapped sizes are copied. */
+export function scoredSizes(sizes: SplitSizes, rowLimit: number | undefined): SplitSizes {
+  if (rowLimit === undefined) return { ...sizes };
+  if (!Number.isInteger(rowLimit) || rowLimit < 1)
+    throw new Error("--rows must be a positive integer.");
+  const cap = (value: number) => Math.min(value, rowLimit);
+  return {
+    optimization: cap(sizes.optimization),
+    validation: cap(sizes.validation),
+    audit: cap(sizes.audit),
+    production: cap(sizes.production),
+    heldOut: cap(sizes.heldOut),
+  };
+}
+
+export function splitSizes<T extends { id: string }>(split: PublicSplit<T>): SplitSizes {
+  return {
+    optimization: split.optimization.length,
+    validation: split.validation.length,
+    audit: split.audit.length,
+    production: split.production.length,
+    heldOut: split.heldOut.length,
+  };
+}
+
+/** Fail before a run when any seed cannot draw its splits from disjoint sources. */
+export function assertPoolCoversSeeds<T extends { id: string }>(input: {
+  pool: readonly T[];
+  heldOut: readonly T[];
+  seeds: readonly number[];
+  sizes: SplitSizes;
+}): void {
+  if (input.seeds.length < 1) throw new Error("At least one seed is required.");
+  for (const seed of input.seeds)
+    buildSeededSplit({
+      pool: input.pool,
+      heldOut: input.heldOut,
+      seed,
+      sizes: input.sizes,
+    });
 }
 
 export function limitSplit<T extends { id: string }>(

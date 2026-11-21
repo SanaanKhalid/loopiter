@@ -14,6 +14,7 @@ import {
   type GateParameters,
   type UnpairedCounts,
 } from "../../src/acceptance-gate.js";
+import type { SplitSizes } from "./splits.js";
 
 export interface PromptRef {
   id: string;
@@ -43,6 +44,8 @@ export interface SeedDecisionLog {
   baseline: PromptRef;
   rounds: DecisionRound[];
   served: PromptRef;
+  /** Split sizes this seed was scored with. Absent on logs written before row counts were recorded. */
+  splits?: SplitSizes;
   /** Set only after the harness checks the served prompt against this log. */
   complete?: boolean;
   /** Production observation undid the last accepted deploy. The rule decisions stay. */
@@ -266,6 +269,7 @@ function validateSeed(log: SeedDecisionLog): void {
     throw new Error("Decision log seed is malformed.");
   requireRef(log.baseline, "baseline");
   requireRef(log.served, "served");
+  if (log.splits !== undefined) requireSplitSizes(log.splits, log.seed);
   const ids = new Set<string>();
   for (const round of log.rounds) {
     if (!round || typeof round.round !== "number")
@@ -288,6 +292,15 @@ function validateSeed(log: SeedDecisionLog): void {
           throw new Error(`Seed ${log.seed} round ${round.round} has a non-finite score.`);
       }
     }
+  }
+}
+
+function requireSplitSizes(sizes: SplitSizes, seed: number): void {
+  const names = ["optimization", "validation", "audit", "production", "heldOut"] as const;
+  for (const name of names) {
+    const value = sizes[name];
+    if (!Number.isInteger(value) || value < 1)
+      throw new Error(`Seed ${seed} split ${name} is not a positive integer.`);
   }
 }
 

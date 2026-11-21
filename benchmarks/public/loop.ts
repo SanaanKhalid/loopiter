@@ -30,6 +30,7 @@ import { PromptRegistry, fragmentOf } from "./registry.js";
 import {
   idsOf,
   poolDatasetRow,
+  splitAuditRows,
   type HeldOutRow,
   type PoolRow,
   type PublicSplit,
@@ -227,6 +228,8 @@ export async function runController<T extends PublicExample>(input: {
   let observeScored = 0;
   try {
     const auditSource = input.auditRows ?? input.split.audit;
+    // The one-shot rewrite and its follow-up each pass one half of the audit
+    // split. This phase's audit unit count is the rows it actually scores.
     const sizes = {
       optimization: input.split.optimization.length,
       validation: input.split.validation.length,
@@ -598,7 +601,7 @@ export function draftOf(scores: readonly RowScore[]): RateDraft {
 async function runOneShotThenController<T extends PublicExample>(
   input: Parameters<typeof runController<T>>[0],
 ): Promise<ArmRun> {
-  const [shotAudit, restAudit] = splitAudit(input.split.audit);
+  const [shotAudit, restAudit] = splitAuditRows(input.split.audit);
   if (shotAudit.length === 0 || restAudit.length === 0)
     throw new Error("Audit rows must split into two non-empty sets.");
   const fragment = input.oneShotFragment;
@@ -657,14 +660,6 @@ async function runOneShotThenController<T extends PublicExample>(
     readIds: [...seeded.readIds, ...follow.readIds],
     decisions: decisionLog,
   };
-}
-
-function splitAudit<T extends { example: { id: string } }>(rows: readonly T[]): [T[], T[]] {
-  const ordered = [...rows].sort((a, b) =>
-    Buffer.compare(Buffer.from(a.example.id), Buffer.from(b.example.id)),
-  );
-  const mid = Math.ceil(ordered.length / 2);
-  return [ordered.slice(0, mid), ordered.slice(mid)];
 }
 
 export function candidateIdFor(

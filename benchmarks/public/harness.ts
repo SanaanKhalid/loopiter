@@ -21,7 +21,14 @@ import {
   type ArmRun,
   type RateDraft,
 } from "./loop.js";
-import { buildSeededSplit, idsOf, type PublicSplit } from "./splits.js";
+import {
+  assertPoolCoversSeeds,
+  buildSeededSplit,
+  idsOf,
+  splitSizes,
+  type PublicSplit,
+  type SplitSizes,
+} from "./splits.js";
 import type { BenchmarkTask, PublicExample } from "./task.js";
 
 const BOOTSTRAP_SAMPLES = 2_000;
@@ -112,6 +119,8 @@ export async function runOfflineBenchmark<T extends PublicExample>(
     bootstrapSamples?: number;
     bootstrapSeed?: number;
     decisionLogPath?: string;
+    /** Overrides the fixture or full split. Held-out stays on the base sizes unless this object sets it. */
+    sizes?: SplitSizes;
   },
 ): Promise<OfflineReport> {
   const seeds = options.seeds;
@@ -120,7 +129,8 @@ export async function runOfflineBenchmark<T extends PublicExample>(
   const minimumImprovement = options.minimumImprovement ?? PRODUCT_MINIMUM_IMPROVEMENT;
   const source = options.source ?? "fixtures";
   const loaded = source === "fixtures" ? task.fixtures() : await task.loadCache();
-  const sizes = source === "fixtures" ? task.fixtureSizes : task.fullSizes;
+  const sizes = options.sizes ?? (source === "fixtures" ? task.fixtureSizes : task.fullSizes);
+  assertPoolCoversSeeds({ pool: loaded.pool, heldOut: loaded.heldOut, seeds, sizes });
   const samples = options.bootstrapSamples ?? BOOTSTRAP_SAMPLES;
   const bootstrapSeed = options.bootstrapSeed ?? BOOTSTRAP_SEED;
   const perSeed = [];
@@ -132,6 +142,7 @@ export async function runOfflineBenchmark<T extends PublicExample>(
     const baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut);
     const oneShot = await runOneShot({ task, split, runner, mode: "improve" });
     const decisionLog = emptySeedLog(seed, task.baselinePrompt);
+    decisionLog.splits = splitSizes(split);
     decisionLogs.push(decisionLog);
     const controller = await runController({
       task,
@@ -162,8 +173,9 @@ export async function runOfflineBenchmark<T extends PublicExample>(
   const regression = await runRegression(task, perSeed[0]!.split);
   const judgment = judgeRegression(regression);
   const minimumEffect = options.minimumEffect ?? 0;
+  const caveatRows = options.sizes === undefined ? FULL_AUDIT_ROWS : sizes.audit;
   const gain = observedGainRequired({
-    auditRows: FULL_AUDIT_ROWS,
+    auditRows: caveatRows,
     minimumImprovement,
     alpha: PRODUCT_ALPHA,
   });
@@ -180,10 +192,10 @@ export async function runOfflineBenchmark<T extends PublicExample>(
     promptCapCharacters: task.promptCap,
     promptVersion: task.promptVersion,
     auditCaveat: {
-      auditRows: FULL_AUDIT_ROWS,
+      auditRows: caveatRows,
       alpha: PRODUCT_ALPHA,
       observedGainRequired: gain,
-      note: caveat(minimumImprovement, gain, minimumEffect),
+      note: caveat(caveatRows, minimumImprovement, gain, minimumEffect),
     },
     splits: {
       optimization: sizes.optimization,
@@ -329,13 +341,18 @@ export function renderMarkdown(report: OfflineReport): string {
   return lines.join("\n");
 }
 
-function caveat(minimumImprovement: number, required: number, minimumEffect: number): string {
+function caveat(
+  auditRows: number,
+  minimumImprovement: number,
+  required: number,
+  minimumEffect: number,
+): string {
   const floor = describeAuditFloor({
     minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
     range: [0, 1],
     alpha: PRODUCT_ALPHA,
   });
-  return `Acceptance uses the lower bound of a two-sided paired bootstrap interval. A candidate is kept when that bound is above minimumEffect ${minimumEffect}. Validation and audit use the same rule, and an accepted one-shot rewrite becomes the incumbent later rounds must beat. The paired Hoeffding figure for ${FULL_AUDIT_ROWS} rows at minimumImprovement ${minimumImprovement} is an observed gain above ${required.toFixed(3)}. ${floor}`;
+  return `Acceptance uses the lower bound of a two-sided paired bootstrap interval. A candidate is kept when that bound is above minimumEffect ${minimumEffect}. Validation and audit use the same rule, and an accepted one-shot rewrite becomes the incumbent later rounds must beat. The paired Hoeffding figure for ${auditRows} rows at minimumImprovement ${minimumImprovement} is an observed gain above ${required.toFixed(3)}. ${floor}`;
 }
 
 export function viewOf(rates: RateDraft[], samples: number, seed: number): ScoreView {

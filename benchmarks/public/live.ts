@@ -43,7 +43,14 @@ import { PREDICT_NAME, PROPOSE_INSTRUCTIONS, PROPOSE_NAME } from "./instructions
 import { deploymentOf, resolveLimits } from "./limits.js";
 import { emptySeedLog, writeDecisionLog, type SeedDecisionLog } from "./decisions.js";
 import { runController, runOneShot, scoreHeldOut, type RateDraft } from "./loop.js";
-import { buildSeededSplit, limitSplit } from "./splits.js";
+import {
+  assertPoolCoversSeeds,
+  buildSeededSplit,
+  limitSplit,
+  scoredSizes,
+  splitSizes,
+  type SplitSizes,
+} from "./splits.js";
 import type { BenchmarkTask, ModelRunner, PredictCall, PublicExample } from "./task.js";
 
 const directMeter = async <T>(
@@ -68,6 +75,8 @@ export interface PublicLiveOptions {
   limits: RequestLimits;
   minimumImprovement: number;
   minimumEffect?: number;
+  /** Full-run split sizes. Omitted sizes use the task's full split. */
+  sizes?: SplitSizes;
   decisionLogPath?: string;
   maxTokensPerMinute: number;
   maxRetryWaitMs: number;
@@ -90,6 +99,7 @@ export interface PublicLiveReport {
   smoke: boolean;
   seeds: number[];
   rowLimit: number | null;
+  splits: SplitSizes;
   minimumImprovement: number;
   promptCapCharacters: number;
   deployment: string;
@@ -142,6 +152,7 @@ export function liveOptionsFromEnv<T extends PublicExample>(
     stopAtWarn: boolean;
     ledgerPath: string;
     minimumImprovement: number;
+    sizes?: SplitSizes;
   },
 ): PublicLiveOptions {
   if (env[LIVE_ENV.allow] !== "1")
@@ -172,6 +183,7 @@ export function liveOptionsFromEnv<T extends PublicExample>(
     invocationCapUsd,
     stopAtWarn: args.stopAtWarn,
     ledgerPath: args.ledgerPath,
+    ...(args.sizes === undefined ? {} : { sizes: args.sizes }),
     limits: resolveLimits(env, task),
     minimumImprovement: args.minimumImprovement,
     maxTokensPerMinute: pace.maxTokensPerMinute,
@@ -188,6 +200,13 @@ export async function runLiveTask<T extends PublicExample>(
   options: PublicLiveOptions,
   loaded: { pool: T[]; heldOut: T[] },
 ): Promise<PublicLiveReport> {
+  const sizes = options.sizes ?? task.fullSizes;
+  assertPoolCoversSeeds({
+    pool: loaded.pool,
+    heldOut: loaded.heldOut,
+    seeds: options.seeds,
+    sizes,
+  });
   const ledger = await LiveLedger.open(
     options.ledgerPath,
     {
@@ -271,7 +290,7 @@ export async function runLiveTask<T extends PublicExample>(
             pool: loaded.pool,
             heldOut: loaded.heldOut,
             seed,
-            sizes: task.fullSizes,
+            sizes,
           }),
           options.rowLimit,
         );
@@ -284,6 +303,7 @@ export async function runLiveTask<T extends PublicExample>(
         oneShot = await runOneShot({ task, split, runner, mode: "improve" });
         phase = "controller";
         const decisionLog = emptySeedLog(seed, task.baselinePrompt);
+        decisionLog.splits = splitSizes(split);
         decisionLogs.push(decisionLog);
         controller = await runController({
           task,
@@ -360,7 +380,16 @@ export async function runLiveTask<T extends PublicExample>(
       process.off("SIGTERM", onInterrupt);
     }
   }
-  const report = buildReport(task, options, ledger, perSeed, failure, failures, proposeTally);
+  const report = buildReport(
+    task,
+    options,
+    ledger,
+    perSeed,
+    failure,
+    failures,
+    proposeTally,
+    scoredSizes(sizes, options.rowLimit),
+  );
   if (options.apiKey.length >= 4 && JSON.stringify(report).includes(options.apiKey))
     throw new LiveGateError("Refusing to write a report that contains a credential.");
   return report;
@@ -531,6 +560,7 @@ function buildReport<T extends PublicExample>(
   failure: { reason: string; message: string } | null,
   failures: ItemFailureTracker,
   proposeTally: { calls: number; refused: number },
+  sizes: SplitSizes,
 ): PublicLiveReport {
   const counted = perSeed.filter((row) => row.status !== "failed");
   const scored = counted.length > 0 && failure === null;
@@ -547,6 +577,7 @@ function buildReport<T extends PublicExample>(
     smoke: options.smoke,
     seeds: options.seeds,
     rowLimit: options.rowLimit ?? null,
+    splits: sizes,
     minimumImprovement: options.minimumImprovement,
     promptCapCharacters: task.promptCap,
     deployment: options.deployment,

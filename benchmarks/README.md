@@ -27,19 +27,28 @@ Paired items take precedence when a caller also passes unpaired counts.
 Unpaired counts are the path for aggregate reports that have no item scores.
 
 If a one-shot rewrite exists, it is the first controller candidate. Its audit
-rows are the first half of the audit split, sorted by id. The follow-up
-candidate is scored on the other half, so those rows are not reused. Both
-candidates go through the controller's unit counts, guardrails, and budget
-ledger. The served prompt is the accepted candidate with the highest paired
-effect on its audit round. An equal effect keeps the earlier round, then the
-id in byte order. A rejected round does not replace it. A production rollback
-drops the latest accepted candidate and serves the best one that remains.
+rows are the first half of the audit split, sorted by id. An odd count gives
+the one-shot the extra row (`ceil(n / 2)`); the follow-up scores the rest, so
+those rows are not reused. Each phase's minimum audit count is the half it
+scores. Both candidates go through the controller's unit counts, guardrails,
+and budget ledger. The served prompt is the accepted candidate with the highest
+paired effect on its audit round. An equal effect keeps the earlier round, then
+the id in byte order. A rejected round does not replace it. A production
+rollback drops the latest accepted candidate and serves the best one that
+remains.
+
+`--validation-rows` and `--audit-rows` override those two sizes on `--live`,
+`--estimate`, and `--fixtures`. See the flags table. Held-out is not
+configurable. `--rows` and `--smoke` still cap every split after those sizes
+are chosen. The run stops before any model call when the pool cannot supply
+the requested optimization, validation, audit, and production rows disjoint
+from held-out.
 
 The harness writes a decision log beside a report when `--out` is set
 (`report.json` produces `report.decisions.json`). Each seed records, per
 round, the candidate id, a prompt hash, the split, per-item scores for the
-candidate and the incumbent, the rule parameters, and the decision. The log
-does not contain prompt text.
+candidate and the incumbent, the rule parameters, and the decision. It also
+records the split sizes used. The log does not contain prompt text.
 
 Replay that log with no model calls:
 
@@ -130,6 +139,8 @@ Useful flags:
 | `--bootstrap` | `2000` | Bootstrap resamples |
 | `--bootstrap-seed` | `17` | Bootstrap RNG seed |
 | `--out` | stdout | JSON path. A `.md` summary is written beside it |
+| `--validation-rows` | `150` | HotpotQA and IFBench validation rows on `--live`, `--estimate`, and `--fixtures`. An integer from 1 to 10000. Omitted, a full run stays at 150 and a fixtures run keeps its fixture split. Held-out is not configurable |
+| `--audit-rows` | `300` | HotpotQA and IFBench audit rows for those same modes. An integer from 2 to 10000. Omitted, a full run stays at 300. The one-shot rewrite scores the first `ceil(n / 2)` audit rows by id; the follow-up scores the rest |
 
 `--live` does not run unless `LOOPITER_BENCH_ALLOW_LIVE=1` is also set.
 `LOOPITER_BENCHMARK_LIVE=1` alone is still refused. The Phase 0 command never
