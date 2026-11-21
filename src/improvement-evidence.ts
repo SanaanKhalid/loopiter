@@ -174,6 +174,7 @@ export function validatePolicy(p: AutonomyPolicy): void {
     "minimumItems",
     "minimumValidationDecisive",
     "minimumAuditDecisive",
+    "noiseFloor",
   ]);
   nonempty(p.objective.metric, "objective");
   enumeration(p.objective.direction, ["maximize", "minimize"], "direction");
@@ -223,6 +224,18 @@ export function validatePolicy(p: AutonomyPolicy): void {
       "invalid_policy",
       "Decisive-item minimums require confidence acceptance.",
     );
+  if (p.objective.noiseFloor !== undefined) {
+    if (p.objective.acceptance !== "confidence")
+      fail("invalid_policy", "Noise floor requires confidence acceptance.");
+    const setting = p.objective.noiseFloor;
+    if (!setting || typeof setting !== "object" || Array.isArray(setting))
+      fail("invalid_policy", "noiseFloor must name the validation and audit splits.");
+    fields(setting, ["validation", "audit"]);
+    for (const key of ["validation", "audit"] as const) {
+      if (setting[key] !== undefined && typeof setting[key] !== "boolean")
+        fail("invalid_policy", `noiseFloor.${key} must be a boolean.`);
+    }
+  }
   gates(p.guardrails);
   gates(p.observation?.guardrails);
   if (!Array.isArray(p.trustedSources) || !p.trustedSources.length)
@@ -315,6 +328,16 @@ export function validatePolicy(p: AutonomyPolicy): void {
         "minimumAuditDecisive cannot exceed minimumAuditUnits.",
       );
   }
+}
+
+/** True when this split re-scores the incumbent. Omitted or false leaves the check off. */
+export function noiseFloorEnabled(
+  objective: AutonomyPolicy["objective"],
+  audit: boolean,
+): boolean {
+  const setting = objective.noiseFloor;
+  if (!setting) return false;
+  return audit ? setting.audit === true : setting.validation === true;
 }
 
 export function confidenceDecisiveMinimum(
@@ -478,10 +501,16 @@ export function compare(
     [lo, hi] = p.objective.range;
   let a = 0,
     b = 0;
+  const measureNoise =
+    p.objective.acceptance === "confidence" && !(audit && p.auditMethod) && noiseFloorEnabled(p.objective, audit);
   for (const r of result.cases) {
-    fields(r, ["id", "baseline", "candidate"]);
+    fields(r, ["id", "baseline", "candidate", "baselineRepeat"]);
     if (!ids.has(r.id)) fail("invalid_evaluation", "Unrecognized case.");
-    for (const v of [r.baseline, r.candidate]) {
+    const scores = [r.baseline, r.candidate];
+    if (r.baselineRepeat !== undefined) scores.push(r.baselineRepeat);
+    else if (measureNoise)
+      fail("invalid_evaluation", "Noise floor needs a second incumbent score on every item.");
+    for (const v of scores) {
       finite(v, "case", lo);
       if (v > hi) fail("invalid_evaluation", "Score outside declared range.");
     }
@@ -499,11 +528,12 @@ export function compare(
     : -Infinity;
   const confidence =
     p.objective.acceptance === "confidence" && !(audit && p.auditMethod)
-      ? cachedAcceptance(
+        ? cachedAcceptance(
           result.cases.map((row) => ({
             id: row.id,
             incumbent: row.baseline,
             candidate: row.candidate,
+            ...(measureNoise ? { incumbentRepeat: row.baselineRepeat } : {}),
           })),
           p.objective.direction,
           gateParameters({
@@ -566,6 +596,11 @@ export function compare(
     sampleCount: n,
     decisive: confidence ? confidence.decisive : null,
     required: confidence ? confidence.required : null,
+    noiseFloor: confidence
+      ? confidence.noiseFloor
+      : { value: null, method: "not_measured" as const, items: null, calls: null },
+    effectiveThreshold: confidence ? confidence.effectiveThreshold : null,
+    bindingThreshold: confidence ? confidence.bindingThreshold : null,
   };
 }
 

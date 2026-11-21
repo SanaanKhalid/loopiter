@@ -21,6 +21,8 @@ confidence policy cannot set a lower decisive minimum.
 Fewer decisive items is `insufficient`: the candidate is not served and the
 failure stop is not incremented. `compare()` also requires the policy's
 validation and audit unit counts, which must be at least that floor.
+The public benchmark harness does not enable the optional noise floor yet.
+Its call plan and reservations stay the two-score validation and audit passes.
 
 The benchmark opts in with `objective.acceptance: "confidence"`. That is
 intended. The product default, including onboarding, keeps the fixed

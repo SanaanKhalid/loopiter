@@ -1,0 +1,18 @@
+{
+  "samples": 200,
+  "seed": 17,
+  "confidence": 0.9,
+  "deterministic": {
+    "count": 8,
+    "incumbent": 0,
+    "candidate": 1,
+    "repeat": 0
+  },
+  "noisy": {
+    "count": 20,
+    "incumbent": 0.5,
+    "candidate": 0.55,
+    "evenRepeat": 0.9,
+    "oddRepeat": 0.1
+  }
+}

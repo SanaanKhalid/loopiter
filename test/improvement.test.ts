@@ -542,6 +542,21 @@ test("confidence policies reject a short partition and a non-integer decisive fl
   const fixed = structuredClone(fixtures.policy) as AutonomyPolicy;
   fixed.objective = { ...fixed.objective, minimumValidationDecisive: 5 };
   assert.throws(() => validatePolicy(fixed), { code: "invalid_policy" });
+  const noise = structuredClone(base);
+  noise.objective = { ...noise.objective, noiseFloor: { validation: true, audit: false } };
+  assert.doesNotThrow(() => validatePolicy(noise));
+  const fixedNoise = structuredClone(fixtures.policy) as AutonomyPolicy;
+  fixedNoise.objective = { ...fixedNoise.objective, noiseFloor: { audit: true } };
+  assert.throws(() => validatePolicy(fixedNoise), { code: "invalid_policy" });
+  const badFlag = structuredClone(base);
+  badFlag.objective = {
+    ...badFlag.objective,
+    noiseFloor: { validation: "yes" as unknown as boolean },
+  };
+  assert.throws(() => validatePolicy(badFlag), { code: "invalid_policy" });
+  const extra = structuredClone(base);
+  Object.assign(extra.objective, { noiseFloor: { validation: true, samples: 10 } });
+  assert.throws(() => validatePolicy(extra));
   assert.doesNotThrow(() => validatePolicy(structuredClone(fixtures.policy)));
 });
 

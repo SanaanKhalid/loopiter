@@ -319,6 +319,22 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(LoopiterError) as fixed_error:
             validate_policy(fixed)
         self.assertEqual(fixed_error.exception.code, "invalid_policy")
+        noise = deepcopy(base)
+        noise["objective"] = {
+            **noise["objective"],
+            "noise_floor": {"validation": True, "audit": False},
+        }
+        validate_policy(noise)
+        fixed_noise = deepcopy(FIXTURES["policy"])
+        fixed_noise["objective"] = {**fixed_noise["objective"], "noise_floor": {"audit": True}}
+        with self.assertRaises(LoopiterError) as noise_error:
+            validate_policy(fixed_noise)
+        self.assertEqual(noise_error.exception.code, "invalid_policy")
+        bad_flag = deepcopy(base)
+        bad_flag["objective"] = {**bad_flag["objective"], "noise_floor": {"validation": "yes"}}
+        with self.assertRaises(LoopiterError) as flag_error:
+            validate_policy(bad_flag)
+        self.assertEqual(flag_error.exception.code, "invalid_policy")
         validate_policy(deepcopy(FIXTURES["policy"]))
 
     async def test_shared_behavioral_fixtures(self):

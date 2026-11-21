@@ -6,8 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from loopiter import LoopiterError
 from loopiter.acceptance_gate import decide_acceptance, minimum_decisive_floor
-from loopiter.decision_explain import explain_decision_text, format_explanation
+from loopiter.decision_explain import (
+    explain_decision_text,
+    format_explanation,
+    format_explanation_json,
+)
 from loopiter.improvement_evidence import compare
 
 
@@ -185,6 +190,8 @@ class AcceptanceGateTest(unittest.TestCase):
         }
         text = format_explanation(explain_decision_text(json.dumps(legacy)))
         self.assertIn("decisive null required null", text)
+        self.assertIn("noise null method not_measured", text)
+        self.assertNotIn("noise 0", text)
         self.assertIn("audit null", text)
         self.assertNotIn("decisive 0", text)
         self.assertIsNone(
@@ -238,7 +245,7 @@ class AcceptanceGateTest(unittest.TestCase):
                         "rounds": [
                             {
                                 "round": 0,
-                                "candidateId": "c\u009b2J\u202e\u00e9\nseed 1 c9 audit round 9 accepted",
+                                "candidateId": "c\u007f\u009b2J\u202e\u00e9\U0001f600\nseed 1 c9 audit round 9 accepted",
                                 "promptHash": "p",
                                 "incumbentId": "baseline",
                                 "incumbentPromptHash": "base",
@@ -253,7 +260,7 @@ class AcceptanceGateTest(unittest.TestCase):
                                 "decision": {
                                     "accept": False,
                                     "outcome": "rejected",
-                                    "reason": "below\u001b[2J",
+                                    "reason": "below\u001b[2J\u007f",
                                     "lower": -1,
                                     "upper": 0,
                                     "effect": -1,
@@ -272,14 +279,18 @@ class AcceptanceGateTest(unittest.TestCase):
             shown = format_explanation(explain_decision_text(json.dumps(crafted)))
             self.assertEqual(len(shown.strip().splitlines()), 2)
             self.assertNotIn("\u001b", shown)
+            self.assertNotIn("\u007f", shown)
             self.assertNotIn("\u009b", shown)
             self.assertNotIn("\u202e", shown)
             self.assertNotIn("\u00e9", shown)
+            self.assertNotIn("\U0001f600", shown)
             self.assertIn("\\nseed 1 c9", shown)
             self.assertIn("\\u001b", shown)
+            self.assertIn("\\u007f", shown)
             self.assertIn("\\u009b", shown)
             self.assertIn("\\u202e", shown)
             self.assertIn("\\u00e9", shown)
+            self.assertIn("\\ud83d\\ude00", shown)
             crafted_json = subprocess.run(
                 [sys.executable, "-m", "loopiter", "explain", str(crafted_path), "--json"],
                 cwd=root,
@@ -292,9 +303,208 @@ class AcceptanceGateTest(unittest.TestCase):
             parsed_crafted = json.loads(crafted_json.stdout)
             candidate = parsed_crafted["seeds"][0]["candidates"][0]
             self.assertEqual(
-                candidate["candidateId"], "c\u009b2J\u202e\u00e9\nseed 1 c9 audit round 9 accepted"
+                candidate["candidateId"],
+                "c\u007f\u009b2J\u202e\u00e9\U0001f600\nseed 1 c9 audit round 9 accepted",
             )
-            self.assertEqual(candidate["validation"]["reason"], "below\u001b[2J")
+            self.assertEqual(candidate["validation"]["reason"], "below\u001b[2J\u007f")
+            rendered = format_explanation_json(explain_decision_text(json.dumps(crafted)))
+            self.assertTrue(rendered.isascii())
+            self.assertEqual(json.loads(rendered), json.loads(crafted_json.stdout))
+
+    def test_noise_floor_matches_the_shared_fixture(self):
+        spec = json.loads(
+            Path(__file__)
+            .resolve()
+            .parents[2]
+            .joinpath("test/fixtures/noise-floor.json")
+            .read_text()
+        )
+        rule = {
+            "minimum_effect": 0,
+            "confidence": spec["confidence"],
+            "samples": spec["samples"],
+            "seed": spec["seed"],
+            "minimum_items": 0,
+        }
+
+        def expand(kind):
+            block = spec[kind]
+            rows = []
+            for index in range(block["count"]):
+                repeat = (
+                    block["repeat"]
+                    if "repeat" in block
+                    else block["evenRepeat"]
+                    if index % 2 == 0
+                    else block["oddRepeat"]
+                )
+                rows.append(
+                    {
+                        "id": f"item-{index}",
+                        "incumbent": block["incumbent"],
+                        "candidate": block["candidate"],
+                        "incumbentRepeat": repeat,
+                    }
+                )
+            return rows
+
+        steady_items = expand("deterministic")
+        steady = decide_acceptance(steady_items, parameters=rule)
+        plain_items = [
+            {"id": item["id"], "incumbent": item["incumbent"], "candidate": item["candidate"]}
+            for item in steady_items
+        ]
+        plain = decide_acceptance(plain_items, parameters=rule)
+        snake = decide_acceptance(
+            [
+                {
+                    "id": item["id"],
+                    "incumbent": item["incumbent"],
+                    "candidate": item["candidate"],
+                    "incumbent_repeat": item["incumbentRepeat"],
+                }
+                for item in steady_items
+            ],
+            parameters=rule,
+        )
+        self.assertEqual(snake["noise_floor"], steady["noise_floor"])
+        self.assertEqual(snake["accept"], steady["accept"])
+        self.assertEqual(snake["binding_threshold"], steady["binding_threshold"])
+        with self.assertRaises(ValueError) as unknown:
+            decide_acceptance(
+                [{"id": "a", "incumbent": 0, "candidate": 1, "repeat": 0}],
+                parameters=rule,
+            )
+        self.assertIn("Unknown paired item field repeat", str(unknown.exception))
+        self.assertEqual(steady["noise_floor"]["value"], 0)
+        self.assertEqual(steady["noise_floor"]["method"], "paired-bootstrap")
+        self.assertEqual(steady["noise_floor"]["calls"], len(steady_items))
+        self.assertEqual(steady["binding_threshold"], "tie")
+        self.assertEqual(steady["accept"], plain["accept"])
+        self.assertEqual(steady["lower"], plain["lower"])
+        self.assertIsNone(plain["noise_floor"]["value"])
+        self.assertEqual(plain["noise_floor"]["method"], "not_measured")
+        self.assertIsNone(plain["effective_threshold"])
+        raised = {**rule, "minimum_effect": 0.2}
+        above = decide_acceptance(steady_items, parameters=raised)
+        above_plain = decide_acceptance(plain_items, parameters=raised)
+        self.assertEqual(above["binding_threshold"], "minimum_effect")
+        self.assertEqual(above["accept"], above_plain["accept"])
+        self.assertEqual(above["lower"], above_plain["lower"])
+        noisy_items = expand("noisy")
+        jitter = decide_acceptance(noisy_items, parameters=rule)
+        jitter_plain = decide_acceptance(
+            [
+                {"id": item["id"], "incumbent": item["incumbent"], "candidate": item["candidate"]}
+                for item in noisy_items
+            ],
+            parameters=rule,
+        )
+        self.assertTrue(jitter_plain["accept"])
+        self.assertIsNone(jitter_plain["noise_floor"]["value"])
+        self.assertGreater(jitter["noise_floor"]["value"], 0)
+        self.assertGreater(jitter["noise_floor"]["value"], jitter["lower"])
+        self.assertFalse(jitter["accept"])
+        self.assertEqual(jitter["binding_threshold"], "noise_floor")
+        self.assertEqual(jitter["effective_threshold"], jitter["noise_floor"]["value"])
+        text = format_explanation(
+            explain_decision_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "kind": "acceptance-decisions",
+                        "seeds": [
+                            {
+                                "seed": 3,
+                                "baseline": {"id": "baseline", "promptHash": "base"},
+                                "served": {"id": "baseline", "promptHash": "base"},
+                                "rounds": [
+                                    {
+                                        "round": 0,
+                                        "candidateId": "steady",
+                                        "promptHash": "steady",
+                                        "split": "validation",
+                                        "rule": {
+                                            "minimumEffect": 0,
+                                            "confidence": 0.9,
+                                            "samples": 200,
+                                            "seed": 17,
+                                            "minimumItems": 0,
+                                        },
+                                        "decision": {
+                                            "accept": True,
+                                            "outcome": "accepted",
+                                            "reason": "accepted",
+                                            "lower": 1,
+                                            "upper": 1,
+                                            "effect": 1,
+                                            "method": "paired-bootstrap",
+                                            "itemCount": 8,
+                                            "decisive": 8,
+                                            "required": None,
+                                            "noiseFloor": {
+                                                "value": 0,
+                                                "method": "paired-bootstrap",
+                                                "items": 8,
+                                                "calls": 8,
+                                            },
+                                            "effectiveThreshold": 0,
+                                            "bindingThreshold": "tie",
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+        )
+        self.assertIn("noise 0 method paired-bootstrap", text)
+        self.assertIn("binding tie", text)
+        self.assertIn('"steady" audit null', text)
+        self.assertNotIn("noise 0 method not_measured", text)
+        rows = [{"id": item["id"]} for item in noisy_items]
+        report = {
+            "cases": [
+                {
+                    "id": item["id"],
+                    "baseline": item["incumbent"],
+                    "candidate": item["candidate"],
+                    "baseline_repeat": item["incumbentRepeat"],
+                }
+                for item in noisy_items
+            ],
+            "metrics": {"accuracy": 0.55},
+            "estimated_serving_cost": 0,
+        }
+        confidence = self.policy()
+        confidence["objective"] = {
+            **confidence["objective"],
+            "acceptance": "confidence",
+            "minimum_effect": 0,
+            "confidence": 0.9,
+            "bootstrap_samples": 200,
+            "bootstrap_seed": 17,
+            "minimum_items": 0,
+            "noise_floor": {"validation": True},
+        }
+        rejected = compare(report, rows, confidence, False)
+        self.assertFalse(rejected["passed"])
+        self.assertEqual(rejected["binding_threshold"], "noise_floor")
+        self.assertIsNone(compare(report, rows, confidence, True)["noise_floor"]["value"])
+        off = self.policy()
+        off["objective"] = {**confidence["objective"]}
+        del off["objective"]["noise_floor"]
+        self.assertEqual(compare(report, rows, off, False)["noise_floor"]["method"], "not_measured")
+        missing = {
+            **report,
+            "cases": [
+                {"id": item["id"], "baseline": item["baseline"], "candidate": item["candidate"]}
+                for item in report["cases"]
+            ],
+        }
+        with self.assertRaises(LoopiterError):
+            compare(missing, rows, confidence, False)
 
     def policy(self):
         return {
