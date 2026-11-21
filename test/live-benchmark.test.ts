@@ -1636,7 +1636,9 @@ test("sigkill helper skips a normal exit, a mismatched ppid, and a dead parent",
   });
   assert.equal(parentExit, 0);
   await new Promise((resolve) => setTimeout(resolve, 250));
-  assert.equal(readFileSync(normalDecision, "utf8"), "skip");
+  const normal = readFileSync(normalDecision, "utf8");
+  // The parent can be reparented (skip) or already gone (dead) before the helper's next check. Neither sends SIGKILL.
+  assert.ok(normal === "skip" || normal === "dead", normal);
 
   const mismatchDecision = join(directory, "mismatch.txt");
   const sleeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 2000)"], {
