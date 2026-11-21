@@ -16,7 +16,14 @@ from pathlib import Path
 
 from . import FeedbackLoop, ImprovementController
 from ._validation import fingerprint
-from .decision_explain import explain_decision_log, format_explanation, format_explanation_json
+from .decision_explain import (
+    explain_decision_log,
+    format_explanation,
+    format_explanation_json,
+    format_retention_report,
+    format_retention_report_json,
+    retention_report_from_state,
+)
 from .improvement import improvement_work_disabled, warn_ambiguous_improvement_disable
 from .improvement_evidence import describe_audit_floor, minimum_certifiable_audit_units
 
@@ -590,8 +597,24 @@ def main(argv=None):
     explain = commands.add_parser("explain")
     explain.add_argument("path")
     explain.add_argument("--json", action="store_true")
+    retention = commands.add_parser("retention")
+    retention_commands = retention.add_subparsers(dest="retention_command", required=True)
+    retention_status = retention_commands.add_parser("status")
+    retention_status.add_argument("--file", required=True)
+    retention_status.add_argument("--namespace", required=True)
+    retention_status.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
+        if args.command == "retention":
+            report = retention_report_from_state(
+                Path(args.file).read_text(encoding="utf-8"), args.namespace
+            )
+            sys.stdout.write(
+                format_retention_report_json(report)
+                if args.json
+                else format_retention_report(report)
+            )
+            return 0
         if args.command == "explain":
             explained = explain_decision_log(args.path)
             sys.stdout.write(

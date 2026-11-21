@@ -120,6 +120,11 @@ export interface GateDecision {
   effectiveThreshold: number | null;
   /** Which bar set the effective threshold. Null when the noise check did not run. */
   bindingThreshold: "minimum_effect" | "noise_floor" | "tie" | null;
+  /**
+   * Present when a caller recorded a retention check on this decision.
+   * Absent on logs written before retention, which explain as not_measured.
+   */
+  retention?: RetentionDecision;
 }
 
 interface AppliedNoise {
@@ -599,4 +604,275 @@ function inverseNorm(p: number): number {
     ((((((a[0]! * r + a[1]!) * r + a[2]!) * r + a[3]!) * r + a[4]!) * r + a[5]!) * q) /
     (((((b[0]! * r + b[1]!) * r + b[2]!) * r + b[3]!) * r + b[4]!) * r + 1)
   );
+}
+
+/** How many retention decisions a ledger keeps. Older ones drop off the front. */
+export const RETENTION_DECISION_LIMIT = 20;
+
+/**
+ * One control-split item score. The ledger stores these sorted by UTF-8 id.
+ * The hosted ledger view reads this shape; it does not score items itself.
+ */
+export interface RetentionItemScore {
+  id: string;
+  score: number;
+}
+
+/**
+ * Best control score remembered for one agent. `score` is the mean of `items`.
+ * A later promotion replaces it only when the new control mean is strictly better.
+ * Rollback does not write this record.
+ */
+export interface BestEverRecord {
+  /** Version or candidate id that achieved `score`. */
+  id: string;
+  score: number;
+  items: RetentionItemScore[];
+}
+
+/**
+ * One retention check. `not_measured` uses nulls, never 0.
+ * `retention_regression` blocks promotion. `insufficient` is not a pass.
+ */
+export interface RetentionDecision {
+  outcome: "pass" | "retention_regression" | "insufficient" | "not_measured";
+  reason: "pass" | "retention_regression" | "insufficient_decisive" | "not_measured";
+  bestEverId: string | null;
+  /** Lower bound of the objective-direction difference (candidate − bestEver). */
+  lower: number | null;
+  margin: number | null;
+  /** Overlapping items. Null when the check did not measure them. */
+  items: number | null;
+}
+
+export interface RetentionLedgerDecision extends RetentionDecision {
+  candidateId: string;
+}
+
+/** Durable per-agent record stored beside controller state. */
+export interface RetentionLedger {
+  bestEver: BestEverRecord | null;
+  decisions: RetentionLedgerDecision[];
+}
+
+export function notMeasuredRetention(): RetentionDecision {
+  return {
+    outcome: "not_measured",
+    reason: "not_measured",
+    bestEverId: null,
+    lower: null,
+    margin: null,
+    items: null,
+  };
+}
+
+export function emptyRetentionLedger(): RetentionLedger {
+  return { bestEver: null, decisions: [] };
+}
+
+/**
+ * Paired bootstrap of (candidate − bestEver), items sorted by UTF-8 id.
+ * The lower bound uses the same seed, sample count, and confidence as the gate.
+ * A lower bound below `-margin` is `retention_regression`.
+ * Too few decisive overlaps is `insufficient`, not a pass.
+ * No best-ever record, or no shared ids, is `not_measured` with nulls.
+ */
+export function decideRetention(input: {
+  enabled: boolean;
+  candidateItems: readonly RetentionItemScore[];
+  bestEver: BestEverRecord | null;
+  margin: number;
+  direction?: "maximize" | "minimize";
+  parameters: GateParameters;
+}): RetentionDecision {
+  if (!input.enabled) return notMeasuredRetention();
+  validateParameters(input.parameters);
+  if (!Number.isFinite(input.margin) || input.margin < 0)
+    throw new Error("Retention margin must be a finite number >= 0.");
+  const candidate = orderedScores(input.candidateItems, "candidate");
+  if (!input.bestEver) return notMeasuredRetention();
+  const best = orderedScores(input.bestEver.items, "best-ever");
+  const bestById = new Map(best.map((item) => [item.id, item.score]));
+  const paired = candidate.filter((item) => bestById.has(item.id));
+  if (paired.length === 0) return notMeasuredRetention();
+  const sign = (input.direction ?? "maximize") === "maximize" ? 1 : -1;
+  const diffs: number[] = [];
+  let decisive = 0;
+  for (const item of paired) {
+    const control = bestById.get(item.id)!;
+    if (item.score !== control) decisive += 1;
+    diffs.push(sign * (item.score - control));
+  }
+  const required = decisiveRequirement(input.parameters);
+  if (required !== null && decisive < required) {
+    return {
+      outcome: "insufficient",
+      reason: "insufficient_decisive",
+      bestEverId: input.bestEver.id,
+      lower: null,
+      margin: input.margin,
+      items: paired.length,
+    };
+  }
+  const interval = bootstrapMeanInterval(diffs, input.parameters);
+  if (interval.lower < -input.margin) {
+    return {
+      outcome: "retention_regression",
+      reason: "retention_regression",
+      bestEverId: input.bestEver.id,
+      lower: interval.lower,
+      margin: input.margin,
+      items: paired.length,
+    };
+  }
+  return {
+    outcome: "pass",
+    reason: "pass",
+    bestEverId: input.bestEver.id,
+    lower: interval.lower,
+    margin: input.margin,
+    items: paired.length,
+  };
+}
+
+/**
+ * Replace the record only when the shared item ids have a strictly better mean.
+ * Maximize treats a larger shared mean as better. Minimize treats a smaller one as better.
+ * No shared ids leaves the current record unchanged. A missing record accepts the first score.
+ * The stored score is the mean of the winning candidate's own items.
+ */
+export function nextBestEver(input: {
+  current: BestEverRecord | null;
+  candidateId: string;
+  items: readonly RetentionItemScore[];
+  direction?: "maximize" | "minimize";
+}): BestEverRecord {
+  if (typeof input.candidateId !== "string" || input.candidateId.length === 0)
+    throw new Error("Best-ever id must be a non-empty string.");
+  const items = orderedScores(input.items, "candidate");
+  if (items.length === 0) throw new Error("Best-ever record needs at least one item.");
+  if (!input.current) {
+    return { id: input.candidateId, score: meanOf(items.map((item) => item.score)), items };
+  }
+  const currentItems = orderedScores(input.current.items, "best-ever");
+  const currentById = new Map(currentItems.map((item) => [item.id, item.score]));
+  const overlap = items.filter((item) => currentById.has(item.id));
+  if (overlap.length === 0) return input.current;
+  const candidateMean = meanOf(overlap.map((item) => item.score));
+  const currentMean = meanOf(overlap.map((item) => currentById.get(item.id)!));
+  const better =
+    (input.direction ?? "maximize") === "minimize"
+      ? candidateMean < currentMean
+      : candidateMean > currentMean;
+  if (!better) return input.current;
+  return { id: input.candidateId, score: meanOf(items.map((item) => item.score)), items };
+}
+
+/** Read a stored ledger. Invalid best-ever data throws instead of being kept. */
+export function loadRetentionLedger(value: unknown): RetentionLedger {
+  if (value === undefined || value === null) return emptyRetentionLedger();
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Retention ledger must be an object.");
+  const record = value as { bestEver?: unknown; decisions?: unknown };
+  if (!Array.isArray(record.decisions))
+    throw new Error("Retention ledger decisions must be a list.");
+  return {
+    bestEver: record.bestEver == null ? null : loadBestEver(record.bestEver),
+    decisions: record.decisions.map((decision, index) => loadLedgerDecision(decision, index)),
+  };
+}
+
+function loadBestEver(value: unknown): BestEverRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Retention ledger best-ever record must be an object.");
+  const record = value as { id?: unknown; score?: unknown; items?: unknown };
+  if (typeof record.id !== "string" || record.id.length === 0)
+    throw new Error("Retention ledger best-ever id must be a non-empty string.");
+  if (typeof record.score !== "number" || !Number.isFinite(record.score))
+    throw new Error("Retention ledger best-ever score must be finite.");
+  if (!Array.isArray(record.items))
+    throw new Error("Retention ledger best-ever items must be a list.");
+  const items = orderedScores(
+    record.items.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item))
+        throw new Error("Retention ledger best-ever item must be an object.");
+      const row = item as { id?: unknown; score?: unknown };
+      return { id: row.id as string, score: row.score as number };
+    }),
+    "best-ever",
+  );
+  return { id: record.id, score: record.score, items };
+}
+
+function loadLedgerDecision(value: unknown, index: number): RetentionLedgerDecision {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error(`Retention ledger decision ${index} must be an object.`);
+  const row = value as {
+    candidateId?: unknown;
+    outcome?: unknown;
+    reason?: unknown;
+    bestEverId?: unknown;
+    lower?: unknown;
+    margin?: unknown;
+    items?: unknown;
+  };
+  if (typeof row.candidateId !== "string" || row.candidateId.length === 0)
+    throw new Error(`Retention ledger decision ${index} is missing its candidate.`);
+  if (
+    row.outcome !== "pass" &&
+    row.outcome !== "retention_regression" &&
+    row.outcome !== "insufficient" &&
+    row.outcome !== "not_measured"
+  )
+    throw new Error(`Retention ledger decision ${index} has an unknown outcome.`);
+  if (typeof row.reason !== "string")
+    throw new Error(`Retention ledger decision ${index} has no reason.`);
+  if (row.outcome === "not_measured") {
+    if (row.bestEverId != null || row.lower != null || row.margin != null || row.items != null)
+      throw new Error(`Retention ledger decision ${index} records an unmeasured check as a number.`);
+  } else if (typeof row.items !== "number" || !Number.isInteger(row.items) || row.items < 1) {
+    throw new Error(`Retention ledger decision ${index} has an invalid item count.`);
+  }
+  if (row.lower != null && (typeof row.lower !== "number" || !Number.isFinite(row.lower)))
+    throw new Error(`Retention ledger decision ${index} has a non-finite lower bound.`);
+  if (row.margin != null && (typeof row.margin !== "number" || !Number.isFinite(row.margin)))
+    throw new Error(`Retention ledger decision ${index} has a non-finite margin.`);
+  return {
+    candidateId: row.candidateId,
+    outcome: row.outcome,
+    reason: row.reason as RetentionLedgerDecision["reason"],
+    bestEverId: typeof row.bestEverId === "string" ? row.bestEverId : null,
+    lower: typeof row.lower === "number" ? row.lower : null,
+    margin: typeof row.margin === "number" ? row.margin : null,
+    items: typeof row.items === "number" ? row.items : null,
+  };
+}
+
+export function rememberRetentionDecision(
+  ledger: RetentionLedger,
+  decision: RetentionLedgerDecision,
+): RetentionLedger {
+  return {
+    bestEver: ledger.bestEver,
+    decisions: [...ledger.decisions, decision].slice(-RETENTION_DECISION_LIMIT),
+  };
+}
+
+function orderedScores(
+  items: readonly RetentionItemScore[],
+  label: string,
+): RetentionItemScore[] {
+  const ordered = [...items].sort((a, b) =>
+    Buffer.compare(Buffer.from(String(a.id)), Buffer.from(String(b.id))),
+  );
+  const seen = new Set<string>();
+  for (const item of ordered) {
+    if (typeof item.id !== "string" || item.id.length === 0)
+      throw new Error(`Retention ${label} item id must be a non-empty string.`);
+    if (seen.has(item.id)) throw new Error(`Duplicate retention ${label} item id ${item.id}.`);
+    seen.add(item.id);
+    if (!Number.isFinite(item.score))
+      throw new Error(`Retention ${label} scores must be finite.`);
+  }
+  return ordered;
 }

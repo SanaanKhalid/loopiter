@@ -2,6 +2,9 @@ import asyncio
 import json
 import os
 import re
+import subprocess
+import sys
+import tempfile
 import time
 import unittest
 from copy import deepcopy
@@ -45,6 +48,10 @@ def snake(value):
 
 
 FIXTURES = snake(json.loads((Path(__file__).parent / "fixtures/autonomy.json").read_text()))
+
+
+def _status_cli(args, **kwargs):
+    return subprocess.run(args, **kwargs)
 
 
 def dataset():
@@ -336,6 +343,266 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             validate_policy(bad_flag)
         self.assertEqual(flag_error.exception.code, "invalid_policy")
         validate_policy(deepcopy(FIXTURES["policy"]))
+        kept = deepcopy(base)
+        kept["objective"] = {**kept["objective"], "retention": {"margin": 0.02}}
+        validate_policy(kept)
+        with_confidence = deepcopy(base)
+        with_confidence["objective"] = {
+            **with_confidence["objective"],
+            "retention": {"margin": 0, "confidence": 0.8},
+        }
+        validate_policy(with_confidence)
+        fixed_retention = deepcopy(FIXTURES["policy"])
+        fixed_retention["objective"] = {
+            **fixed_retention["objective"],
+            "retention": {"margin": 0.02},
+        }
+        with self.assertRaises(LoopiterError) as retention_error:
+            validate_policy(fixed_retention)
+        self.assertEqual(retention_error.exception.code, "invalid_policy")
+        missing = deepcopy(base)
+        missing["objective"] = {**missing["objective"], "retention": {}}
+        with self.assertRaises(LoopiterError):
+            validate_policy(missing)
+        negative = deepcopy(base)
+        negative["objective"] = {**negative["objective"], "retention": {"margin": -0.01}}
+        with self.assertRaises(LoopiterError) as negative_error:
+            validate_policy(negative)
+        self.assertEqual(negative_error.exception.code, "invalid_input")
+        bad_confidence = deepcopy(base)
+        bad_confidence["objective"] = {
+            **bad_confidence["objective"],
+            "retention": {"margin": 0.1, "confidence": 1},
+        }
+        with self.assertRaises(LoopiterError) as confidence_error:
+            validate_policy(bad_confidence)
+        self.assertEqual(confidence_error.exception.code, "invalid_policy")
+        extra_retention = deepcopy(base)
+        extra_retention["objective"] = {
+            **extra_retention["objective"],
+            "retention": {"margin": 0.1, "samples": 10},
+        }
+        with self.assertRaises(LoopiterError):
+            validate_policy(extra_retention)
+
+    async def _finish(self, controller):
+        result = await controller.tick("classification")
+        for _ in range(10):
+            if result["state"] in (
+                "completed",
+                "no_improvement",
+                "rolled_back",
+                "waiting_for_evidence",
+            ):
+                return result
+            if result["state"] == "observing":
+                self.now += timedelta(hours=2)
+            result = await controller.tick("classification")
+        return result
+
+    async def _ledger(self):
+        page = await self.loop.list("coordination", limit=1000)
+        target = next(row for row in page["items"] if str(row["id"]).startswith("target:"))
+        return target["data"].get("retention") or {"best_ever": None, "decisions": []}
+
+    def _ready(self, scores, margin, production_errors=0):
+        self.setup_workflow(
+            {
+                "name": "accepted",
+                "scores": scores,
+                "errors": 0,
+                "production_errors": production_errors,
+            }
+        )
+        self.workflow.policy["objective"] = {
+            **self.workflow.policy["objective"],
+            "acceptance": "confidence",
+            "minimum_effect": 0,
+            "confidence": 0.9,
+            "bootstrap_samples": 200,
+            "bootstrap_seed": 17,
+            "retention": {"margin": margin},
+        }
+        self.workflow.policy["daily"] = {"model_requests": 20, "tokens": 5000, "deployments": 5}
+
+    async def _seed_best(self, score, count=50):
+        from loopiter._validation import fingerprint
+
+        now = self.now.isoformat().replace("+00:00", "Z")
+        key = "target:" + fingerprint(self.workflow.policy["target"])
+        items = [{"id": f"customer-audit-{index}", "score": score} for index in range(count)]
+        async with self.loop.store.transaction(self.loop.namespace) as tx:
+            await tx.insert(
+                "coordination",
+                {
+                    "id": key,
+                    "namespace": self.loop.namespace,
+                    "revision": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                    "format": 1,
+                    "data": {
+                        "retention": {
+                            "best_ever": {"id": "seeded", "score": score, "items": items},
+                            "decisions": [],
+                        }
+                    },
+                },
+            )
+
+    async def test_retention_blocks_regression_and_survives_rollback(self):
+        self._ready([0.5], 0.05)
+        controller = self.controller()
+        first = await self._finish(controller)
+        self.assertEqual(first["state"], "completed", first)
+        self.assertEqual(self.registry.calls, 1)
+        opened = await controller.get_run(first["run_id"])
+        self.assertEqual(opened["data"]["retention"]["outcome"], "not_measured")
+        self.assertIsNone(opened["data"]["retention"]["best_ever_id"])
+        self.assertIsNone(opened["data"]["retention"]["lower"])
+        self.assertIsNone(opened["data"]["retention"]["margin"])
+        self.assertIsNone(opened["data"]["retention"]["items"])
+        ledger = await self._ledger()
+        self.assertEqual(ledger["best_ever"]["score"], 0.5)
+        self.assertEqual(ledger["best_ever"]["id"], opened["data"]["selected_id"])
+        self.assertIsNone(ledger["decisions"][-1]["items"])
+
+        self._ready([0.2], 0.05)
+        await self._seed_best(1)
+        regressed = await self._finish(self.controller())
+        self.assertEqual(regressed["state"], "no_improvement", regressed)
+        self.assertEqual(regressed["reason"], "retention_regression")
+        self.assertEqual(self.registry.calls, 0)
+        ledger = await self._ledger()
+        self.assertEqual(ledger["best_ever"]["id"], "seeded")
+        self.assertEqual(ledger["best_ever"]["score"], 1)
+        self.assertEqual(ledger["decisions"][-1]["outcome"], "retention_regression")
+        self.assertLess(ledger["decisions"][-1]["lower"], -0.05)
+
+        self._ready([0.5], 0.5)
+        await self._seed_best(0.75)
+        within = await self._finish(self.controller())
+        self.assertEqual(within["state"], "completed", within)
+        self.assertEqual(self.registry.calls, 1)
+        ledger = await self._ledger()
+        self.assertEqual(ledger["best_ever"]["id"], "seeded")
+        self.assertEqual(ledger["best_ever"]["score"], 0.75)
+        self.assertEqual(ledger["decisions"][-1]["outcome"], "pass")
+
+        self._ready([1], 0.05, 0.5)
+        await self._seed_best(0.5)
+        controller = self.controller()
+        rising = await controller.tick("classification")
+        for _ in range(8):
+            if rising["state"] in ("observing", "rolling_back"):
+                break
+            rising = await controller.tick("classification")
+        self.assertEqual(rising["state"], "observing", rising)
+        promoted = await controller.get_run(rising["run_id"])
+        ledger = await self._ledger()
+        self.assertEqual(ledger["best_ever"]["id"], "seeded")
+        self.assertEqual(ledger["best_ever"]["score"], 0.5)
+        self.assertNotEqual(ledger["best_ever"]["id"], promoted["data"]["selected_id"])
+        self.now += timedelta(hours=2)
+        rolled = await controller.tick("classification")
+        for _ in range(4):
+            if rolled["state"] == "rolled_back":
+                break
+            rolled = await controller.tick("classification")
+        self.assertEqual(rolled["state"], "rolled_back", rolled)
+        after = await self._ledger()
+        self.assertEqual(after["best_ever"]["id"], "seeded")
+        self.assertEqual(after["best_ever"]["score"], 0.5)
+        self.assertNotEqual(after["best_ever"]["id"], promoted["data"]["selected_id"])
+
+        self._ready([0.4], 0.05)
+        await self._seed_best(1, 2)
+        held = await self._finish(self.controller())
+        self.assertEqual(held["state"], "waiting_for_evidence", held)
+        self.assertEqual(held["reason"], "insufficient_decisive")
+        self.assertEqual(self.registry.calls, 0)
+        held_run = await self.controller().get_run(held["run_id"])
+        self.assertEqual(held_run["data"]["retention"]["outcome"], "insufficient")
+        self.assertIsNone(held_run["data"]["retention"]["lower"])
+        self.assertEqual(held_run["data"]["retention"]["items"], 2)
+        held_ledger = await self._ledger()
+        self.assertEqual(held_ledger["best_ever"]["id"], "seeded")
+        self.assertEqual(held_ledger["best_ever"]["score"], 1)
+
+        self._ready([1], 0.05)
+        finished = await self._finish(self.controller())
+        self.assertEqual(finished["state"], "completed", finished)
+        opened = await self.controller().get_run(finished["run_id"])
+        document = {
+            "version": 3,
+            "namespaces": {self.loop.namespace: self.loop.store._state[self.loop.namespace]},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            state_path.write_text(json.dumps(document), encoding="utf-8")
+            shown = _status_cli(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "retention",
+                    "status",
+                    "--file",
+                    str(state_path),
+                    "--namespace",
+                    self.loop.namespace,
+                    "--json",
+                ],
+                cwd=directory,
+                env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            parsed = json.loads(shown.stdout)
+            self.assertEqual(parsed["targets"][0]["bestEver"]["id"], opened["data"]["selected_id"])
+            self.assertEqual(parsed["targets"][0]["bestEver"]["score"], 1)
+
+    async def test_invalid_best_ever_fails_closed(self):
+        from loopiter._validation import fingerprint
+
+        self._ready([1], 0.05)
+        now = self.now.isoformat().replace("+00:00", "Z")
+        key = "target:" + fingerprint(self.workflow.policy["target"])
+        async with self.loop.store.transaction(self.loop.namespace) as tx:
+            await tx.insert(
+                "coordination",
+                {
+                    "id": key,
+                    "namespace": self.loop.namespace,
+                    "revision": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                    "format": 1,
+                    "data": {
+                        "retention": {
+                            "best_ever": {
+                                "id": "bad",
+                                "score": 1,
+                                "items": [
+                                    {"id": "customer-audit-0", "score": 1},
+                                    {"id": "customer-audit-0", "score": 1},
+                                ],
+                            },
+                            "decisions": [],
+                        }
+                    },
+                },
+            )
+        result = await self.controller().tick("classification")
+        for _ in range(8):
+            if result["reason"] == "invalid_retention":
+                break
+            result = await self.controller().tick("classification")
+        self.assertEqual(result["reason"], "invalid_retention", result)
+        self.assertIn("Duplicate retention best-ever item id", result.get("detail") or "")
+        self.assertEqual(self.registry.calls, 0)
 
     async def test_shared_behavioral_fixtures(self):
         for scenario in FIXTURES["scenarios"]:

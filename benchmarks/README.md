@@ -23,6 +23,9 @@ failure stop is not incremented. `compare()` also requires the policy's
 validation and audit unit counts, which must be at least that floor.
 The public benchmark harness does not enable the optional noise floor yet.
 Its call plan and reservations stay the two-score validation and audit passes.
+It also does not enable retention. That check needs no extra model calls, but
+it is not wired here, so a benchmark decision log does not record it. `explain`
+shows `not_measured` when a decision has no retention result.
 
 The benchmark opts in with `objective.acceptance: "confidence"`. That is
 intended. The product default, including onboarding, keeps the fixed
