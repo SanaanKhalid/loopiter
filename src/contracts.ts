@@ -181,6 +181,10 @@ export interface EvaluationResult {
   passed: boolean;
   metrics?: Record<string, number>;
   notes?: string;
+  /** Set when a confidence audit waited for more decisive items. */
+  outcome?: "insufficient";
+  /** Gate reason stored with `outcome`. */
+  reason?: string;
 }
 export interface EvaluationContext {
   evaluator: string;

@@ -26,6 +26,7 @@ from loopiter.improvement_evidence import (
     minimum_certifiable_audit_units,
     prepare_dataset,
     validate_change,
+    validate_policy,
 )
 
 
@@ -145,6 +146,180 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             workflows=[self.workflow],
             **{"mode": "autonomous", "self_improving": True, **options},
         )
+
+    async def test_confidence_waits_instead_of_burning_a_short_sample(self):
+        self.setup_workflow({"name": "sparse", "scores": [1], "errors": 0})
+        objective = {
+            **self.workflow.policy["objective"],
+            "acceptance": "confidence",
+            "minimum_effect": 0,
+            "confidence": 0.9,
+            "bootstrap_samples": 200,
+            "bootstrap_seed": 17,
+        }
+        self.workflow.policy["objective"] = objective
+
+        async def evaluate(input_, _context):
+            return {
+                "cases": [
+                    {
+                        "id": row["id"],
+                        "baseline": 0,
+                        "candidate": 1 if input_["partition"] == "validation" and index < 2 else 0,
+                    }
+                    for index, row in enumerate(input_["examples"])
+                ],
+                "metrics": {"errors": 0},
+                "estimated_serving_cost": 1,
+            }
+
+        self.workflow = replace(self.workflow, evaluate=evaluate)
+        result = await self.controller().tick("classification")
+        for _ in range(6):
+            if result["reason"] == "insufficient_decisive":
+                break
+            result = await self.controller().tick("classification")
+        self.assertEqual(result["state"], "waiting_for_evidence")
+        self.assertEqual(result["reason"], "insufficient_decisive")
+        self.assertEqual(self.registry.calls, 0)
+        run = await self.controller().get_run(result["run_id"])
+        self.assertEqual(run["data"]["acceptance"]["decisive"], 2)
+        self.assertEqual(run["data"]["acceptance"]["required"], 5)
+        self.assertIsNone(run["data"]["acceptance"]["lower"])
+        for candidate_id in run["data"]["candidate_ids"]:
+            candidate = await self.loop.get_candidate(candidate_id)
+            self.assertEqual(candidate["status"], "proposed")
+        again = await self.controller().tick("classification")
+        self.assertEqual(again["reason"], "unchanged_evidence")
+        self.assertEqual(again["state"], "waiting_for_evidence")
+        coordination = (await self.loop.list("coordination", limit=100))["items"]
+        lock = next(row for row in coordination if row["id"].startswith("target:"))
+        self.assertEqual(lock["data"].get("consecutive_failures", 0), 0)
+        self.assertIsNone(lock["data"].get("active_run"))
+
+        self.setup_workflow({"name": "loss", "scores": [0], "errors": 0})
+        self.workflow.policy["objective"] = {
+            **self.workflow.policy["objective"],
+            "acceptance": "confidence",
+            "minimum_effect": 0,
+            "confidence": 0.9,
+            "bootstrap_samples": 200,
+            "bootstrap_seed": 17,
+        }
+
+        async def losing(input_, _context):
+            return {
+                "cases": [
+                    {"id": row["id"], "baseline": 1, "candidate": 0} for row in input_["examples"]
+                ],
+                "metrics": {"errors": 0},
+                "estimated_serving_cost": 1,
+            }
+
+        self.workflow = replace(self.workflow, evaluate=losing)
+        rejected = await self.controller().tick("classification")
+        for _ in range(6):
+            if rejected["reason"] == "validation_failed":
+                break
+            rejected = await self.controller().tick("classification")
+        self.assertEqual(rejected["state"], "no_improvement")
+        self.assertEqual(rejected["reason"], "validation_failed")
+        loss_lock = next(
+            row
+            for row in (await self.loop.list("coordination", limit=100))["items"]
+            if row["id"].startswith("target:")
+        )
+        self.assertEqual(loss_lock["data"].get("consecutive_failures"), 1)
+
+        self.setup_workflow({"name": "audit-short", "scores": [1], "errors": 0})
+        self.workflow.policy["objective"] = {
+            **self.workflow.policy["objective"],
+            "acceptance": "confidence",
+            "minimum_effect": 0,
+            "confidence": 0.9,
+            "bootstrap_samples": 200,
+            "bootstrap_seed": 17,
+        }
+
+        async def audit_short(input_, _context):
+            return {
+                "cases": [
+                    {
+                        "id": row["id"],
+                        "baseline": 0,
+                        "candidate": 1 if input_["partition"] != "audit" or index < 2 else 0,
+                    }
+                    for index, row in enumerate(input_["examples"])
+                ],
+                "metrics": {"errors": 0},
+                "estimated_serving_cost": 1,
+            }
+
+        self.workflow = replace(self.workflow, evaluate=audit_short)
+        held = await self.controller().tick("classification")
+        for _ in range(8):
+            if held["reason"] == "insufficient_decisive":
+                break
+            held = await self.controller().tick("classification")
+        self.assertEqual(held["state"], "waiting_for_evidence")
+        self.assertEqual(held["reason"], "insufficient_decisive")
+        self.assertEqual(self.registry.calls, 0)
+        audited = await self.controller().get_run(held["run_id"])
+        self.assertEqual(audited["data"]["acceptance"]["split"], "audit")
+        self.assertEqual(audited["data"]["acceptance"]["decisive"], 2)
+        candidate = await self.loop.get_candidate(audited["data"]["selected_id"])
+        evaluation = candidate["evaluations"][-1]
+        self.assertEqual(candidate["status"], "evaluated")
+        self.assertIs(evaluation["passed"], False)
+        self.assertEqual(evaluation["outcome"], "insufficient")
+        self.assertEqual(evaluation["reason"], "insufficient_decisive")
+        self.assertIn("2 of 5", evaluation["notes"])
+        self.assertIn("not a rejection", evaluation["notes"])
+        self.assertEqual(evaluation["metrics"]["decisive_items"], 2)
+        self.assertEqual(evaluation["metrics"]["required_decisive"], 5)
+
+    def test_confidence_policy_floor(self):
+        base = deepcopy(FIXTURES["policy"])
+        base["objective"] = {**base["objective"], "acceptance": "confidence", "minimum_effect": 0}
+        validate_policy(base)
+        short = deepcopy(base)
+        short["minimum_validation_units"] = 4
+        with self.assertRaises(LoopiterError) as caught:
+            validate_policy(short)
+        self.assertEqual(caught.exception.code, "invalid_policy")
+        above = deepcopy(base)
+        above["objective"] = {**above["objective"], "minimum_validation_decisive": 100}
+        with self.assertRaises(LoopiterError) as exceeded:
+            validate_policy(above)
+        self.assertEqual(exceeded.exception.code, "invalid_policy")
+        zero = deepcopy(base)
+        zero["objective"] = {**zero["objective"], "minimum_audit_decisive": 0}
+        with self.assertRaises(LoopiterError) as invalid:
+            validate_policy(zero)
+        self.assertEqual(invalid.exception.code, "invalid_input")
+        under = deepcopy(base)
+        under["objective"] = {**under["objective"], "minimum_validation_decisive": 4}
+        with self.assertRaises(LoopiterError) as under_floor:
+            validate_policy(under)
+        self.assertEqual(under_floor.exception.code, "invalid_policy")
+        audit_under = deepcopy(base)
+        audit_under["objective"] = {**audit_under["objective"], "minimum_audit_decisive": 4}
+        with self.assertRaises(LoopiterError) as audit_floor:
+            validate_policy(audit_under)
+        self.assertEqual(audit_floor.exception.code, "invalid_policy")
+        at_floor = deepcopy(base)
+        at_floor["objective"] = {
+            **at_floor["objective"],
+            "minimum_validation_decisive": 5,
+            "minimum_audit_decisive": 5,
+        }
+        validate_policy(at_floor)
+        fixed = deepcopy(FIXTURES["policy"])
+        fixed["objective"] = {**fixed["objective"], "minimum_validation_decisive": 5}
+        with self.assertRaises(LoopiterError) as fixed_error:
+            validate_policy(fixed)
+        self.assertEqual(fixed_error.exception.code, "invalid_policy")
+        validate_policy(deepcopy(FIXTURES["policy"]))
 
     async def test_shared_behavioral_fixtures(self):
         for scenario in FIXTURES["scenarios"]:

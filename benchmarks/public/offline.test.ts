@@ -621,7 +621,7 @@ test("the pool check fails before a run when the rows do not fit", async () => {
 });
 
 test("a fixtures run with non-default row counts replays", async () => {
-  const sizes = { ...FIXTURE_SIZES, validation: 5, audit: 7 };
+  const sizes = { ...FIXTURE_SIZES, validation: 5, audit: 10 };
   const directory = await mkdtemp(join(tmpdir(), "row-counts-"));
   try {
     const report = await runOfflineBenchmark(hotpotTask, {
@@ -690,13 +690,13 @@ test("the public CLI parses row counts and a fixtures run replays", async () => 
     const out = join(directory, "report.json");
     const fixtures = spawnSync(
       process.execPath,
-      [hotpot, "--fixtures", "--seeds", "1", "--validation-rows", "5", "--audit-rows", "7", "--out", out],
+      [hotpot, "--fixtures", "--seeds", "1", "--validation-rows", "5", "--audit-rows", "10", "--out", out],
       { cwd: root, env: scrubbed({}), encoding: "utf8" },
     );
     assert.equal(fixtures.status, 0, fixtures.stderr);
     const report = JSON.parse(readFileSync(out, "utf8")) as { splits: { validation: number; audit: number; heldOut: number } };
     assert.equal(report.splits.validation, 5);
-    assert.equal(report.splits.audit, 7);
+    assert.equal(report.splits.audit, 10);
     assert.equal(report.splits.heldOut, FIXTURE_SIZES.heldOut);
     const replay = spawnSync(
       process.execPath,

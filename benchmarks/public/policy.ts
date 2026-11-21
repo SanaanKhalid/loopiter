@@ -1,4 +1,5 @@
 import type { AutonomyPolicy } from "../../src/index.js";
+import { minimumDecisiveFloor } from "../../src/acceptance-gate.js";
 import { TRUSTED_SOURCE } from "./constants.js";
 import type { SplitSizes } from "./splits.js";
 
@@ -12,6 +13,8 @@ export function promptPolicy(input: {
   bootstrapSamples?: number;
   bootstrapSeed?: number;
   minimumItems?: number;
+  minimumValidationDecisive?: number;
+  minimumAuditDecisive?: number;
   sizes: SplitSizes;
   latencyMs: number;
   /** Per-call controller reservations from `reservedModelTokens`. */
@@ -70,6 +73,10 @@ export function promptPolicy(input: {
       bootstrapSamples: input.bootstrapSamples ?? 2_000,
       bootstrapSeed: input.bootstrapSeed ?? 17,
       minimumItems: input.minimumItems ?? 0,
+      minimumValidationDecisive:
+        input.minimumValidationDecisive ?? minimumDecisiveFloor(input.confidence ?? 0.9),
+      minimumAuditDecisive:
+        input.minimumAuditDecisive ?? minimumDecisiveFloor(input.confidence ?? 0.9),
     },
     guardrails: [
       { metric: "accuracy", comparator: "gte", value: 0 },

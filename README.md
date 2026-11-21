@@ -207,6 +207,17 @@ await pool.end();
 Use TLS and your database's credential-management policy. Neither migrations nor
 SDK namespaces replace database authorization, encryption, backups, or restore drills.
 
+## Acceptance gate
+
+The product default, including onboarding, keeps the fixed `minimumImprovement` margin. Set `objective.acceptance` to `confidence` to use a paired bootstrap lower bound on (candidate − incumbent) instead. The default confidence is 0.90, items are sorted by id, and the seed is fixed. A confidence check with fewer decisive items than `minimumValidationDecisive` or `minimumAuditDecisive` is `insufficient`: it does not deploy, the incumbent keeps serving, and the controller waits for more evidence instead of counting a rejection. The default minimum is 5 at confidence 0.90, the smallest unanimous decisive count whose one-sided sign-test tail falls under the interval tail. A confidence policy cannot set a lower decisive minimum, and its validation and audit unit counts must be at least that same floor. Fixed-margin policies do not use this rule.
+
+Read a decision log without calling a model:
+
+```sh
+npx --no-install loopiter explain path/to/decisions.json
+python -m loopiter explain path/to/decisions.json --json
+```
+
 ## Reliability boundary
 
 Evaluation and approval reference exact content, evidence and evaluator versions.

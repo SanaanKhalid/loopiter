@@ -9,6 +9,7 @@ import {
   decideAcceptance,
   DEFAULT_GATE,
   MAX_BOOTSTRAP_SAMPLES,
+  minimumDecisiveFloor,
   type GateDecision,
   type GateItem,
   type GateParameters,
@@ -157,9 +158,17 @@ export interface ReplaySeed {
   mismatches: string[];
 }
 
+/** Current documented rule. A log that omits `minimumDecisive` still replays; that guard was off. */
+export function documentedReplayRule(): GateParameters {
+  return {
+    ...DEFAULT_GATE,
+    minimumDecisive: minimumDecisiveFloor(DEFAULT_GATE.confidence),
+  };
+}
+
 export function replaySeed(
   log: SeedDecisionLog,
-  expected: GateParameters = DEFAULT_GATE,
+  expected: GateParameters = documentedReplayRule(),
 ): ReplaySeed {
   const mismatches: string[] = [];
   if (log.complete === false) mismatches.push(`seed ${log.seed} incomplete`);
@@ -186,7 +195,10 @@ export function replaySeed(
       again.reason !== round.decision.reason ||
       again.method !== round.decision.method ||
       again.lower !== round.decision.lower ||
-      again.effect !== round.decision.effect
+      again.effect !== round.decision.effect ||
+      (round.decision.outcome !== undefined && again.outcome !== round.decision.outcome) ||
+      (round.decision.decisive !== undefined && again.decisive !== round.decision.decisive) ||
+      (round.decision.required !== undefined && again.required !== round.decision.required)
     )
       mismatches.push(`seed ${log.seed} round ${round.round} decision`);
   }
@@ -255,13 +267,17 @@ export function readDecisionLog(path: string): DecisionLogFile {
 }
 
 function sameRule(actual: GateParameters, expected: GateParameters): boolean {
-  return (
-    actual.minimumEffect === expected.minimumEffect &&
-    actual.confidence === expected.confidence &&
-    actual.samples === expected.samples &&
-    actual.seed === expected.seed &&
-    actual.minimumItems === expected.minimumItems
-  );
+  if (
+    actual.minimumEffect !== expected.minimumEffect ||
+    actual.confidence !== expected.confidence ||
+    actual.samples !== expected.samples ||
+    actual.seed !== expected.seed ||
+    actual.minimumItems !== expected.minimumItems
+  )
+    return false;
+  // Logs written before the decisive floor omit the field. Recompute treats that as off.
+  if (actual.minimumDecisive === undefined) return true;
+  return actual.minimumDecisive === (expected.minimumDecisive ?? 0);
 }
 
 function validateSeed(log: SeedDecisionLog): void {
@@ -319,7 +335,9 @@ function requireRule(rule: GateParameters, seed: number, round: number): void {
     rule.samples > MAX_BOOTSTRAP_SAMPLES ||
     !Number.isSafeInteger(rule.seed) ||
     !Number.isInteger(rule.minimumItems) ||
-    rule.minimumItems < 0
+    rule.minimumItems < 0 ||
+    (rule.minimumDecisive !== undefined &&
+      (!Number.isInteger(rule.minimumDecisive) || rule.minimumDecisive < 0))
   )
     throw new Error(`Seed ${seed} round ${round} has a rule outside the documented bounds.`);
 }
@@ -332,6 +350,19 @@ function requireDecision(decision: GateDecision, seed: number, round: number): v
     (decision.method !== "paired-bootstrap" && decision.method !== "newcombe-wilson")
   )
     throw new Error(`Seed ${seed} round ${round} has a malformed decision.`);
+  if (
+    decision.outcome !== undefined &&
+    decision.outcome !== "accepted" &&
+    decision.outcome !== "rejected" &&
+    decision.outcome !== "insufficient"
+  )
+    throw new Error(`Seed ${seed} round ${round} has an unknown outcome.`);
+  for (const name of ["decisive", "required"] as const) {
+    const value = decision[name];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
+      throw new Error(`Seed ${seed} round ${round} has an invalid ${name} count.`);
+  }
 }
 
 function cloneSeed(log: SeedDecisionLog): SeedDecisionLog {

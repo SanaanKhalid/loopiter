@@ -332,7 +332,7 @@ export function renderMarkdown(report: OfflineReport): string {
     `| Autonomous controller | ${fmt(report.arms.controller.served.primary.rate)} | ${report.arms.controller.ungated ? fmt(report.arms.controller.ungated.primary.rate) : ""} |`,
     "",
     report.regression.passed
-      ? "Regression check passed. The validation gate rejected the harmful candidate."
+      ? "Regression check passed. The harmful candidate was not served."
       : `Regression check failed. ${report.regression.failures.join(" ")}`,
     "",
     `Overall: ${report.passed ? "PASS" : "FAIL"}.`,

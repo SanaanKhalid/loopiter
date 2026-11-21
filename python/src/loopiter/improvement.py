@@ -33,6 +33,32 @@ TERMINAL = {"completed", "no_improvement", "failed", "timed_out", "rolled_back"}
 _DISABLE_OFF = {"0", "false", "no", "off"}
 
 
+def _audit_notes(policy, gate):
+    if gate["outcome"] == "insufficient":
+        return f"Insufficient decisive items ({gate['decisive']} of {gate['required']}); not a rejection."
+    if policy.get("audit_method"):
+        method = policy["audit_method"]
+        return f"Trusted application audit: {method['name']}@{method['version']}"
+    if policy["objective"].get("acceptance") == "confidence":
+        return "Paired bootstrap lower bound; independent units required."
+    return "Fixed-sample paired Hoeffding; independent units required."
+
+
+def _acceptance_record(split, candidate_id, gate, policy):
+    return {
+        "split": split,
+        "candidate_id": candidate_id,
+        "outcome": "insufficient",
+        "reason": "insufficient_decisive",
+        "decisive": gate["decisive"],
+        "required": gate["required"],
+        "effect": gate["improvement"],
+        "lower": gate["lower"],
+        "upper": gate["upper"],
+        "threshold": policy["objective"].get("minimum_effect", 0),
+    }
+
+
 def improvement_work_disabled(environment=None):
     """Any non-empty LOOPITER_DISABLE except 0, false, no, or off pauses improvement work."""
     environment = os.environ if environment is None else environment
@@ -489,11 +515,24 @@ class ImprovementController:
                 data.pop("detail", None)
             row = await self._put(tx, "runs", rid, data)
             await self.loop._event(tx, "improvement." + data["state"], rid, reason=data["reason"])
-            if data["state"] in TERMINAL:
+            waiting = data["state"] == "waiting_for_evidence"
+            if data["state"] in TERMINAL or waiting:
                 w = self._workflow(data["workflow_id"])
                 lock = await self._read(tx, "coordination", self._target(w))
                 if lock and lock["data"].get("active_run") == rid:
                     timed_out = data["state"] == "timed_out"
+                    if data["state"] == "completed":
+                        failures = 0
+                        timeouts = 0
+                    elif timed_out:
+                        failures = lock["data"].get("consecutive_failures", 0)
+                        timeouts = lock["data"].get("consecutive_timeouts", 0) + 1
+                    elif waiting:
+                        failures = lock["data"].get("consecutive_failures", 0)
+                        timeouts = lock["data"].get("consecutive_timeouts", 0)
+                    else:
+                        failures = lock["data"].get("consecutive_failures", 0) + 1
+                        timeouts = lock["data"].get("consecutive_timeouts", 0)
                     await self._put(
                         tx,
                         "coordination",
@@ -501,16 +540,8 @@ class ImprovementController:
                         {
                             **lock["data"],
                             "active_run": None,
-                            "consecutive_failures": 0
-                            if data["state"] == "completed"
-                            else lock["data"].get("consecutive_failures", 0)
-                            if timed_out
-                            else lock["data"].get("consecutive_failures", 0) + 1,
-                            "consecutive_timeouts": 0
-                            if data["state"] == "completed"
-                            else lock["data"].get("consecutive_timeouts", 0) + 1
-                            if timed_out
-                            else lock["data"].get("consecutive_timeouts", 0),
+                            "consecutive_failures": failures,
+                            "consecutive_timeouts": timeouts,
                             "previous_outcomes": [
                                 *lock["data"].get("previous_outcomes", []),
                                 {"state": data["state"], "reason": data["reason"]},
@@ -1151,25 +1182,34 @@ class ImprovementController:
                 run = await self._save(
                     rid, owner, {"comparisons": comparisons, "reason": "validation_recorded"}
                 )
+            judged = [
+                (cid, compare(comparisons[cid], d["dataset"]["validation"], p))
+                for cid in d["candidate_ids"]
+            ]
             ranked = sorted(
-                [
-                    cid
-                    for cid in d["candidate_ids"]
-                    if compare(comparisons[cid], d["dataset"]["validation"], p)["passed"]
-                ],
-                key=lambda cid: (
-                    -compare(comparisons[cid], d["dataset"]["validation"], p)["improvement"],
-                    comparisons[cid]["estimated_serving_cost"],
-                    cid,
+                [row for row in judged if row[1]["passed"]],
+                key=lambda row: (
+                    -row[1]["improvement"],
+                    comparisons[row[0]]["estimated_serving_cost"],
+                    row[0],
                 ),
             )
-            await self._save(
-                rid,
-                owner,
-                {"selected_id": ranked[0], "state": "selected", "reason": "winner_selected"}
-                if ranked
-                else {"state": "no_improvement", "reason": "validation_failed"},
-            )
+            waiting = next((row for row in judged if row[1]["outcome"] == "insufficient"), None)
+            if ranked:
+                patch = {
+                    "selected_id": ranked[0][0],
+                    "state": "selected",
+                    "reason": "winner_selected",
+                }
+            elif waiting:
+                patch = {
+                    "state": "waiting_for_evidence",
+                    "reason": "insufficient_decisive",
+                    "acceptance": _acceptance_record("validation", waiting[0], waiting[1], p),
+                }
+            else:
+                patch = {"state": "no_improvement", "reason": "validation_failed"}
+            await self._save(rid, owner, patch)
         elif d["state"] == "selected":
             cid = d["selected_id"]
             candidate = await self.loop.get_candidate(cid)
@@ -1194,28 +1234,26 @@ class ImprovementController:
             audit_metrics = {
                 **audit["metrics"],
                 "improvement": gates["improvement"],
-                "lower_bound": gates["lower"],
                 "sample_count": gates["sample_count"],
             }
+            if isinstance(gates["lower"], (int, float)):
+                audit_metrics["lower_bound"] = gates["lower"]
+            if isinstance(gates["decisive"], int):
+                audit_metrics["decisive_items"] = gates["decisive"]
+            if isinstance(gates["required"], int):
+                audit_metrics["required_decisive"] = gates["required"]
             if candidate["status"] == "proposed":
 
                 async def evaluate(*_):
-                    return {
+                    recorded = {
                         "passed": gates["passed"],
                         "metrics": audit_metrics,
-                        "notes": (
-                            "Trusted application audit: "
-                            + p["audit_method"]["name"]
-                            + "@"
-                            + p["audit_method"]["version"]
-                        )
-                        if p.get("audit_method")
-                        else (
-                            "Paired bootstrap lower bound; independent units required."
-                            if p["objective"].get("acceptance") == "confidence"
-                            else "Fixed-sample paired Hoeffding; independent units required."
-                        ),
+                        "notes": _audit_notes(p, gates),
                     }
+                    if gates["outcome"] == "insufficient":
+                        recorded["outcome"] = "insufficient"
+                        recorded["reason"] = "insufficient_decisive"
+                    return recorded
 
                 await self.loop.evaluate_candidate(
                     cid,
@@ -1243,7 +1281,18 @@ class ImprovementController:
             await self._save(
                 rid, owner, {"audit": audit, "audit_evaluation_id": audit_evaluation["id"]}
             )
-            if not gates["passed"]:
+            if gates["outcome"] == "insufficient":
+                await self._save(
+                    rid,
+                    owner,
+                    {
+                        "audit": audit,
+                        "state": "waiting_for_evidence",
+                        "reason": "insufficient_decisive",
+                        "acceptance": _acceptance_record("audit", cid, gates, p),
+                    },
+                )
+            elif not gates["passed"]:
                 await self._save(
                     rid,
                     owner,

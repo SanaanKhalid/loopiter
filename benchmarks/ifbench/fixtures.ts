@@ -9,10 +9,27 @@ export interface IfExample {
   kwargs: Record<string, unknown>[];
 }
 
+/**
+ * Seed 1 of the fixture sizes puts these ids in validation, or one in each
+ * audit half. Baseline passes here give a harmful rewrite at least five
+ * decisive losses, and leave at least five decisive wins for an improved
+ * rewrite on validation and on each audit half.
+ */
+const BASELINE_PASS_IDS = new Set([
+  "pool-3",
+  "pool-5",
+  "pool-9",
+  "pool-16",
+  "pool-30",
+  "pool-10",
+  "pool-23",
+]);
+
 export function ifbenchFixtures(): { pool: IfExample[]; heldOut: IfExample[] } {
-  const pool = Array.from({ length: poolCount() }, (_, index) =>
-    row(`pool-${index}`, false),
-  );
+  const pool = Array.from({ length: poolCount() }, (_, index) => {
+    const id = `pool-${index}`;
+    return row(id, BASELINE_PASS_IDS.has(id));
+  });
   const heldOut = Array.from({ length: FIXTURE_SIZES.heldOut }, (_, index) =>
     row(`held-${index}`, index % 6 === 0),
   );

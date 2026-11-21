@@ -165,7 +165,9 @@ equivalent to harmless or useful.
 | `confidence` | Two-sided interval level for that bound. Default 0.90, the same cutoff as a one-sided 95% bound. |
 | `bootstrapSamples` / `bootstrap_samples` | Integer from 100 to 100000. Default 2000. |
 | `bootstrapSeed` / `bootstrap_seed` | Integer resample seed. Items are sorted by id before the draw. |
-| `minimumItems` / `minimum_items` | Optional extra item floor. Default 0, so a very small paired sample can still accept. The validation and audit unit counts still apply inside `compare`. |
+| `minimumItems` / `minimum_items` | Optional extra item floor before the interval. Default 0. The validation and audit unit counts still apply inside `compare`. |
+| `minimumValidationDecisive` / `minimum_validation_decisive` | Confidence only. Decisive items (scores differ) required on validation. Default is the sign-test floor: the smallest unanimous count whose one-sided tail falls under the interval tail (5 at confidence 0.90). A lower value is rejected. Fewer decisive items than this is `insufficient`: not a pass, not a rejection, and the controller waits. |
+| `minimumAuditDecisive` / `minimum_audit_decisive` | Same rule for the audit check. |
 | `guardrails` | Nonempty array of exact metric names, `gte`/`lte`, and finite thresholds. All must pass. Missing metrics do not pass; non-finite values are invalid. |
 | `auditMethod` / `audit_method` | Optional trusted method name/version. Requires matching evaluator uncertainty fields and valid assumptions; not a license to return an arbitrary favorable bound. |
 
@@ -179,8 +181,8 @@ abstention cost and slice definitions in your versioned evaluator.
 | Node / Python | Rule |
 | --- | --- |
 | `minimumNewUnits` / `minimum_new_units` | Positive integer. Minimum eligible optimization units and minimum previously unused optimization entity IDs for a fresh cycle. |
-| `minimumValidationUnits` / `minimum_validation_units` | Positive integer after filtering/deduplication, not raw event count. |
-| `minimumAuditUnits` / `minimum_audit_units` | Positive integer after filtering/deduplication. Audit units must also be unconsumed. |
+| `minimumValidationUnits` / `minimum_validation_units` | Positive integer after filtering/deduplication, not raw event count. A confidence policy must be at least the decisive floor. |
+| `minimumAuditUnits` / `minimum_audit_units` | Positive integer after filtering/deduplication. Audit units must also be unconsumed. A confidence policy must be at least the decisive floor. |
 | `outcomeMaturityMs` / `outcome_maturity_ms` | Nonnegative integer milliseconds after `observedAt` / `observed_at` before a dataset outcome is eligible. |
 | `maximumRows` / `maximum_rows` | Positive integer maximum per raw partition, checked before exclusions. Overflow is an error, not truncation. |
 

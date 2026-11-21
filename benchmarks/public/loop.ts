@@ -3,7 +3,12 @@
  * after those arms return, and only through the held-out type.
  */
 import { hash } from "../../src/utils.js";
-import { gateParameters, type GateItem, type GateParameters } from "../../src/acceptance-gate.js";
+import {
+  gateParameters,
+  minimumDecisiveFloor,
+  type GateItem,
+  type GateParameters,
+} from "../../src/acceptance-gate.js";
 import {
   FeedbackLoop,
   ImprovementController,
@@ -154,6 +159,8 @@ export async function runController<T extends PublicExample>(input: {
   bootstrapSamples?: number;
   bootstrapSeed?: number;
   minimumItems?: number;
+  minimumValidationDecisive?: number;
+  minimumAuditDecisive?: number;
   /** When set, this rewrite is judged against the baseline before the controller loop. */
   oneShotFragment?: string;
   /** Controller proposal is this fragment. Used for the one-shot gate run. */
@@ -255,6 +262,9 @@ export async function runController<T extends PublicExample>(input: {
       proposeMaxOutputTokens: proposeMax,
       deployment: input.modelId,
     });
+    const validationDecisive =
+      input.minimumValidationDecisive ?? minimumDecisiveFloor(rule.confidence);
+    const auditDecisive = input.minimumAuditDecisive ?? minimumDecisiveFloor(rule.confidence);
     const policy = promptPolicy({
       taskId: input.task.id,
       promptCap: input.task.promptCap,
@@ -264,6 +274,8 @@ export async function runController<T extends PublicExample>(input: {
       bootstrapSamples: rule.samples,
       bootstrapSeed: rule.seed,
       minimumItems: rule.minimumItems,
+      minimumValidationDecisive: validationDecisive,
+      minimumAuditDecisive: auditDecisive,
       sizes,
       latencyMs: input.latencyMs,
       predictReservation: reservations.predict,
@@ -454,7 +466,10 @@ export async function runController<T extends PublicExample>(input: {
         promptHash: comparison.promptHash,
         split: comparison.split,
         items: comparison.items,
-        rule,
+        rule: {
+          ...rule,
+          minimumDecisive: comparison.split === "audit" ? auditDecisive : validationDecisive,
+        },
       });
     }
     if (result.state === "rolled_back") decisionLog.observation = "rolled_back";
