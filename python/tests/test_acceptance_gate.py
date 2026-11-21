@@ -291,7 +291,9 @@ class AcceptanceGateTest(unittest.TestCase):
             self.assertEqual(crafted_json.returncode, 0, crafted_json.stderr)
             parsed_crafted = json.loads(crafted_json.stdout)
             candidate = parsed_crafted["seeds"][0]["candidates"][0]
-            self.assertEqual(candidate["candidateId"], "c\u009b2J\u202e\u00e9\nseed 1 c9 audit round 9 accepted")
+            self.assertEqual(
+                candidate["candidateId"], "c\u009b2J\u202e\u00e9\nseed 1 c9 audit round 9 accepted"
+            )
             self.assertEqual(candidate["validation"]["reason"], "below\u001b[2J")
 
     def policy(self):
