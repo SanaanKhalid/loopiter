@@ -21,6 +21,7 @@ from uuid import uuid4
 from . import _validation as v
 from .acceptance_gate import load_retention_ledger, next_best_ever, remember_retention_decision
 from .client import FeedbackLoop, _callback
+from .eval_lock import read_eval_lock, verify_eval_lock
 from .improvement_evidence import (
     compare,
     minimum_certifiable_audit_units,
@@ -33,6 +34,18 @@ from .improvement_evidence import (
 
 TERMINAL = {"completed", "no_improvement", "failed", "timed_out", "rolled_back"}
 _DISABLE_OFF = {"0", "false", "no", "off"}
+
+
+def _eval_lock_splits(splits):
+    selected = ["validation", "audit"] if splits is None else splits
+    if (
+        type(selected) is not list
+        or not selected
+        or any(name not in ("validation", "audit") for name in selected)
+        or len(set(selected)) != len(selected)
+    ):
+        v.fail("invalid_input", "require_eval_lock splits must be validation or audit.")
+    return selected
 
 
 def _audit_notes(policy, gate):
@@ -234,6 +247,7 @@ class ImprovementController:
         callback_timeout_ms=None,
         tick_timeout_ms=None,
         step_timeout_ms=None,
+        require_eval_lock=None,
         **obsolete,
     ):
         if obsolete:
@@ -285,6 +299,29 @@ class ImprovementController:
                     "evaluator": w.evaluator_version,
                     "policy": w.policy,
                 }
+            )
+        self.require_eval_lock = None
+        if require_eval_lock is not None:
+            if not isinstance(require_eval_lock, dict) or "lock" not in require_eval_lock:
+                v.fail("invalid_input", "require_eval_lock requires a lock.")
+            read_eval_lock(require_eval_lock["lock"])
+            _eval_lock_splits(require_eval_lock.get("splits"))
+            self.require_eval_lock = require_eval_lock
+
+    def _assert_eval_lock(self, dataset):
+        required = self.require_eval_lock
+        if not required:
+            return
+        items = []
+        for name in _eval_lock_splits(required.get("splits")):
+            for row in dataset[name]:
+                items.append({"id": row["id"], "input": row["input"], "expected": row["label"]})
+        report = verify_eval_lock({"items": items}, required["lock"])
+        if not report["ok"]:
+            v.fail(
+                "eval_lock_drift",
+                "Eval lock drift added "
+                f"{report['added']} removed {report['removed']} changed {report['changed']}.",
             )
 
     def _workflow(self, key):
@@ -862,6 +899,7 @@ class ImprovementController:
                 baseline = await self._plain(w, w.artifact)
                 v.baseline(baseline)
                 dataset = prepare_dataset(await self._plain(w, w.dataset), p, self.loop.now())
+                self._assert_eval_lock(dataset)
                 if self.mode == "observe":
                     return await self._idle(w, "observation_only")
                 if any(

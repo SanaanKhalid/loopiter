@@ -1,0 +1,592 @@
+{
+  "items": [
+    {
+      "id": "held-0",
+      "input": {
+        "text": "Which city does fixture held-0 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-0."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-0."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-0."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-0."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-0."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-0."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-0."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-0."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-0."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "held-1",
+      "input": {
+        "text": "Which city does fixture held-1 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Lima."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-1."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-1."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-1."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-1."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-1."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-1."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-1."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-1."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-1."
+          }
+        ]
+      },
+      "expected": "Lima"
+    },
+    {
+      "id": "held-2",
+      "input": {
+        "text": "Which city does fixture held-2 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-2."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-2."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-2."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-2."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-2."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-2."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-2."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-2."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-2."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "held-3",
+      "input": {
+        "text": "Which city does fixture held-3 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Lima."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-3."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-3."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-3."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-3."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-3."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-3."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-3."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-3."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-3."
+          }
+        ]
+      },
+      "expected": "Lima"
+    },
+    {
+      "id": "held-4",
+      "input": {
+        "text": "Which city does fixture held-4 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-4."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-4."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-4."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-4."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-4."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-4."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-4."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-4."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-4."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "held-5",
+      "input": {
+        "text": "Which city does fixture held-5 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Lima."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-5."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-5."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-5."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-5."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-5."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-5."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-5."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-5."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-5."
+          }
+        ]
+      },
+      "expected": "Lima"
+    },
+    {
+      "id": "held-6",
+      "input": {
+        "text": "Which city does fixture held-6 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-6."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-6."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-6."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-6."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-6."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-6."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-6."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-6."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-6."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "held-7",
+      "input": {
+        "text": "Which city does fixture held-7 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Lima."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-7."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-7."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-7."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-7."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-7."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-7."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-7."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-7."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-7."
+          }
+        ]
+      },
+      "expected": "Lima"
+    },
+    {
+      "id": "held-8",
+      "input": {
+        "text": "Which city does fixture held-8 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-8."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-8."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-8."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-8."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-8."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-8."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-8."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-8."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-8."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "held-9",
+      "input": {
+        "text": "Which city does fixture held-9 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Lima."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-9."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-9."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-9."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-9."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-9."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-9."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-9."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-9."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-9."
+          }
+        ]
+      },
+      "expected": "Lima"
+    },
+    {
+      "id": "held-10",
+      "input": {
+        "text": "Which city does fixture held-10 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Paris."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-10."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-10."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-10."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-10."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-10."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-10."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-10."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-10."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-10."
+          }
+        ]
+      },
+      "expected": "Paris"
+    },
+    {
+      "id": "held-11",
+      "input": {
+        "text": "Which city does fixture held-11 name?",
+        "paragraphs": [
+          {
+            "title": "Paragraph 1",
+            "text": "The city in the notes is Lima."
+          },
+          {
+            "title": "Paragraph 2",
+            "text": "Distractor note 1 for held-11."
+          },
+          {
+            "title": "Paragraph 3",
+            "text": "Distractor note 2 for held-11."
+          },
+          {
+            "title": "Paragraph 4",
+            "text": "Distractor note 3 for held-11."
+          },
+          {
+            "title": "Paragraph 5",
+            "text": "Distractor note 4 for held-11."
+          },
+          {
+            "title": "Paragraph 6",
+            "text": "Distractor note 5 for held-11."
+          },
+          {
+            "title": "Paragraph 7",
+            "text": "Distractor note 6 for held-11."
+          },
+          {
+            "title": "Paragraph 8",
+            "text": "Distractor note 7 for held-11."
+          },
+          {
+            "title": "Paragraph 9",
+            "text": "Distractor note 8 for held-11."
+          },
+          {
+            "title": "Paragraph 10",
+            "text": "Distractor note 9 for held-11."
+          }
+        ]
+      },
+      "expected": "Lima"
+    }
+  ]
+}

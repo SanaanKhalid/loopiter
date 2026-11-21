@@ -29,6 +29,7 @@ import {
   type PublicSplit,
   type SplitSizes,
 } from "./splits.js";
+import { fixtureEvalLockPath, guardEvalSuite, pinnedEvalLockPath, suiteFromTask } from "./eval-lock.js";
 import type { BenchmarkTask, PublicExample } from "./task.js";
 
 const BOOTSTRAP_SAMPLES = 2_000;
@@ -129,6 +130,11 @@ export async function runOfflineBenchmark<T extends PublicExample>(
   const minimumImprovement = options.minimumImprovement ?? PRODUCT_MINIMUM_IMPROVEMENT;
   const source = options.source ?? "fixtures";
   const loaded = source === "fixtures" ? task.fixtures() : await task.loadCache();
+  guardEvalSuite(
+    suiteFromTask(task, loaded.heldOut),
+    source === "fixtures" ? fixtureEvalLockPath(task.id) : pinnedEvalLockPath(task.id),
+    source === "cache",
+  );
   const sizes = options.sizes ?? (source === "fixtures" ? task.fixtureSizes : task.fullSizes);
   assertPoolCoversSeeds({ pool: loaded.pool, heldOut: loaded.heldOut, seeds, sizes });
   const samples = options.bootstrapSamples ?? BOOTSTRAP_SAMPLES;

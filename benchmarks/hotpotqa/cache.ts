@@ -5,7 +5,8 @@ import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { mulberry32, shuffle } from "../kb-qa/stats.js";
 import { repoRoot } from "../public/paths.js";
-import type { HotpotExample, Paragraph } from "./fixtures.js";
+import { guardEvalSuite, pinnedEvalLockPath } from "../public/eval-lock.js";
+import { hotpotDatasetInput, hotpotDatasetLabel, type HotpotExample, type Paragraph } from "./fixtures.js";
 import {
   HOTPOT_HELDOUT_ROWS,
   HOTPOT_HELDOUT_SEED,
@@ -32,6 +33,17 @@ export async function loadHotpotCache(): Promise<{ pool: HotpotExample[]; heldOu
   ).slice(0, HOTPOT_HELDOUT_ROWS);
   if (frozen.length !== HOTPOT_HELDOUT_ROWS)
     throw new Error(`HotpotQA validation cache cannot fill ${HOTPOT_HELDOUT_ROWS} held-out rows.`);
+  guardEvalSuite(
+    {
+      items: frozen.map((row) => ({
+        id: row.id,
+        input: hotpotDatasetInput(row),
+        expected: hotpotDatasetLabel(row),
+      })),
+    },
+    pinnedEvalLockPath("hotpotqa"),
+    true,
+  );
   return { pool: train, heldOut: frozen };
 }
 

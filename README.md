@@ -222,6 +222,23 @@ npx --no-install loopiter explain path/to/decisions.json
 python -m loopiter explain path/to/decisions.json --json
 ```
 
+## Eval lock and leakage
+
+`lockEvalSet` (`lock_eval_set` in Python) checksums an eval set. Items are sorted by UTF-8 id, object keys are written in a stable order, and the SHA-256 covers each id, input, and expected output. The lock file records that digest, the item count, and hashing scheme version 1. `verifyEvalLock` / `verify_eval_lock` accepts the same bytes and refuses an added, removed, or edited item. The report is the count of added, removed, and changed ids. It does not include the item contents. Run `eval lock` again to re-lock a suite you intend to change.
+
+`checkEvalLeakage` / `check_eval_leakage` compares a train file with an eval file. An id that appears in both is an overlap. So is a content hash that matches after Unicode NFC and whitespace collapsing. Leading and trailing characters are removed only when they belong to that same whitespace set. The default fields are `input` and `expected`. The report lists up to 20 overlapping ids and the full count. Matching is exact.
+
+```sh
+npx --no-install loopiter eval lock suite.json --out suite.lock.json
+npx --no-install loopiter eval verify suite.json --lock suite.lock.json
+npx --no-install loopiter eval leakage --train train.json --eval suite.json --fields input,expected
+python -m loopiter eval verify suite.json --json
+```
+
+Verify exits nonzero when the suite drifts. Leakage exits nonzero when any id overlaps. Text escapes every character outside printable ASCII, and `--json` is ASCII-only in both SDKs.
+
+Pass `requireEvalLock: { lock }` (`require_eval_lock={"lock": lock}` in Python) to `ImprovementController` to check the loaded validation and audit rows against that lock after the dataset is read and before a model or evaluator call. Leaving that option unset leaves the check disabled.
+
 ## Reliability boundary
 
 Evaluation and approval reference exact content, evidence and evaluator versions.

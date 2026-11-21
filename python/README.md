@@ -66,6 +66,18 @@ Read the installed guide with `python -m loopiter guide`, and reference code wit
 `loopiter.starters`; importing the core never imports providers or starts work.
 These commands require the onboarding build, not the previously published alpha.
 
+## Eval lock and leakage
+
+`lock_eval_set` checksums an eval set: items sorted by UTF-8 id, stable object-key order, SHA-256 over each id, input, and expected output, plus the item count and scheme version. `verify_eval_lock` refuses an added, removed, or edited item and reports those counts without the item contents. `check_eval_leakage` reports exact id overlap and content-hash overlap after Unicode NFC and whitespace collapsing. Leading and trailing characters are removed only when they belong to that same whitespace set. It lists up to 20 overlapping ids and the full count. The default fields are `input` and `expected`. Pass `require_eval_lock={"lock": lock}` to check the loaded validation and audit rows against that lock after the dataset is read and before a model or evaluator call. Leave it unset and the controller does not perform that check.
+
+```sh
+python -m loopiter eval lock suite.json --out suite.lock.json
+python -m loopiter eval verify suite.json --lock suite.lock.json
+python -m loopiter eval leakage --train train.json --eval suite.json --json
+```
+
+Verify exits nonzero on drift. Leakage exits nonzero on any overlap. Text escapes every character outside printable ASCII, and `--json` is ASCII-only. The Node CLI uses the same commands and the same output.
+
 ## Run the offline example from source
 
 ```sh

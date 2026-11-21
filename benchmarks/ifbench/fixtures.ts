@@ -1,4 +1,5 @@
 /** Tiny synthetic rows for tests. They are not the official IFBench release. */
+import type { JsonValue } from "../../src/index.js";
 import { FIXTURE_SIZES } from "../public/constants.js";
 
 export interface IfExample {
@@ -34,6 +35,19 @@ export function ifbenchFixtures(): { pool: IfExample[]; heldOut: IfExample[] } {
     row(`held-${index}`, index % 6 === 0),
   );
   return { pool, heldOut };
+}
+
+export function ifbenchDatasetInput(row: IfExample): JsonValue {
+  return { text: row.prompt };
+}
+
+export function ifbenchDatasetLabel(row: IfExample): JsonValue {
+  return JSON.parse(
+    JSON.stringify({
+      instructionIdList: row.instructionIdList,
+      kwargs: row.kwargs,
+    }),
+  ) as JsonValue;
 }
 
 export function keywordFixture(response: string, keywords: string[]): IfExample & { response: string } {

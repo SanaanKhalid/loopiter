@@ -7,6 +7,7 @@ import type {
   JsonObject,
   RecordBase,
 } from "./contracts.js";
+import type { EvalLock } from "./eval-lock.js";
 
 export type ImprovementMode =
   | "observe"
@@ -319,6 +320,16 @@ export interface ImprovementControllerOptions {
   selfImproving?: boolean;
   mode?: ImprovementMode;
   workflows: ImprovementWorkflow[];
+  /**
+   * When set, the loaded validation and audit rows are checked against this
+   * lock after the dataset is read and before a model or evaluator call.
+   * Omitted leaves the check off.
+   */
+  requireEvalLock?: {
+    lock: EvalLock;
+    /** Defaults to validation and audit. */
+    splits?: readonly ("validation" | "audit")[];
+  };
   /** Per-step callback deadline. `stepTimeoutMs` wins when both are set. */
   callbackTimeoutMs?: number;
   stepTimeoutMs?: number;

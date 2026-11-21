@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { repoRoot } from "../public/paths.js";
-import type { IfExample } from "./fixtures.js";
+import { guardEvalSuite, pinnedEvalLockPath } from "../public/eval-lock.js";
+import { ifbenchDatasetInput, ifbenchDatasetLabel, type IfExample } from "./fixtures.js";
 import {
   IFBENCH_TEST_REVISION,
   IFBENCH_TEST_ROWS,
@@ -43,6 +44,17 @@ export async function loadIfbenchCache(): Promise<{ pool: IfExample[]; heldOut: 
     if (heldIds.has(row.id))
       throw new Error(`Train row ${row.id} collides with the held-out test set.`);
   }
+  guardEvalSuite(
+    {
+      items: heldOut.map((row) => ({
+        id: row.id,
+        input: ifbenchDatasetInput(row),
+        expected: ifbenchDatasetLabel(row),
+      })),
+    },
+    pinnedEvalLockPath("ifbench"),
+    true,
+  );
   return { pool, heldOut };
 }
 

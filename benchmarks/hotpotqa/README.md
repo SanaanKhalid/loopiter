@@ -32,6 +32,11 @@ held-out size, so the scored set is the frozen sample. Held-out ids are
 disjoint from train and are never passed to `dataset`, `propose`, or
 `evaluate`.
 
+The fixture eval split has a committed lock, `fixtures.eval.lock.json`, checked
+before a fixture run. Cache load checks `pinned-eval.lock.json` when that file
+is present and stops before any model call if the loaded eval split differs.
+See the benchmarks README.
+
 ## Fetch
 
 ```sh
