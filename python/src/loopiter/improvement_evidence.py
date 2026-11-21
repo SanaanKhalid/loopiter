@@ -11,8 +11,10 @@ from . import _validation as v
 from .acceptance_gate import (
     MAX_BOOTSTRAP_SAMPLES,
     decide_acceptance,
+    decide_retention,
     gate_parameters,
     minimum_decisive_floor,
+    not_measured_retention,
 )
 
 
@@ -137,6 +139,7 @@ def validate_policy(p):
             "minimum_validation_decisive",
             "minimum_audit_decisive",
             "noise_floor",
+            "retention",
         ],
         ("metric", "direction", "minimum_improvement", "range", "alpha"),
     )
@@ -187,6 +190,17 @@ def validate_policy(p):
         for key in ("validation", "audit"):
             if key in floor and type(floor[key]) is not bool:
                 v.fail("invalid_policy", f"noise floor {key} must be a boolean.")
+    if "retention" in o:
+        if o.get("acceptance") != "confidence":
+            v.fail("invalid_policy", "Retention requires confidence acceptance.")
+        setting = o["retention"]
+        v.obj(setting, "retention")
+        v.fields(setting, ["margin", "confidence"], ("margin",))
+        v.finite(setting["margin"], "retention margin", 0)
+        if "confidence" in setting:
+            v.finite(setting["confidence"], "retention confidence")
+            if not 0 < setting["confidence"] < 1:
+                v.fail("invalid_policy", "retention confidence must be between 0 and 1.")
     _gates(p["guardrails"])
     if type(p["trusted_sources"]) is not list or not p["trusted_sources"]:
         v.fail("invalid_policy", "Trusted sources required.")
@@ -351,6 +365,39 @@ def prepare_dataset(raw, policy, now):
             last_time = max(v.timestamp(row["occurred_at"]).timestamp() for row in eligible)
         result[name] = deepcopy(sorted(eligible, key=lambda r: r["id"]))
     return result
+
+
+def promotion_retention(policy, cases, best_ever):
+    """Retention check for a candidate that has already passed audit.
+
+    An omitted policy returns not_measured and does not read the ledger.
+    The decisive floor follows the audit check. A higher retention confidence
+    can only raise that floor.
+    """
+    setting = policy["objective"].get("retention")
+    if not setting:
+        return not_measured_retention()
+    objective = policy["objective"]
+    confidence = setting.get("confidence", objective.get("confidence", 0.9))
+    floor = minimum_decisive_floor(confidence)
+    audit_floor = minimum_decisive_floor(objective.get("confidence", 0.9))
+    configured = objective.get("minimum_audit_decisive", max(floor, audit_floor))
+    parameters = {
+        "confidence": confidence,
+        "minimum_decisive": max(floor, configured),
+    }
+    if "bootstrap_samples" in objective:
+        parameters["samples"] = objective["bootstrap_samples"]
+    if "bootstrap_seed" in objective:
+        parameters["seed"] = objective["bootstrap_seed"]
+    return decide_retention(
+        enabled=True,
+        candidate_items=[{"id": row["id"], "score": row["candidate"]} for row in cases],
+        best_ever=best_ever,
+        margin=setting["margin"],
+        direction=objective["direction"],
+        parameters=gate_parameters(parameters),
+    )
 
 
 def noise_floor_enabled(objective, audit=False):

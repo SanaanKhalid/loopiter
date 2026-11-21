@@ -21,10 +21,18 @@ import type {
   TickResult,
 } from "./improvement-contracts.js";
 import {
+  emptyRetentionLedger,
+  nextBestEver,
+  rememberRetentionDecision,
+  type RetentionDecision,
+  type RetentionLedger,
+} from "./acceptance-gate.js";
+import {
   compare,
   minimumCertifiableAuditUnits,
   passesGates,
   prepareDataset,
+  promotionRetention,
   validateChange,
   validatePolicy,
 } from "./improvement-evidence.js";
@@ -1410,36 +1418,33 @@ export class ImprovementController {
             state: "completed",
             reason: "experiment_only",
           });
-        else {
-          const current = await this.plain(w, (c) => w.artifact(c), signal2);
-          this.baseline(current);
-          if (hash(current) !== hash(d.baseline))
-            fail("stale_baseline", "Serving baseline changed.");
-          await this.loop.store.transaction(this.loop.namespace, async (tx) => {
-            await this.owned(tx, rid, owner);
-            const opId = `${rid}:deployment_budget`;
-            if (!(await this.read(tx, "operations", opId))) {
-              await this.reserve(tx, w, 0, 0, 1);
-              await this.put(tx, "operations", opId, {
-                status: "completed",
-                result: true,
-              });
-            }
-          });
-          const evaluated = (await this.loop.getCandidate(cid))!;
-          if (evaluated.status === "evaluated")
-            await this.loop.approveCandidate(cid, {
-              actor: "loopiter/autonomous",
-              evaluationId: auditEvaluation.id,
-              authorization: { runId: rid, leaseOwner: owner },
+        else if (w.policy.objective.retention) {
+          const retention = promotionRetention(
+            w.policy,
+            audit.cases,
+            (await this.retentionLedger(w)).bestEver,
+          );
+          if (retention.outcome === "retention_regression") {
+            await this.recordRetention(w, cid, audit.cases, retention, false);
+            run = await this.save(rid, owner, {
+              audit,
+              retention,
+              state: "no_improvement",
+              reason: "retention_regression",
             });
-          run = await this.save(rid, owner, {
-            audit,
-            state: "deploying",
-            reason: "audit_passed",
-            attemptId: `${rid}:apply`,
-            operation: "apply",
-          });
+          } else if (retention.outcome === "insufficient") {
+            await this.recordRetention(w, cid, audit.cases, retention, false);
+            run = await this.save(rid, owner, {
+              audit,
+              retention,
+              state: "waiting_for_evidence",
+              reason: "insufficient_decisive",
+            });
+          } else {
+            run = await this.deployPassedAudit(rid, owner, w, audit, signal2, retention);
+          }
+        } else {
+          run = await this.deployPassedAudit(rid, owner, w, audit, signal2);
         }
       } else if (
         (["deploying", "rolling_back", "reconciliation_required"].includes(
@@ -1582,6 +1587,21 @@ export class ImprovementController {
             },
             true,
           );
+          const kept = run.data.retention;
+          if (
+            w.policy.objective.retention &&
+            kept &&
+            (kept.outcome === "pass" || kept.outcome === "not_measured") &&
+            run.data.audit &&
+            run.data.selectedId
+          )
+            await this.recordRetention(
+              w,
+              run.data.selectedId,
+              run.data.audit.cases,
+              kept,
+              true,
+            );
         }
       } else if (d.state === "observing" || d.pendingPromotion) {
         const actual = await this.plain(w, (c) => w.artifact(c), signal2);
@@ -2017,4 +2037,101 @@ export class ImprovementController {
       });
     }
   }
+  private async deployPassedAudit(
+    rid: string,
+    owner: string,
+    w: ImprovementWorkflow,
+    audit: Comparison,
+    signal: AbortSignal,
+    retention?: RetentionDecision,
+  ) {
+    const currentRun = (await this.getRun(rid))!;
+    const current = await this.plain(w, (c) => w.artifact(c), signal);
+    this.baseline(current);
+    if (hash(current) !== hash(currentRun.data.baseline))
+      fail("stale_baseline", "Serving baseline changed.");
+    await this.loop.store.transaction(this.loop.namespace, async (tx) => {
+      await this.owned(tx, rid, owner);
+      const opId = `${rid}:deployment_budget`;
+      if (!(await this.read(tx, "operations", opId))) {
+        await this.reserve(tx, w, 0, 0, 1);
+        await this.put(tx, "operations", opId, {
+          status: "completed",
+          result: true,
+        });
+      }
+    });
+    const cid = currentRun.data.selectedId!;
+    const evaluated = (await this.loop.getCandidate(cid))!;
+    if (evaluated.status === "evaluated")
+      await this.loop.approveCandidate(cid, {
+        actor: "loopiter/autonomous",
+        evaluationId: currentRun.data.auditEvaluationId!,
+        authorization: { runId: rid, leaseOwner: owner },
+      });
+    return this.save(rid, owner, {
+      audit,
+      ...(retention ? { retention } : {}),
+      state: "deploying",
+      reason: "audit_passed",
+      attemptId: `${rid}:apply`,
+      operation: "apply",
+    });
+  }
+  private async retentionLedger(w: ImprovementWorkflow): Promise<RetentionLedger> {
+    const row = await this.loop.store.transaction(this.loop.namespace, (tx) =>
+      this.read(tx, "coordination", this.targetKey(w)),
+    );
+    return parseRetentionLedger(row?.data.retention);
+  }
+  /**
+   * Append the decision. Update bestEver only after a promotion that passed
+   * and only when the new control mean is strictly better. Rollback never calls this.
+   */
+  private async recordRetention(
+    w: ImprovementWorkflow,
+    candidateId: string,
+    cases: readonly { id: string; candidate: number }[],
+    decision: RetentionDecision,
+    updateBest: boolean,
+  ) {
+    await this.loop.store.transaction(this.loop.namespace, async (tx) => {
+      const key = this.targetKey(w);
+      const target = await this.read(tx, "coordination", key);
+      let ledger = rememberRetentionDecision(parseRetentionLedger(target?.data.retention), {
+        ...decision,
+        candidateId,
+      });
+      if (
+        updateBest &&
+        (decision.outcome === "pass" || decision.outcome === "not_measured")
+      )
+        ledger = {
+          ...ledger,
+          bestEver: nextBestEver({
+            current: ledger.bestEver,
+            candidateId,
+            items: cases.map((row) => ({ id: row.id, score: row.candidate })),
+            direction: w.policy.objective.direction,
+          }),
+        };
+      await this.put(tx, "coordination", key, {
+        ...target?.data,
+        retention: ledger,
+      });
+    });
+  }
+}
+
+function parseRetentionLedger(value: unknown): RetentionLedger {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return emptyRetentionLedger();
+  const record = value as { bestEver?: unknown; decisions?: unknown };
+  const decisions = Array.isArray(record.decisions)
+    ? (record.decisions as RetentionLedger["decisions"])
+    : [];
+  const bestEver =
+    record.bestEver && typeof record.bestEver === "object"
+      ? (record.bestEver as RetentionLedger["bestEver"])
+      : null;
+  return { bestEver, decisions };
 }

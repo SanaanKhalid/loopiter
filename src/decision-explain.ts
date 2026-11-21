@@ -2,8 +2,14 @@
  * Read-only explanation of an acceptance decision log.
  * Checks that were not recorded stay null. A missing count is null, not 0.
  */
-import { readFileSync } from "node:fs";
-import { MAX_BOOTSTRAP_SAMPLES, minimumDecisiveFloor, DEFAULT_GATE } from "./acceptance-gate.js";
+import { existsSync, readFileSync } from "node:fs";
+import {
+  MAX_BOOTSTRAP_SAMPLES,
+  minimumDecisiveFloor,
+  DEFAULT_GATE,
+  type RetentionDecision,
+  type RetentionItemScore,
+} from "./acceptance-gate.js";
 
 export interface ExplainedNoise {
   value: number | null;
@@ -25,6 +31,21 @@ export interface ExplainedCheck {
   noiseFloor: ExplainedNoise;
   effectiveThreshold: number | null;
   bindingThreshold: "minimum_effect" | "noise_floor" | "tie" | null;
+  retention: ExplainedRetention;
+}
+
+export interface ExplainedRetention {
+  outcome: RetentionDecision["outcome"];
+  reason: string;
+  bestEverId: string | null;
+  lower: number | null;
+  margin: number | null;
+  items: number | null;
+}
+
+export interface RetentionStatus {
+  bestEver: { id: string; score: number; items: RetentionItemScore[] } | null;
+  decisions: (ExplainedRetention & { candidateId: string })[];
 }
 
 export interface ExplainedCandidate {
@@ -208,6 +229,11 @@ function explainDecision(
     noiseFloor: readNoise(decision.noiseFloor, seed, round),
     effectiveThreshold: readEffective(decision.effectiveThreshold, seed, round),
     bindingThreshold: readBinding(decision.bindingThreshold, seed, round),
+    retention: readRetention(
+      (decision as { retention?: unknown }).retention,
+      seed,
+      round,
+    ),
   };
 }
 
@@ -283,6 +309,110 @@ function notMeasuredNoise(): ExplainedNoise {
   return { value: null, method: "not_measured", items: null, calls: null };
 }
 
+function notMeasuredRetentionView(): ExplainedRetention {
+  return {
+    outcome: "not_measured",
+    reason: "not_measured",
+    bestEverId: null,
+    lower: null,
+    margin: null,
+    items: null,
+  };
+}
+
+function readRetention(value: unknown, seed: number, round: number): ExplainedRetention {
+  if (value === undefined || value === null) return notMeasuredRetentionView();
+  return readRetentionFields(value, `Seed ${seed} round ${round}`);
+}
+
+function readRetentionFields(value: unknown, where: string): ExplainedRetention {
+  if (!value || typeof value !== "object")
+    throw new Error(`${where} has a malformed retention check.`);
+  const row = value as {
+    outcome?: unknown;
+    reason?: unknown;
+    bestEverId?: unknown;
+    lower?: unknown;
+    margin?: unknown;
+    items?: unknown;
+  };
+  if (typeof row.outcome !== "string" || !RETENTION_OUTCOMES.has(row.outcome))
+    throw new Error(`${where} has an unknown retention outcome.`);
+  if (typeof row.reason !== "string")
+    throw new Error(`${where} has a malformed retention check.`);
+  if (row.outcome === "not_measured") {
+    if (row.bestEverId != null || row.lower != null || row.margin != null || row.items != null)
+      throw new Error(`${where} records an unmeasured retention check as a number.`);
+    return notMeasuredRetentionView();
+  }
+  if (row.bestEverId !== null && typeof row.bestEverId !== "string")
+    throw new Error(`${where} has a malformed best-ever id.`);
+  const items = row.items;
+  if (typeof items !== "number" || !Number.isInteger(items) || items < 1)
+    throw new Error(`${where} has an invalid retention item count.`);
+  const margin = row.margin;
+  if (typeof margin !== "number" || !Number.isFinite(margin))
+    throw new Error(`${where} has a non-finite retention margin.`);
+  if (row.outcome === "insufficient") {
+    if (row.lower != null) throw new Error(`${where} records an unused retention bound.`);
+    return {
+      outcome: "insufficient",
+      reason: row.reason,
+      bestEverId: typeof row.bestEverId === "string" ? row.bestEverId : null,
+      lower: null,
+      margin,
+      items,
+    };
+  }
+  if (typeof row.lower !== "number" || !Number.isFinite(row.lower))
+    throw new Error(`${where} has a non-finite retention lower bound.`);
+  return {
+    outcome: row.outcome as "pass" | "retention_regression",
+    reason: row.reason,
+    bestEverId: typeof row.bestEverId === "string" ? row.bestEverId : null,
+    lower: row.lower,
+    margin,
+    items,
+  };
+}
+
+function readBestEver(value: unknown): RetentionStatus["bestEver"] {
+  if (value === null) return null;
+  if (!value || typeof value !== "object")
+    throw new Error("Retention ledger has a malformed best-ever record.");
+  const record = value as { id?: unknown; score?: unknown; items?: unknown };
+  if (typeof record.id !== "string" || record.id.length === 0)
+    throw new Error("Retention ledger has a malformed best-ever record.");
+  if (typeof record.score !== "number" || !Number.isFinite(record.score))
+    throw new Error("Retention ledger has a non-finite best-ever score.");
+  if (!Array.isArray(record.items))
+    throw new Error("Retention ledger has a malformed best-ever record.");
+  return {
+    id: record.id,
+    score: record.score,
+    items: record.items.map((item) => {
+      if (!item || typeof item !== "object")
+        throw new Error("Retention ledger has a malformed best-ever item.");
+      const row = item as { id?: unknown; score?: unknown };
+      if (typeof row.id !== "string" || row.id.length === 0)
+        throw new Error("Retention ledger has a malformed best-ever item.");
+      if (typeof row.score !== "number" || !Number.isFinite(row.score))
+        throw new Error("Retention ledger has a non-finite best-ever item score.");
+      return { id: row.id, score: row.score };
+    }),
+  };
+}
+
+function readLedgerDecision(value: unknown, index: number): RetentionStatus["decisions"][number] {
+  if (!value || typeof value !== "object")
+    throw new Error(`Retention decision ${index} is malformed.`);
+  const row = value as { candidateId?: unknown };
+  if (typeof row.candidateId !== "string")
+    throw new Error(`Retention decision ${index} is missing its candidate.`);
+  const retention = readRetentionFields(value, `Retention decision ${index}`);
+  return { candidateId: row.candidateId, ...retention };
+}
+
 function noiseCount(value: unknown, seed: number, round: number, name: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
     throw new Error(`Seed ${seed} round ${round} has an invalid ${name} count.`);
@@ -337,7 +467,79 @@ function formatCheck(
     `calls ${show(check.noiseFloor.calls)}`,
     `effective ${show(check.effectiveThreshold)}`,
     `binding ${check.bindingThreshold ?? "null"}`,
+    `retention ${check.retention.outcome}`,
+    `retentionReason ${showText(check.retention.reason)}`,
+    `bestEver ${check.retention.bestEverId === null ? "null" : showText(check.retention.bestEverId)}`,
+    `retentionLower ${show(check.retention.lower)}`,
+    `margin ${show(check.retention.margin)}`,
+    `retentionItems ${show(check.retention.items)}`,
   ].join(" ");
+}
+
+const RETENTION_OUTCOMES = new Set(["pass", "retention_regression", "insufficient", "not_measured"]);
+
+export function emptyRetentionStatus(): RetentionStatus {
+  return { bestEver: null, decisions: [] };
+}
+
+/** Read a retention ledger. A missing default file is an empty record, not an error. */
+export function retentionStatusFromPath(path: string | undefined): RetentionStatus {
+  if (!path) {
+    if (!existsSync("retention.json")) return emptyRetentionStatus();
+    return readRetentionLedger("retention.json");
+  }
+  return readRetentionLedger(path);
+}
+
+export function readRetentionLedger(path: string): RetentionStatus {
+  return parseRetentionLedger(readFileSync(path, "utf8"));
+}
+
+export function parseRetentionLedger(text: string): RetentionStatus {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("Retention ledger is not JSON.");
+  }
+  if (!parsed || typeof parsed !== "object")
+    throw new Error("Retention ledger is not a retention-ledger file.");
+  const file = parsed as { schemaVersion?: unknown; kind?: unknown; bestEver?: unknown; decisions?: unknown };
+  if (file.schemaVersion !== 1 || file.kind !== "retention-ledger" || !Array.isArray(file.decisions))
+    throw new Error("Retention ledger is not a retention-ledger file.");
+  return {
+    bestEver: readBestEver(file.bestEver),
+    decisions: file.decisions.map((decision, index) => readLedgerDecision(decision, index)),
+  };
+}
+
+export function formatRetentionStatus(status: RetentionStatus): string {
+  const lines = [
+    `bestEver ${status.bestEver ? showText(status.bestEver.id) : "null"} score ${show(status.bestEver?.score ?? null)} items ${show(status.bestEver ? status.bestEver.items.length : null)}`,
+  ];
+  if (status.bestEver) {
+    for (const item of status.bestEver.items)
+      lines.push(`item ${showText(item.id)} ${show(item.score)}`);
+  }
+  for (const decision of status.decisions) {
+    lines.push(
+      [
+        "decision",
+        showText(decision.candidateId),
+        decision.outcome,
+        `reason ${showText(decision.reason)}`,
+        `bestEver ${decision.bestEverId === null ? "null" : showText(decision.bestEverId)}`,
+        `lower ${show(decision.lower)}`,
+        `margin ${show(decision.margin)}`,
+        `items ${show(decision.items)}`,
+      ].join(" "),
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatRetentionStatusJson(status: RetentionStatus): string {
+  return `${asciiJson(status)}\n`;
 }
 
 function show(value: number | null): string {

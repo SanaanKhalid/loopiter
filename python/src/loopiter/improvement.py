@@ -19,12 +19,14 @@ from typing import Any
 from uuid import uuid4
 
 from . import _validation as v
+from .acceptance_gate import empty_retention_ledger, next_best_ever, remember_retention_decision
 from .client import FeedbackLoop, _callback
 from .improvement_evidence import (
     compare,
     minimum_certifiable_audit_units,
     passes_gates,
     prepare_dataset,
+    promotion_retention,
     validate_change,
     validate_policy,
 )
@@ -1302,38 +1304,38 @@ class ImprovementController:
                 await self._save(
                     rid, owner, {"audit": audit, "state": "completed", "reason": "experiment_only"}
                 )
-            else:
-                current = await self._plain(w, w.artifact)
-                v.baseline(current)
-                if current != d["baseline"]:
-                    v.fail("stale_baseline", "Serving baseline changed.")
-                async with self._tx() as tx:
-                    await self._owned(tx, rid, owner)
-                    opid = rid + ":deployment_budget"
-                    if not await self._read(tx, "operations", opid):
-                        await self._reserve(tx, w, 0, 0, 1)
-                        await self._put(
-                            tx, "operations", opid, {"status": "completed", "result": True}
-                        )
-                candidate = await self.loop.get_candidate(cid)
-                if candidate["status"] == "evaluated":
-                    await self.loop.approve_candidate(
-                        cid,
-                        actor="loopiter/autonomous",
-                        authorization={"run_id": rid, "lease_owner": owner},
-                        evaluation_id=audit_evaluation["id"],
-                    )
-                await self._save(
-                    rid,
-                    owner,
-                    {
-                        "audit": audit,
-                        "state": "deploying",
-                        "reason": "audit_passed",
-                        "attempt_id": rid + ":apply",
-                        "operation": "apply",
-                    },
+            elif p["objective"].get("retention"):
+                retention = promotion_retention(
+                    p, audit["cases"], (await self._retention_ledger(w))["best_ever"]
                 )
+                if retention["outcome"] == "retention_regression":
+                    await self._record_retention(w, cid, audit["cases"], retention, False)
+                    await self._save(
+                        rid,
+                        owner,
+                        {
+                            "audit": audit,
+                            "retention": retention,
+                            "state": "no_improvement",
+                            "reason": "retention_regression",
+                        },
+                    )
+                elif retention["outcome"] == "insufficient":
+                    await self._record_retention(w, cid, audit["cases"], retention, False)
+                    await self._save(
+                        rid,
+                        owner,
+                        {
+                            "audit": audit,
+                            "retention": retention,
+                            "state": "waiting_for_evidence",
+                            "reason": "insufficient_decisive",
+                        },
+                    )
+                else:
+                    await self._deploy_passed_audit(rid, owner, w, audit, retention)
+            else:
+                await self._deploy_passed_audit(rid, owner, w, audit, None)
         elif (
             d["state"] in ("deploying", "rolling_back", "reconciliation_required")
             or (d["state"] == "paused" and d.get("operation") == "apply")
@@ -1436,7 +1438,7 @@ class ImprovementController:
                     or actual["configuration_hash"] != d["baseline"]["configuration_hash"]
                 ):
                     v.fail("out_of_band_change", "Applied version is not current.")
-                await self._save(
+                saved = await self._save(
                     rid,
                     owner,
                     {
@@ -1448,6 +1450,21 @@ class ImprovementController:
                     },
                     True,
                 )
+                kept = saved["data"].get("retention")
+                if (
+                    p["objective"].get("retention")
+                    and kept
+                    and kept["outcome"] in ("pass", "not_measured")
+                    and saved["data"].get("audit")
+                    and saved["data"].get("selected_id")
+                ):
+                    await self._record_retention(
+                        w,
+                        saved["data"]["selected_id"],
+                        saved["data"]["audit"]["cases"],
+                        kept,
+                        True,
+                    )
         elif d["state"] == "observing" or d.get("pending_promotion"):
             await self._observation(run, owner, w, paused)
 
@@ -1681,3 +1698,76 @@ class ImprovementController:
                 v.nonempty(key, "control unit")
             if len(set(control)) != len(control) or set(control) & set(o["unit_ids"]):
                 v.fail("invalid_observation", "Canary/control units overlap.")
+
+    async def _deploy_passed_audit(self, rid, owner, w, audit, retention):
+        current_run = await self.get_run(rid)
+        current = await self._plain(w, w.artifact)
+        v.baseline(current)
+        if current != current_run["data"]["baseline"]:
+            v.fail("stale_baseline", "Serving baseline changed.")
+        async with self._tx() as tx:
+            await self._owned(tx, rid, owner)
+            opid = rid + ":deployment_budget"
+            if not await self._read(tx, "operations", opid):
+                await self._reserve(tx, w, 0, 0, 1)
+                await self._put(tx, "operations", opid, {"status": "completed", "result": True})
+        cid = current_run["data"]["selected_id"]
+        candidate = await self.loop.get_candidate(cid)
+        if candidate["status"] == "evaluated":
+            await self.loop.approve_candidate(
+                cid,
+                actor="loopiter/autonomous",
+                authorization={"run_id": rid, "lease_owner": owner},
+                evaluation_id=current_run["data"]["audit_evaluation_id"],
+            )
+        patch = {
+            "audit": audit,
+            "state": "deploying",
+            "reason": "audit_passed",
+            "attempt_id": rid + ":apply",
+            "operation": "apply",
+        }
+        if retention is not None:
+            patch["retention"] = retention
+        await self._save(rid, owner, patch)
+
+    async def _retention_ledger(self, w):
+        async with self._tx() as tx:
+            row = await self._read(tx, "coordination", self._target(w))
+        return _parse_retention_ledger(None if row is None else row["data"].get("retention"))
+
+    async def _record_retention(self, w, candidate_id, cases, decision, update_best):
+        """Append the decision. Update best-ever only after a passing promotion.
+
+        The new control mean must be strictly better. Rollback never calls this.
+        """
+        async with self._tx() as tx:
+            key = self._target(w)
+            target = await self._read(tx, "coordination", key)
+            ledger = remember_retention_decision(
+                _parse_retention_ledger(
+                    None if target is None else target["data"].get("retention")
+                ),
+                {**decision, "candidate_id": candidate_id},
+            )
+            if update_best and decision["outcome"] in ("pass", "not_measured"):
+                ledger = {
+                    **ledger,
+                    "best_ever": next_best_ever(
+                        current=ledger["best_ever"],
+                        candidate_id=candidate_id,
+                        items=[{"id": row["id"], "score": row["candidate"]} for row in cases],
+                        direction=w.policy["objective"]["direction"],
+                    ),
+                }
+            data = {} if target is None else dict(target["data"])
+            data["retention"] = ledger
+            await self._put(tx, "coordination", key, data)
+
+
+def _parse_retention_ledger(value):
+    if type(value) is not dict:
+        return empty_retention_ledger()
+    decisions = value["decisions"] if type(value.get("decisions")) is list else []
+    best = value.get("best_ever")
+    return {"best_ever": best if type(best) is dict else None, "decisions": decisions}

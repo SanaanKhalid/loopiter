@@ -1,3 +1,4 @@
+import type { RetentionDecision } from "./acceptance-gate.js";
 import type {
   ArtifactBaseline,
   CandidateTarget,
@@ -76,6 +77,12 @@ export interface AutonomyPolicy {
      * Only valid with confidence acceptance.
      */
     noiseFloor?: { validation?: boolean; audit?: boolean };
+    /**
+     * Block a promotion whose control scores regress past the best-ever
+     * record by more than `margin`, at the gate's paired bootstrap.
+     * Omitted leaves the check off. Only valid with confidence acceptance.
+     */
+    retention?: { margin: number; confidence?: number };
   };
   guardrails: MetricGate[];
   trustedSources: string[];
@@ -269,6 +276,11 @@ export interface ImprovementRunData {
   stepTimeouts?: number;
   /** Redacted, truncated text from a failed callback. Absent on a clean tick. */
   detail?: string;
+  /**
+   * Retention check recorded when a candidate would be promoted.
+   * Absent when the policy omits retention. Nulls, never 0, when not measured.
+   */
+  retention?: RetentionDecision;
   /** Recorded when a confidence check waits instead of rejecting the candidate. */
   acceptance?: {
     split: "validation" | "audit";

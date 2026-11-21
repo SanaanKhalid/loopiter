@@ -7,6 +7,7 @@ The JSON log uses the Node benchmark's camelCase fields.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from .acceptance_gate import MAX_BOOTSTRAP_SAMPLES
@@ -135,6 +136,7 @@ def _explain_decision(value: Any, rule: Any, seed: int, round_: int) -> dict[str
         "noiseFloor": _read_noise(value.get("noiseFloor"), seed, round_),
         "effectiveThreshold": _read_effective(value.get("effectiveThreshold"), seed, round_),
         "bindingThreshold": _read_binding(value.get("bindingThreshold"), seed, round_),
+        "retention": _read_retention(value.get("retention"), f"Seed {seed} round {round_}"),
     }
 
 
@@ -265,6 +267,17 @@ def _format_check(seed: int, candidate_id: str, split: str, check: dict[str, Any
             f"calls {_show(check['noiseFloor']['calls'])}",
             f"effective {_show(check['effectiveThreshold'])}",
             f"binding {binding}",
+            f"retention {check['retention']['outcome']}",
+            f"retentionReason {_show_text(check['retention']['reason'])}",
+            "bestEver "
+            + (
+                "null"
+                if check["retention"]["bestEverId"] is None
+                else _show_text(check["retention"]["bestEverId"])
+            ),
+            f"retentionLower {_show(check['retention']['lower'])}",
+            f"margin {_show(check['retention']['margin'])}",
+            f"retentionItems {_show(check['retention']['items'])}",
         ]
     )
 
@@ -284,4 +297,182 @@ def _escape_unit(char: str) -> str:
 def _show(value: Any) -> str:
     if value is None:
         return "null"
-    return json.dumps(value)
+    return json.dumps(_canon_number(value))
+
+
+_RETENTION_OUTCOMES = {"pass", "retention_regression", "insufficient", "not_measured"}
+
+
+def empty_retention_status() -> dict[str, Any]:
+    return {"bestEver": None, "decisions": []}
+
+
+def retention_status_from_path(path: str | None) -> dict[str, Any]:
+    """Read a retention ledger. A missing default file is an empty record."""
+    if not path:
+        if not os.path.exists("retention.json"):
+            return empty_retention_status()
+        return read_retention_ledger("retention.json")
+    return read_retention_ledger(path)
+
+
+def read_retention_ledger(path: str) -> dict[str, Any]:
+    with open(path, encoding="utf-8") as handle:
+        return parse_retention_ledger(handle.read())
+
+
+def parse_retention_ledger(text: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError("Retention ledger is not JSON.") from error
+    if (
+        not isinstance(parsed, dict)
+        or parsed.get("schemaVersion") != 1
+        or parsed.get("kind") != "retention-ledger"
+        or not isinstance(parsed.get("decisions"), list)
+    ):
+        raise ValueError("Retention ledger is not a retention-ledger file.")
+    return {
+        "bestEver": _read_best_ever(parsed.get("bestEver")),
+        "decisions": [
+            _read_ledger_decision(decision, index)
+            for index, decision in enumerate(parsed["decisions"])
+        ],
+    }
+
+
+def format_retention_status(status: dict[str, Any]) -> str:
+    best = status["bestEver"]
+    lines = [
+        "bestEver "
+        + ("null" if best is None else _show_text(best["id"]))
+        + f" score {_show(None if best is None else best['score'])}"
+        + f" items {_show(None if best is None else len(best['items']))}"
+    ]
+    if best is not None:
+        for item in best["items"]:
+            lines.append(f"item {_show_text(item['id'])} {_show(item['score'])}")
+    for decision in status["decisions"]:
+        best_id = decision["bestEverId"]
+        lines.append(
+            " ".join(
+                [
+                    "decision",
+                    _show_text(decision["candidateId"]),
+                    decision["outcome"],
+                    f"reason {_show_text(decision['reason'])}",
+                    "bestEver " + ("null" if best_id is None else _show_text(best_id)),
+                    f"lower {_show(decision['lower'])}",
+                    f"margin {_show(decision['margin'])}",
+                    f"items {_show(decision['items'])}",
+                ]
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def format_retention_status_json(status: dict[str, Any]) -> str:
+    return json.dumps(_canon(status), ensure_ascii=True, indent=2) + "\n"
+
+
+def _not_measured_retention() -> dict[str, Any]:
+    return {
+        "outcome": "not_measured",
+        "reason": "not_measured",
+        "bestEverId": None,
+        "lower": None,
+        "margin": None,
+        "items": None,
+    }
+
+
+def _read_retention(value: Any, where: str) -> dict[str, Any]:
+    if value is None:
+        return _not_measured_retention()
+    if not isinstance(value, dict) or value.get("outcome") not in _RETENTION_OUTCOMES:
+        raise ValueError(f"{where} has an unknown retention outcome.")
+    if not isinstance(value.get("reason"), str):
+        raise ValueError(f"{where} has a malformed retention check.")
+    if value["outcome"] == "not_measured":
+        if any(value.get(key) is not None for key in ("bestEverId", "lower", "margin", "items")):
+            raise ValueError(f"{where} records an unmeasured retention check as a number.")
+        return _not_measured_retention()
+    best_id = value.get("bestEverId")
+    if best_id is not None and not isinstance(best_id, str):
+        raise ValueError(f"{where} has a malformed best-ever id.")
+    items = value.get("items")
+    if isinstance(items, bool) or type(items) is not int or items < 1:
+        raise ValueError(f"{where} has an invalid retention item count.")
+    margin = value.get("margin")
+    if isinstance(margin, bool) or not isinstance(margin, (int, float)) or margin != margin:
+        raise ValueError(f"{where} has a non-finite retention margin.")
+    if value["outcome"] == "insufficient":
+        if value.get("lower") is not None:
+            raise ValueError(f"{where} records an unused retention bound.")
+        return {
+            "outcome": "insufficient",
+            "reason": value["reason"],
+            "bestEverId": best_id,
+            "lower": None,
+            "margin": margin,
+            "items": items,
+        }
+    lower = value.get("lower")
+    if isinstance(lower, bool) or not isinstance(lower, (int, float)) or lower != lower:
+        raise ValueError(f"{where} has a non-finite retention lower bound.")
+    return {
+        "outcome": value["outcome"],
+        "reason": value["reason"],
+        "bestEverId": best_id,
+        "lower": lower,
+        "margin": margin,
+        "items": items,
+    }
+
+
+def _read_best_ever(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get("id"), str) or not value["id"]:
+        raise ValueError("Retention ledger has a malformed best-ever record.")
+    score = value.get("score")
+    if isinstance(score, bool) or not isinstance(score, (int, float)) or score != score:
+        raise ValueError("Retention ledger has a non-finite best-ever score.")
+    items = value.get("items")
+    if not isinstance(items, list):
+        raise ValueError("Retention ledger has a malformed best-ever record.")
+    cleaned = []
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+            raise ValueError("Retention ledger has a malformed best-ever item.")
+        item_score = item.get("score")
+        if (
+            isinstance(item_score, bool)
+            or not isinstance(item_score, (int, float))
+            or item_score != item_score
+        ):
+            raise ValueError("Retention ledger has a non-finite best-ever item score.")
+        cleaned.append({"id": item["id"], "score": item_score})
+    return {"id": value["id"], "score": score, "items": cleaned}
+
+
+def _read_ledger_decision(value: Any, index: int) -> dict[str, Any]:
+    if not isinstance(value, dict) or not isinstance(value.get("candidateId"), str):
+        raise ValueError(f"Retention decision {index} is missing its candidate.")
+    retention = _read_retention(value, f"Retention decision {index}")
+    return {"candidateId": value["candidateId"], **retention}
+
+
+def _canon_number(value: Any) -> Any:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _canon(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _canon(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_canon(item) for item in value]
+    return _canon_number(value)

@@ -20,10 +20,14 @@ import {
 } from "./utils.js";
 import {
   decideAcceptance,
+  decideRetention,
   gateParameters,
   MAX_BOOTSTRAP_SAMPLES,
   minimumDecisiveFloor,
+  notMeasuredRetention,
+  type BestEverRecord,
   type GateDecision,
+  type RetentionDecision,
 } from "./acceptance-gate.js";
 import { fields, target } from "./validation.js";
 
@@ -175,6 +179,7 @@ export function validatePolicy(p: AutonomyPolicy): void {
     "minimumValidationDecisive",
     "minimumAuditDecisive",
     "noiseFloor",
+    "retention",
   ]);
   nonempty(p.objective.metric, "objective");
   enumeration(p.objective.direction, ["maximize", "minimize"], "direction");
@@ -234,6 +239,22 @@ export function validatePolicy(p: AutonomyPolicy): void {
     for (const key of ["validation", "audit"] as const) {
       if (setting[key] !== undefined && typeof setting[key] !== "boolean")
         fail("invalid_policy", `noiseFloor.${key} must be a boolean.`);
+    }
+  }
+  if (p.objective.retention !== undefined) {
+    if (p.objective.acceptance !== "confidence")
+      fail("invalid_policy", "Retention requires confidence acceptance.");
+    const setting = p.objective.retention;
+    if (!setting || typeof setting !== "object" || Array.isArray(setting))
+      fail("invalid_policy", "retention must set a margin.");
+    fields(setting, ["margin", "confidence"]);
+    if (!Object.hasOwn(setting, "margin"))
+      fail("invalid_policy", "retention must set a margin.");
+    finite(setting.margin, "retention margin", 0);
+    if (setting.confidence !== undefined) {
+      finite(setting.confidence, "retention confidence");
+      if (setting.confidence <= 0 || setting.confidence >= 1)
+        fail("invalid_policy", "retention confidence must be between 0 and 1.");
     }
   }
   gates(p.guardrails);
@@ -328,6 +349,42 @@ export function validatePolicy(p: AutonomyPolicy): void {
         "minimumAuditDecisive cannot exceed minimumAuditUnits.",
       );
   }
+}
+
+/**
+ * Retention check for a candidate that has already passed audit.
+ * Omitted policy returns `not_measured` and does not read the ledger.
+ * The decisive floor follows the audit check, and a higher retention
+ * confidence can only raise that floor.
+ */
+export function promotionRetention(
+  policy: AutonomyPolicy,
+  cases: readonly { id: string; candidate: number }[],
+  bestEver: BestEverRecord | null,
+): RetentionDecision {
+  const setting = policy.objective.retention;
+  if (!setting) return notMeasuredRetention();
+  const confidence = setting.confidence ?? policy.objective.confidence ?? 0.9;
+  const floor = minimumDecisiveFloor(confidence);
+  const auditFloor = minimumDecisiveFloor(policy.objective.confidence ?? 0.9);
+  const configured = policy.objective.minimumAuditDecisive ?? Math.max(floor, auditFloor);
+  return decideRetention({
+    enabled: true,
+    candidateItems: cases.map((row) => ({ id: row.id, score: row.candidate })),
+    bestEver,
+    margin: setting.margin,
+    direction: policy.objective.direction,
+    parameters: gateParameters({
+      confidence,
+      ...(policy.objective.bootstrapSamples !== undefined
+        ? { samples: policy.objective.bootstrapSamples }
+        : {}),
+      ...(policy.objective.bootstrapSeed !== undefined
+        ? { seed: policy.objective.bootstrapSeed }
+        : {}),
+      minimumDecisive: Math.max(floor, configured),
+    }),
+  });
 }
 
 /** True when this split re-scores the incumbent. Omitted or false leaves the check off. */

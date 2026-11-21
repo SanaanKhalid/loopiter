@@ -583,3 +583,148 @@ def _inverse_norm(p: float) -> float:
     return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (
         ((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1
     )
+
+
+# How many retention decisions a ledger keeps. Older ones drop off the front.
+RETENTION_DECISION_LIMIT = 20
+
+
+def not_measured_retention() -> dict[str, Any]:
+    """Unmeasured check. Counts and bounds are None, never 0."""
+    return {
+        "outcome": "not_measured",
+        "reason": "not_measured",
+        "best_ever_id": None,
+        "lower": None,
+        "margin": None,
+        "items": None,
+    }
+
+
+def empty_retention_ledger() -> dict[str, Any]:
+    return {"best_ever": None, "decisions": []}
+
+
+def decide_retention(
+    *,
+    enabled: bool,
+    candidate_items: list[dict[str, Any]],
+    best_ever: dict[str, Any] | None,
+    margin: float,
+    direction: str = "maximize",
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
+    """Paired bootstrap of candidate minus best-ever, sorted by UTF-8 id.
+
+    The lower bound uses the same seed, sample count, and confidence as the gate.
+    A lower bound below ``-margin`` is ``retention_regression``.
+    Too few decisive overlaps is ``insufficient``, not a pass.
+    No best-ever record, or no shared ids, is ``not_measured`` with nulls.
+    """
+    if not enabled:
+        return not_measured_retention()
+    _validate_parameters(parameters)
+    if (
+        isinstance(margin, bool)
+        or not isinstance(margin, (int, float))
+        or not math.isfinite(margin)
+    ):
+        raise ValueError("Retention margin must be a finite number >= 0.")
+    if margin < 0:
+        raise ValueError("Retention margin must be a finite number >= 0.")
+    candidate = _ordered_scores(candidate_items, "candidate")
+    if not best_ever:
+        return not_measured_retention()
+    best = _ordered_scores(best_ever["items"], "best-ever")
+    best_by_id = {item["id"]: item["score"] for item in best}
+    paired = [item for item in candidate if item["id"] in best_by_id]
+    if not paired:
+        return not_measured_retention()
+    sign = 1 if direction == "maximize" else -1
+    diffs: list[float] = []
+    decisive = 0
+    for item in paired:
+        control = best_by_id[item["id"]]
+        if item["score"] != control:
+            decisive += 1
+        diffs.append(sign * (item["score"] - control))
+    required = parameters.get("minimum_decisive") or 0
+    if required > 0 and decisive < required:
+        return {
+            "outcome": "insufficient",
+            "reason": "insufficient_decisive",
+            "best_ever_id": best_ever["id"],
+            "lower": None,
+            "margin": margin,
+            "items": len(paired),
+        }
+    interval = bootstrap_mean_interval(diffs, parameters)
+    if interval["lower"] < -margin:
+        return {
+            "outcome": "retention_regression",
+            "reason": "retention_regression",
+            "best_ever_id": best_ever["id"],
+            "lower": interval["lower"],
+            "margin": margin,
+            "items": len(paired),
+        }
+    return {
+        "outcome": "pass",
+        "reason": "pass",
+        "best_ever_id": best_ever["id"],
+        "lower": interval["lower"],
+        "margin": margin,
+        "items": len(paired),
+    }
+
+
+def next_best_ever(
+    *,
+    current: dict[str, Any] | None,
+    candidate_id: str,
+    items: list[dict[str, Any]],
+    direction: str = "maximize",
+) -> dict[str, Any]:
+    """Replace the record only when the new control mean is strictly better.
+
+    Maximize treats a larger mean as better. Minimize treats a smaller mean as better.
+    An equal mean keeps the current id. A missing record accepts the first score.
+    """
+    if type(candidate_id) is not str or not candidate_id:
+        raise ValueError("Best-ever id must be a non-empty string.")
+    ordered = _ordered_scores(items, "candidate")
+    if not ordered:
+        raise ValueError("Best-ever record needs at least one item.")
+    score = sum(item["score"] for item in ordered) / len(ordered)
+    nxt = {"id": candidate_id, "score": score, "items": ordered}
+    if current is None:
+        return nxt
+    better = score < current["score"] if direction == "minimize" else score > current["score"]
+    return nxt if better else current
+
+
+def remember_retention_decision(ledger: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
+    decisions = [*ledger["decisions"], decision][-RETENTION_DECISION_LIMIT:]
+    return {"best_ever": ledger["best_ever"], "decisions": decisions}
+
+
+def _ordered_scores(items: list[dict[str, Any]], label: str) -> list[dict[str, Any]]:
+    ordered = sorted(items, key=lambda item: str(item.get("id", "")).encode("utf-8"))
+    seen: set[str] = set()
+    cleaned: list[dict[str, Any]] = []
+    for item in ordered:
+        item_id = item.get("id")
+        if type(item_id) is not str or not item_id:
+            raise ValueError(f"Retention {label} item id must be a non-empty string.")
+        if item_id in seen:
+            raise ValueError(f"Duplicate retention {label} item id {item_id}.")
+        seen.add(item_id)
+        score = item.get("score")
+        if (
+            isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or not math.isfinite(score)
+        ):
+            raise ValueError(f"Retention {label} scores must be finite.")
+        cleaned.append({"id": item_id, "score": score})
+    return cleaned
