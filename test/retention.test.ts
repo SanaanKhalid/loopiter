@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   decideRetention,
+  loadRetentionLedger,
   nextBestEver,
   notMeasuredRetention,
   rememberRetentionDecision,
@@ -16,8 +17,8 @@ import {
 import {
   explainDecisionText,
   formatExplanation,
-  formatRetentionStatus,
-  parseRetentionLedger,
+  formatRetentionReport,
+  retentionReportFromState,
 } from "../src/decision-explain.js";
 
 const rule: GateParameters = {
@@ -158,44 +159,114 @@ test("best-ever moves only to a strictly better control score", () => {
   );
   assert.equal(rolled.bestEver?.id, "higher");
   assert.equal(rolled.decisions.at(-1)?.candidateId, "rolled");
+  const wide = nextBestEver({
+    current: null,
+    candidateId: "wide",
+    items: [
+      { id: "a", score: 0.5 },
+      { id: "b", score: 0.5 },
+    ],
+  });
+  const drifted = nextBestEver({
+    current: wide,
+    candidateId: "later",
+    items: [
+      { id: "c", score: 1 },
+      { id: "d", score: 1 },
+    ],
+  });
+  assert.equal(drifted, wide);
+  const mixed = nextBestEver({
+    current: wide,
+    candidateId: "mixed",
+    items: [
+      { id: "a", score: 0.25 },
+      { id: "z", score: 1 },
+    ],
+  });
+  assert.equal(mixed.id, "wide");
+});
+
+test("a stored best-ever record with a non-finite score or a repeated id is rejected", () => {
+  assert.throws(
+    () =>
+      loadRetentionLedger({
+        bestEver: { id: "bad", score: Number.NaN, items: [{ id: "a", score: 1 }] },
+        decisions: [],
+      }),
+    /score must be finite/,
+  );
+  assert.throws(
+    () =>
+      loadRetentionLedger({
+        bestEver: {
+          id: "bad",
+          score: 1,
+          items: [
+            { id: "a", score: 1 },
+            { id: "a", score: 0.5 },
+          ],
+        },
+        decisions: [],
+      }),
+    /Duplicate retention best-ever item id a/,
+  );
+  assert.throws(
+    () => loadRetentionLedger({ bestEver: { id: "", score: 1, items: [] }, decisions: [] }),
+    /best-ever id/,
+  );
 });
 
 test("explain and retention status match across both SDKs", async () => {
   const directory = await mkdtemp(join(tmpdir(), "retention-status-"));
   try {
     const craftedId = "c\u007f\u009b2J\u202e\u00e9\u{1F600}\nbest";
-    const ledger = {
-      schemaVersion: 1,
-      kind: "retention-ledger",
-      bestEver: {
-        id: craftedId,
-        score: 0.8,
-        items: [{ id: craftedId, score: 0.8 }],
+    const decisions = [
+      {
+        candidateId: "next",
+        outcome: "retention_regression",
+        reason: "retention_regression",
+        bestEverId: craftedId,
+        lower: -0.25,
+        margin: 0.05,
+        items: 8,
       },
-      decisions: [
-        {
-          candidateId: "next",
-          outcome: "retention_regression",
-          reason: "retention_regression",
-          bestEverId: craftedId,
-          lower: -0.25,
-          margin: 0.05,
-          items: 8,
+      {
+        candidateId: "quiet",
+        outcome: "not_measured",
+        reason: "not_measured",
+        bestEverId: null,
+        lower: null,
+        margin: null,
+        items: null,
+      },
+    ];
+    const state = {
+      version: 3,
+      namespaces: {
+        demo: {
+          coordination: {
+            "target:crafted": {
+              id: "target:crafted",
+              namespace: "demo",
+              revision: 1,
+              createdAt: "2026-02-01T00:00:00.000Z",
+              updatedAt: "2026-02-01T00:00:00.000Z",
+              format: 1,
+              data: {
+                retention: {
+                  bestEver: { id: craftedId, score: 0.5, items: [{ id: craftedId, score: 0.5 }] },
+                  decisions,
+                },
+              },
+            },
+          },
         },
-        {
-          candidateId: "quiet",
-          outcome: "not_measured",
-          reason: "not_measured",
-          bestEverId: null,
-          lower: null,
-          margin: null,
-          items: null,
-        },
-      ],
+      },
     };
-    const path = join(directory, "ledger.json");
-    await writeFile(path, `${JSON.stringify(ledger)}\n`);
-    const text = formatRetentionStatus(parseRetentionLedger(JSON.stringify(ledger)));
+    const path = join(directory, "state.json");
+    await writeFile(path, JSON.stringify(state));
+    const text = formatRetentionReport(retentionReportFromState(JSON.stringify(state), "demo"));
     assert.equal(text.includes("\u001b"), false);
     assert.equal(text.includes("\u007f"), false);
     assert.equal(text.includes("\u009b"), false);
@@ -206,12 +277,14 @@ test("explain and retention status match across both SDKs", async () => {
     }), true);
     const root = fileURLToPath(new URL("../..", import.meta.url));
     const env = { ...process.env, PYTHONPATH: join(root, "python/src") };
-    const nodeText = spawnSync(process.execPath, [cliPath(), "retention", "status", path], {
-      encoding: "utf8",
-    });
+    const nodeText = spawnSync(
+      process.execPath,
+      [cliPath(), "retention", "status", "--file", path, "--namespace", "demo"],
+      { encoding: "utf8" },
+    );
     const pythonText = spawnSync(
       "python3",
-      ["-m", "loopiter", "retention", "status", path],
+      ["-m", "loopiter", "retention", "status", "--file", path, "--namespace", "demo"],
       { cwd: root, env, encoding: "utf8" },
     );
     assert.equal(nodeText.status, 0, nodeText.stderr);
@@ -220,31 +293,26 @@ test("explain and retention status match across both SDKs", async () => {
     assert.equal(nodeText.stdout, text);
     const nodeJson = spawnSync(
       process.execPath,
-      [cliPath(), "retention", "status", path, "--json"],
+      [cliPath(), "retention", "status", "--file", path, "--namespace", "demo", "--json"],
       { encoding: "utf8" },
     );
     const pythonJson = spawnSync(
       "python3",
-      ["-m", "loopiter", "retention", "status", path, "--json"],
+      ["-m", "loopiter", "retention", "status", "--file", path, "--namespace", "demo", "--json"],
       { cwd: root, env, encoding: "utf8" },
     );
     assert.equal(nodeJson.status, 0, nodeJson.stderr);
     assert.equal(pythonJson.stdout, nodeJson.stdout);
     assert.equal([...nodeJson.stdout].every((character) => character.charCodeAt(0) <= 127), true);
-    const parsed = JSON.parse(nodeJson.stdout) as { bestEver: { id: string } };
-    assert.equal(parsed.bestEver.id, craftedId);
-    const emptyNode = spawnSync(process.execPath, [cliPath(), "retention", "status"], {
-      cwd: directory,
-      encoding: "utf8",
-    });
-    const emptyPython = spawnSync("python3", ["-m", "loopiter", "retention", "status"], {
-      cwd: directory,
-      env,
-      encoding: "utf8",
-    });
-    assert.equal(emptyNode.status, 0, emptyNode.stderr);
-    assert.equal(emptyPython.stdout, emptyNode.stdout);
-    assert.equal(emptyNode.stdout, "bestEver null score null items null\n");
+    const parsed = JSON.parse(nodeJson.stdout) as { targets: { bestEver: { id: string } }[] };
+    assert.equal(parsed.targets[0]?.bestEver.id, craftedId);
+    const emptyNode = spawnSync(
+      process.execPath,
+      [cliPath(), "retention", "status", "--file", path, "--namespace", "empty"],
+      { encoding: "utf8" },
+    );
+    assert.equal(emptyNode.status, 1, emptyNode.stderr);
+    assert.match(emptyNode.stderr, /no such namespace/);
     const log = {
       schemaVersion: 1,
       kind: "acceptance-decisions",
@@ -273,7 +341,7 @@ test("explain and retention status match across both SDKs", async () => {
                 itemCount: 8,
                 decisive: 8,
                 required: 5,
-                retention: ledger.decisions[0],
+                retention: decisions[0],
               },
             },
           ],

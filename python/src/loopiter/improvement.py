@@ -19,7 +19,7 @@ from typing import Any
 from uuid import uuid4
 
 from . import _validation as v
-from .acceptance_gate import empty_retention_ledger, next_best_ever, remember_retention_decision
+from .acceptance_gate import load_retention_ledger, next_best_ever, remember_retention_decision
 from .client import FeedbackLoop, _callback
 from .improvement_evidence import (
     compare,
@@ -535,22 +535,21 @@ class ImprovementController:
                     else:
                         failures = lock["data"].get("consecutive_failures", 0) + 1
                         timeouts = lock["data"].get("consecutive_timeouts", 0)
-                    await self._put(
-                        tx,
-                        "coordination",
-                        self._target(w),
-                        {
-                            **lock["data"],
-                            "active_run": None,
-                            "consecutive_failures": failures,
-                            "consecutive_timeouts": timeouts,
-                            "previous_outcomes": [
-                                *lock["data"].get("previous_outcomes", []),
-                                {"state": data["state"], "reason": data["reason"]},
-                            ][-10:],
-                            "next_eligible_at": _plus(self.loop.now(), w.policy["cooldown_ms"]),
-                        },
-                    )
+                    next_lock = {
+                        **lock["data"],
+                        "active_run": None,
+                        "consecutive_failures": failures,
+                        "consecutive_timeouts": timeouts,
+                        "previous_outcomes": [
+                            *lock["data"].get("previous_outcomes", []),
+                            {"state": data["state"], "reason": data["reason"]},
+                        ][-10:],
+                        "next_eligible_at": _plus(self.loop.now(), w.policy["cooldown_ms"]),
+                    }
+                    retained = _retained_ledger(w, data, lock["data"].get("retention"))
+                    if retained is not None:
+                        next_lock["retention"] = retained
+                    await self._put(tx, "coordination", self._target(w), next_lock)
             return self._parse(row)
 
     async def _operation(self, run, owner, kind, fn, recovery=False):
@@ -1309,7 +1308,6 @@ class ImprovementController:
                     p, audit["cases"], (await self._retention_ledger(w))["best_ever"]
                 )
                 if retention["outcome"] == "retention_regression":
-                    await self._record_retention(w, cid, audit["cases"], retention, False)
                     await self._save(
                         rid,
                         owner,
@@ -1321,7 +1319,6 @@ class ImprovementController:
                         },
                     )
                 elif retention["outcome"] == "insufficient":
-                    await self._record_retention(w, cid, audit["cases"], retention, False)
                     await self._save(
                         rid,
                         owner,
@@ -1438,7 +1435,7 @@ class ImprovementController:
                     or actual["configuration_hash"] != d["baseline"]["configuration_hash"]
                 ):
                     v.fail("out_of_band_change", "Applied version is not current.")
-                saved = await self._save(
+                await self._save(
                     rid,
                     owner,
                     {
@@ -1450,21 +1447,6 @@ class ImprovementController:
                     },
                     True,
                 )
-                kept = saved["data"].get("retention")
-                if (
-                    p["objective"].get("retention")
-                    and kept
-                    and kept["outcome"] in ("pass", "not_measured")
-                    and saved["data"].get("audit")
-                    and saved["data"].get("selected_id")
-                ):
-                    await self._record_retention(
-                        w,
-                        saved["data"]["selected_id"],
-                        saved["data"]["audit"]["cases"],
-                        kept,
-                        True,
-                    )
         elif d["state"] == "observing" or d.get("pending_promotion"):
             await self._observation(run, owner, w, paused)
 
@@ -1734,40 +1716,45 @@ class ImprovementController:
     async def _retention_ledger(self, w):
         async with self._tx() as tx:
             row = await self._read(tx, "coordination", self._target(w))
-        return _parse_retention_ledger(None if row is None else row["data"].get("retention"))
-
-    async def _record_retention(self, w, candidate_id, cases, decision, update_best):
-        """Append the decision. Update best-ever only after a passing promotion.
-
-        The new control mean must be strictly better. Rollback never calls this.
-        """
-        async with self._tx() as tx:
-            key = self._target(w)
-            target = await self._read(tx, "coordination", key)
-            ledger = remember_retention_decision(
-                _parse_retention_ledger(
-                    None if target is None else target["data"].get("retention")
-                ),
-                {**decision, "candidate_id": candidate_id},
-            )
-            if update_best and decision["outcome"] in ("pass", "not_measured"):
-                ledger = {
-                    **ledger,
-                    "best_ever": next_best_ever(
-                        current=ledger["best_ever"],
-                        candidate_id=candidate_id,
-                        items=[{"id": row["id"], "score": row["candidate"]} for row in cases],
-                        direction=w.policy["objective"]["direction"],
-                    ),
-                }
-            data = {} if target is None else dict(target["data"])
-            data["retention"] = ledger
-            await self._put(tx, "coordination", key, data)
+        try:
+            return load_retention_ledger(None if row is None else row["data"].get("retention"))
+        except ValueError as error:
+            v.fail("invalid_retention", str(error))
 
 
-def _parse_retention_ledger(value):
-    if type(value) is not dict:
-        return empty_retention_ledger()
-    decisions = value["decisions"] if type(value.get("decisions")) is list else []
-    best = value.get("best_ever")
-    return {"best_ever": best if type(best) is dict else None, "decisions": decisions}
+def _retained_ledger(w, data, stored):
+    retention = data.get("retention")
+    if (
+        not w.policy["objective"].get("retention")
+        or not retention
+        or not data.get("selected_id")
+        or not data.get("audit")
+    ):
+        return None
+    finished = (
+        data.get("state") == "completed"
+        and data.get("reason") != "experiment_only"
+        and retention["outcome"] in ("pass", "not_measured")
+    )
+    blocked = data.get("reason") == "retention_regression" or (
+        data.get("state") == "waiting_for_evidence" and retention["outcome"] == "insufficient"
+    )
+    if not finished and not blocked:
+        return None
+    ledger = remember_retention_decision(
+        load_retention_ledger(stored),
+        {**retention, "candidate_id": data["selected_id"]},
+    )
+    if finished:
+        ledger = {
+            **ledger,
+            "best_ever": next_best_ever(
+                current=ledger["best_ever"],
+                candidate_id=data["selected_id"],
+                items=[
+                    {"id": row["id"], "score": row["candidate"]} for row in data["audit"]["cases"]
+                ],
+                direction=w.policy["objective"]["direction"],
+            ),
+        }
+    return ledger

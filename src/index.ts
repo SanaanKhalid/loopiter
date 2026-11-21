@@ -12,6 +12,7 @@ export * from "./stores/json-file.js";
 export {
   decideRetention,
   emptyRetentionLedger,
+  loadRetentionLedger,
   nextBestEver,
   notMeasuredRetention,
   rememberRetentionDecision,

@@ -685,22 +685,125 @@ def next_best_ever(
     items: list[dict[str, Any]],
     direction: str = "maximize",
 ) -> dict[str, Any]:
-    """Replace the record only when the new control mean is strictly better.
+    """Replace the record only when the shared item ids have a strictly better mean.
 
-    Maximize treats a larger mean as better. Minimize treats a smaller mean as better.
-    An equal mean keeps the current id. A missing record accepts the first score.
+    Maximize treats a larger shared mean as better. Minimize treats a smaller one as better.
+    No shared ids leaves the current record unchanged. A missing record accepts the first score.
+    The stored score is the mean of the winning candidate's own items.
     """
     if type(candidate_id) is not str or not candidate_id:
         raise ValueError("Best-ever id must be a non-empty string.")
     ordered = _ordered_scores(items, "candidate")
     if not ordered:
         raise ValueError("Best-ever record needs at least one item.")
-    score = sum(item["score"] for item in ordered) / len(ordered)
-    nxt = {"id": candidate_id, "score": score, "items": ordered}
     if current is None:
-        return nxt
-    better = score < current["score"] if direction == "minimize" else score > current["score"]
-    return nxt if better else current
+        return {
+            "id": candidate_id,
+            "score": sum(item["score"] for item in ordered) / len(ordered),
+            "items": ordered,
+        }
+    current_items = _ordered_scores(current["items"], "best-ever")
+    current_by_id = {item["id"]: item["score"] for item in current_items}
+    overlap = [item for item in ordered if item["id"] in current_by_id]
+    if not overlap:
+        return current
+    candidate_mean = sum(item["score"] for item in overlap) / len(overlap)
+    current_mean = sum(current_by_id[item["id"]] for item in overlap) / len(overlap)
+    better = (
+        candidate_mean < current_mean if direction == "minimize" else candidate_mean > current_mean
+    )
+    if not better:
+        return current
+    return {
+        "id": candidate_id,
+        "score": sum(item["score"] for item in ordered) / len(ordered),
+        "items": ordered,
+    }
+
+
+def load_retention_ledger(value: Any) -> dict[str, Any]:
+    """Read a stored ledger. Invalid best-ever data raises instead of being kept."""
+    if value is None:
+        return empty_retention_ledger()
+    if type(value) is not dict:
+        raise ValueError("Retention ledger must be an object.")
+    decisions = value.get("decisions")
+    if type(decisions) is not list:
+        raise ValueError("Retention ledger decisions must be a list.")
+    best = value.get("best_ever")
+    return {
+        "best_ever": None if best is None else _load_best_ever(best),
+        "decisions": [
+            _load_ledger_decision(decision, index) for index, decision in enumerate(decisions)
+        ],
+    }
+
+
+def _load_best_ever(value: Any) -> dict[str, Any]:
+    if type(value) is not dict:
+        raise ValueError("Retention ledger best-ever record must be an object.")
+    item_id = value.get("id")
+    if type(item_id) is not str or not item_id:
+        raise ValueError("Retention ledger best-ever id must be a non-empty string.")
+    score = value.get("score")
+    if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
+        raise ValueError("Retention ledger best-ever score must be finite.")
+    raw_items = value.get("items")
+    if type(raw_items) is not list:
+        raise ValueError("Retention ledger best-ever items must be a list.")
+    rows = []
+    for item in raw_items:
+        if type(item) is not dict:
+            raise ValueError("Retention ledger best-ever item must be an object.")
+        rows.append({"id": item.get("id"), "score": item.get("score")})
+    return {"id": item_id, "score": score, "items": _ordered_scores(rows, "best-ever")}
+
+
+def _load_ledger_decision(value: Any, index: int) -> dict[str, Any]:
+    if type(value) is not dict:
+        raise ValueError(f"Retention ledger decision {index} must be an object.")
+    candidate_id = value.get("candidate_id")
+    if type(candidate_id) is not str or not candidate_id:
+        raise ValueError(f"Retention ledger decision {index} is missing its candidate.")
+    outcome = value.get("outcome")
+    if outcome not in ("pass", "retention_regression", "insufficient", "not_measured"):
+        raise ValueError(f"Retention ledger decision {index} has an unknown outcome.")
+    if type(value.get("reason")) is not str:
+        raise ValueError(f"Retention ledger decision {index} has no reason.")
+    if outcome == "not_measured":
+        if any(value.get(key) is not None for key in ("best_ever_id", "lower", "margin", "items")):
+            raise ValueError(
+                f"Retention ledger decision {index} records an unmeasured check as a number."
+            )
+    else:
+        items = value.get("items")
+        if isinstance(items, bool) or type(items) is not int or items < 1:
+            raise ValueError(f"Retention ledger decision {index} has an invalid item count.")
+    lower = value.get("lower")
+    margin = value.get("margin")
+    if lower is not None and (
+        isinstance(lower, bool) or not isinstance(lower, (int, float)) or not math.isfinite(lower)
+    ):
+        raise ValueError(f"Retention ledger decision {index} has a non-finite lower bound.")
+    if margin is not None and (
+        isinstance(margin, bool)
+        or not isinstance(margin, (int, float))
+        or not math.isfinite(margin)
+    ):
+        raise ValueError(f"Retention ledger decision {index} has a non-finite margin.")
+    return {
+        "candidate_id": candidate_id,
+        "outcome": outcome,
+        "reason": value["reason"],
+        "best_ever_id": value.get("best_ever_id")
+        if type(value.get("best_ever_id")) is str
+        else None,
+        "lower": lower if isinstance(lower, (int, float)) and not isinstance(lower, bool) else None,
+        "margin": margin
+        if isinstance(margin, (int, float)) and not isinstance(margin, bool)
+        else None,
+        "items": value.get("items") if type(value.get("items")) is int else None,
+    }
 
 
 def remember_retention_decision(ledger: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:

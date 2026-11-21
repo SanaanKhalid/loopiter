@@ -7,10 +7,9 @@ The JSON log uses the Node benchmark's camelCase fields.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
-from .acceptance_gate import MAX_BOOTSTRAP_SAMPLES
+from .acceptance_gate import MAX_BOOTSTRAP_SAMPLES, load_retention_ledger
 
 _OUTCOMES = {"accepted", "rejected", "insufficient"}
 
@@ -307,37 +306,94 @@ def empty_retention_status() -> dict[str, Any]:
     return {"bestEver": None, "decisions": []}
 
 
-def retention_status_from_path(path: str | None) -> dict[str, Any]:
-    """Read a retention ledger. A missing default file is an empty record."""
-    if not path:
-        if not os.path.exists("retention.json"):
-            return empty_retention_status()
-        return read_retention_ledger("retention.json")
-    return read_retention_ledger(path)
-
-
-def read_retention_ledger(path: str) -> dict[str, Any]:
-    with open(path, encoding="utf-8") as handle:
-        return parse_retention_ledger(handle.read())
-
-
-def parse_retention_ledger(text: str) -> dict[str, Any]:
+def retention_report_from_state(text: str, namespace: str) -> dict[str, Any]:
+    """Read coordination retention rows from a v3 state file. Does not write."""
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as error:
-        raise ValueError("Retention ledger is not JSON.") from error
+        raise ValueError("State file is not JSON.") from error
     if (
         not isinstance(parsed, dict)
-        or parsed.get("schemaVersion") != 1
-        or parsed.get("kind") != "retention-ledger"
-        or not isinstance(parsed.get("decisions"), list)
+        or parsed.get("version") != 3
+        or not isinstance(parsed.get("namespaces"), dict)
     ):
-        raise ValueError("Retention ledger is not a retention-ledger file.")
+        raise ValueError("State file is not a v3 store.")
+    bucket = parsed["namespaces"].get(namespace)
+    if not isinstance(bucket, dict):
+        raise ValueError("State file has no such namespace.")
+    coordination = bucket.get("coordination")
+    if not isinstance(coordination, dict):
+        return {"targets": []}
+    targets = []
+    for key in sorted(coordination, key=lambda item: item.encode("utf-8")):
+        if not key.startswith("target:"):
+            continue
+        row = coordination[key]
+        if not isinstance(row, dict) or not isinstance(row.get("data"), dict):
+            continue
+        if "retention" not in row["data"]:
+            continue
+        ledger = load_retention_ledger(_normalize_ledger(row["data"]["retention"]))
+        targets.append(_target_status(key, ledger))
+    return {"targets": targets}
+
+
+def format_retention_report(report: dict[str, Any]) -> str:
+    targets = report["targets"]
+    if not targets:
+        return "bestEver null score null items null\n"
+    blocks = []
+    for target in targets:
+        body = format_retention_status(target).removesuffix("\n")
+        blocks.append(f"target {_show_text(target['id'])}\n{body}")
+    return "\n".join(blocks) + "\n"
+
+
+def format_retention_report_json(report: dict[str, Any]) -> str:
+    return json.dumps(_canon(report), ensure_ascii=True, indent=2) + "\n"
+
+
+def _normalize_ledger(value: Any) -> dict[str, Any]:
+    """Accept the Node camelCase store and the Python snake_case store."""
+    if not isinstance(value, dict):
+        return value
+    decisions = value.get("decisions") or []
+    best = value["best_ever"] if "best_ever" in value else value.get("bestEver")
+    normalized = []
+    for item in decisions:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+        best_id = item["best_ever_id"] if "best_ever_id" in item else item.get("bestEverId")
+        normalized.append(
+            {
+                "candidate_id": item.get("candidate_id", item.get("candidateId")),
+                "outcome": item.get("outcome"),
+                "reason": item.get("reason"),
+                "best_ever_id": best_id,
+                "lower": item.get("lower"),
+                "margin": item.get("margin"),
+                "items": item.get("items"),
+            }
+        )
+    return {"best_ever": best, "decisions": normalized}
+
+
+def _target_status(key: str, ledger: dict[str, Any]) -> dict[str, Any]:
     return {
-        "bestEver": _read_best_ever(parsed.get("bestEver")),
+        "id": key,
+        "bestEver": ledger["best_ever"],
         "decisions": [
-            _read_ledger_decision(decision, index)
-            for index, decision in enumerate(parsed["decisions"])
+            {
+                "candidateId": decision["candidate_id"],
+                "outcome": decision["outcome"],
+                "reason": decision["reason"],
+                "bestEverId": decision["best_ever_id"],
+                "lower": decision["lower"],
+                "margin": decision["margin"],
+                "items": decision["items"],
+            }
+            for decision in ledger["decisions"]
         ],
     }
 
@@ -429,39 +485,6 @@ def _read_retention(value: Any, where: str) -> dict[str, Any]:
         "margin": margin,
         "items": items,
     }
-
-
-def _read_best_ever(value: Any) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    if not isinstance(value, dict) or not isinstance(value.get("id"), str) or not value["id"]:
-        raise ValueError("Retention ledger has a malformed best-ever record.")
-    score = value.get("score")
-    if isinstance(score, bool) or not isinstance(score, (int, float)) or score != score:
-        raise ValueError("Retention ledger has a non-finite best-ever score.")
-    items = value.get("items")
-    if not isinstance(items, list):
-        raise ValueError("Retention ledger has a malformed best-ever record.")
-    cleaned = []
-    for item in items:
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
-            raise ValueError("Retention ledger has a malformed best-ever item.")
-        item_score = item.get("score")
-        if (
-            isinstance(item_score, bool)
-            or not isinstance(item_score, (int, float))
-            or item_score != item_score
-        ):
-            raise ValueError("Retention ledger has a non-finite best-ever item score.")
-        cleaned.append({"id": item["id"], "score": item_score})
-    return {"id": value["id"], "score": score, "items": cleaned}
-
-
-def _read_ledger_decision(value: Any, index: int) -> dict[str, Any]:
-    if not isinstance(value, dict) or not isinstance(value.get("candidateId"), str):
-        raise ValueError(f"Retention decision {index} is missing its candidate.")
-    retention = _read_retention(value, f"Retention decision {index}")
-    return {"candidateId": value["candidateId"], **retention}
 
 
 def _canon_number(value: Any) -> Any:

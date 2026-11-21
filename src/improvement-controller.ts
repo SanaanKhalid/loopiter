@@ -21,7 +21,7 @@ import type {
   TickResult,
 } from "./improvement-contracts.js";
 import {
-  emptyRetentionLedger,
+  loadRetentionLedger,
   nextBestEver,
   rememberRetentionDecision,
   type RetentionDecision,
@@ -629,14 +629,17 @@ export class ImprovementController {
             ...((lock.data.previousOutcomes ?? []) as JsonValue[]),
             { state: data.state, reason: data.reason },
           ].slice(-10);
-          await this.put(tx, "coordination", key, {
+          const nextLock: JsonObject = {
             ...lock.data,
             activeRun: null,
             consecutiveFailures,
             consecutiveTimeouts,
             previousOutcomes,
             nextEligibleAt: plus(this.loop.now(), w.policy.cooldownMs),
-          });
+          };
+          const retention = retainedLedger(w, data, lock.data.retention);
+          if (retention) nextLock.retention = retention as unknown as JsonValue;
+          await this.put(tx, "coordination", key, nextLock);
         }
       }
       return this.parse(row);
@@ -1425,7 +1428,6 @@ export class ImprovementController {
             (await this.retentionLedger(w)).bestEver,
           );
           if (retention.outcome === "retention_regression") {
-            await this.recordRetention(w, cid, audit.cases, retention, false);
             run = await this.save(rid, owner, {
               audit,
               retention,
@@ -1433,7 +1435,6 @@ export class ImprovementController {
               reason: "retention_regression",
             });
           } else if (retention.outcome === "insufficient") {
-            await this.recordRetention(w, cid, audit.cases, retention, false);
             run = await this.save(rid, owner, {
               audit,
               retention,
@@ -1587,21 +1588,6 @@ export class ImprovementController {
             },
             true,
           );
-          const kept = run.data.retention;
-          if (
-            w.policy.objective.retention &&
-            kept &&
-            (kept.outcome === "pass" || kept.outcome === "not_measured") &&
-            run.data.audit &&
-            run.data.selectedId
-          )
-            await this.recordRetention(
-              w,
-              run.data.selectedId,
-              run.data.audit.cases,
-              kept,
-              true,
-            );
         }
       } else if (d.state === "observing" || d.pendingPromotion) {
         const actual = await this.plain(w, (c) => w.artifact(c), signal2);
@@ -2082,56 +2068,47 @@ export class ImprovementController {
     const row = await this.loop.store.transaction(this.loop.namespace, (tx) =>
       this.read(tx, "coordination", this.targetKey(w)),
     );
-    return parseRetentionLedger(row?.data.retention);
-  }
-  /**
-   * Append the decision. Update bestEver only after a promotion that passed
-   * and only when the new control mean is strictly better. Rollback never calls this.
-   */
-  private async recordRetention(
-    w: ImprovementWorkflow,
-    candidateId: string,
-    cases: readonly { id: string; candidate: number }[],
-    decision: RetentionDecision,
-    updateBest: boolean,
-  ) {
-    await this.loop.store.transaction(this.loop.namespace, async (tx) => {
-      const key = this.targetKey(w);
-      const target = await this.read(tx, "coordination", key);
-      let ledger = rememberRetentionDecision(parseRetentionLedger(target?.data.retention), {
-        ...decision,
-        candidateId,
-      });
-      if (
-        updateBest &&
-        (decision.outcome === "pass" || decision.outcome === "not_measured")
-      )
-        ledger = {
-          ...ledger,
-          bestEver: nextBestEver({
-            current: ledger.bestEver,
-            candidateId,
-            items: cases.map((row) => ({ id: row.id, score: row.candidate })),
-            direction: w.policy.objective.direction,
-          }),
-        };
-      await this.put(tx, "coordination", key, {
-        ...target?.data,
-        retention: ledger,
-      });
-    });
+    try {
+      return loadRetentionLedger(row?.data.retention);
+    } catch (error) {
+      fail(
+        "invalid_retention",
+        error instanceof Error ? error.message : "Invalid retention ledger.",
+      );
+    }
   }
 }
 
-function parseRetentionLedger(value: unknown): RetentionLedger {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return emptyRetentionLedger();
-  const record = value as { bestEver?: unknown; decisions?: unknown };
-  const decisions = Array.isArray(record.decisions)
-    ? (record.decisions as RetentionLedger["decisions"])
-    : [];
-  const bestEver =
-    record.bestEver && typeof record.bestEver === "object"
-      ? (record.bestEver as RetentionLedger["bestEver"])
-      : null;
-  return { bestEver, decisions };
+function retainedLedger(
+  w: ImprovementWorkflow,
+  data: ImprovementRunData,
+  stored: unknown,
+): RetentionLedger | undefined {
+  const retention = data.retention;
+  if (!w.policy.objective.retention || !retention || !data.selectedId || !data.audit)
+    return undefined;
+  const finished =
+    data.state === "completed" &&
+    data.reason !== "experiment_only" &&
+    (retention.outcome === "pass" || retention.outcome === "not_measured");
+  const blocked =
+    data.reason === "retention_regression" ||
+    (data.state === "waiting_for_evidence" && retention.outcome === "insufficient");
+  if (!finished && !blocked) return undefined;
+  let ledger = rememberRetentionDecision(loadRetentionLedger(stored), {
+    ...retention,
+    candidateId: data.selectedId,
+  });
+  if (finished) {
+    ledger = {
+      ...ledger,
+      bestEver: nextBestEver({
+        current: ledger.bestEver,
+        candidateId: data.selectedId,
+        items: data.audit.cases.map((row) => ({ id: row.id, score: row.candidate })),
+        direction: w.policy.objective.direction,
+      }),
+    };
+  }
+  return ledger;
 }

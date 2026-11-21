@@ -4,6 +4,7 @@ from ._validation import LoopiterError, fingerprint
 from .acceptance_gate import (
     decide_retention,
     empty_retention_ledger,
+    load_retention_ledger,
     next_best_ever,
     not_measured_retention,
     remember_retention_decision,
@@ -43,6 +44,7 @@ __all__ = [
     "decide_retention",
     "empty_retention_ledger",
     "minimum_certifiable_audit_units",
+    "load_retention_ledger",
     "next_best_ever",
     "not_measured_retention",
     "prepare_dataset",

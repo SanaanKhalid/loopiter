@@ -8,16 +8,12 @@ from pathlib import Path
 
 from loopiter.acceptance_gate import (
     decide_retention,
+    load_retention_ledger,
     next_best_ever,
     not_measured_retention,
     remember_retention_decision,
 )
-from loopiter.decision_explain import (
-    explain_decision_text,
-    format_explanation,
-    format_retention_status,
-    parse_retention_ledger,
-)
+from loopiter.decision_explain import explain_decision_text, format_explanation
 
 RULE = {
     "minimum_effect": 0,
@@ -131,39 +127,110 @@ class RetentionTests(unittest.TestCase):
             direction="minimize",
         )
         self.assertEqual(minimized["id"], "low")
+        wide = next_best_ever(
+            current=None,
+            candidate_id="wide",
+            items=[{"id": "a", "score": 0.5}, {"id": "b", "score": 0.5}],
+        )
+        drifted = next_best_ever(
+            current=wide,
+            candidate_id="later",
+            items=[{"id": "c", "score": 1}, {"id": "d", "score": 1}],
+        )
+        self.assertEqual(drifted["id"], "wide")
+        self.assertEqual(drifted["items"], wide["items"])
+        mixed = next_best_ever(
+            current=wide,
+            candidate_id="mixed",
+            items=[{"id": "a", "score": 0.25}, {"id": "z", "score": 1}],
+        )
+        self.assertEqual(mixed["id"], "wide")
         rolled = remember_retention_decision(
             {"best_ever": raised, "decisions": []},
             {**not_measured_retention(), "candidate_id": "rolled"},
         )
         self.assertEqual(rolled["best_ever"]["id"], "higher")
 
+    def test_invalid_best_ever_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "score must be finite"):
+            load_retention_ledger(
+                {
+                    "best_ever": {
+                        "id": "bad",
+                        "score": float("nan"),
+                        "items": [{"id": "a", "score": 1}],
+                    },
+                    "decisions": [],
+                }
+            )
+        with self.assertRaisesRegex(ValueError, "Duplicate retention best-ever item id a"):
+            load_retention_ledger(
+                {
+                    "best_ever": {
+                        "id": "bad",
+                        "score": 1,
+                        "items": [{"id": "a", "score": 1}, {"id": "a", "score": 0.5}],
+                    },
+                    "decisions": [],
+                }
+            )
+        with self.assertRaisesRegex(ValueError, "best-ever id"):
+            load_retention_ledger(
+                {"best_ever": {"id": "", "score": 1, "items": []}, "decisions": []}
+            )
+
     def test_status_is_read_only_and_explain_shows_retention(self):
         crafted = "c\u007f\u009b2J\u202e\u00e9\U0001f600\nbest"
-        ledger = {
-            "schemaVersion": 1,
-            "kind": "retention-ledger",
-            "bestEver": {"id": crafted, "score": 0.8, "items": [{"id": crafted, "score": 0.8}]},
-            "decisions": [
-                {
-                    "candidateId": "next",
-                    "outcome": "retention_regression",
-                    "reason": "retention_regression",
-                    "bestEverId": crafted,
-                    "lower": -0.25,
-                    "margin": 0.05,
-                    "items": 8,
+        decisions = [
+            {
+                "candidateId": "next",
+                "outcome": "retention_regression",
+                "reason": "retention_regression",
+                "bestEverId": crafted,
+                "lower": -0.25,
+                "margin": 0.05,
+                "items": 8,
+            }
+        ]
+        state = {
+            "version": 3,
+            "namespaces": {
+                "demo": {
+                    "coordination": {
+                        "target:crafted": {
+                            "id": "target:crafted",
+                            "data": {
+                                "retention": {
+                                    "bestEver": {
+                                        "id": crafted,
+                                        "score": 0.5,
+                                        "items": [{"id": crafted, "score": 0.5}],
+                                    },
+                                    "decisions": decisions,
+                                }
+                            },
+                        }
+                    }
                 }
-            ],
+            },
         }
-        text = format_retention_status(parse_retention_ledger(json.dumps(ledger)))
-        self.assertTrue(all(char == "\n" or 0x20 <= ord(char) <= 0x7E for char in text))
-        self.assertNotIn("\u007f", text)
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "ledger.json"
-            path.write_text(json.dumps(ledger) + "\n", encoding="utf-8")
+            path = Path(directory) / "state.json"
+            before = json.dumps(state).encode()
+            path.write_bytes(before)
             env = {**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")}
             shown = subprocess.run(
-                [sys.executable, "-m", "loopiter", "retention", "status", str(path)],
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "retention",
+                    "status",
+                    "--file",
+                    str(path),
+                    "--namespace",
+                    "demo",
+                ],
                 cwd=directory,
                 env=env,
                 capture_output=True,
@@ -171,18 +238,8 @@ class RetentionTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(shown.returncode, 0, shown.stderr)
-            self.assertEqual(shown.stdout, text)
-            empty = subprocess.run(
-                [sys.executable, "-m", "loopiter", "retention", "status"],
-                cwd=directory,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(empty.returncode, 0, empty.stderr)
-            self.assertEqual(empty.stdout, "bestEver null score null items null\n")
-            before = path.read_bytes()
+            self.assertTrue(all(char == "\n" or 0x20 <= ord(char) <= 0x7E for char in shown.stdout))
+            self.assertNotIn("\u007f", shown.stdout)
             self.assertEqual(path.read_bytes(), before)
         log = {
             "schemaVersion": 1,
@@ -214,7 +271,7 @@ class RetentionTests(unittest.TestCase):
                                 "effect": 0.3,
                                 "method": "paired-bootstrap",
                                 "itemCount": 8,
-                                "retention": ledger["decisions"][0],
+                                "retention": decisions[0],
                             },
                         }
                     ],

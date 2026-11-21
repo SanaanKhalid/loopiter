@@ -2,6 +2,9 @@ import asyncio
 import json
 import os
 import re
+import subprocess
+import sys
+import tempfile
 import time
 import unittest
 from copy import deepcopy
@@ -45,6 +48,10 @@ def snake(value):
 
 
 FIXTURES = snake(json.loads((Path(__file__).parent / "fixtures/autonomy.json").read_text()))
+
+
+def _status_cli(args, **kwargs):
+    return subprocess.run(args, **kwargs)
 
 
 def dataset():
@@ -493,8 +500,9 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rising["state"], "observing", rising)
         promoted = await controller.get_run(rising["run_id"])
         ledger = await self._ledger()
-        self.assertEqual(ledger["best_ever"]["id"], promoted["data"]["selected_id"])
-        self.assertEqual(ledger["best_ever"]["score"], 1)
+        self.assertEqual(ledger["best_ever"]["id"], "seeded")
+        self.assertEqual(ledger["best_ever"]["score"], 0.5)
+        self.assertNotEqual(ledger["best_ever"]["id"], promoted["data"]["selected_id"])
         self.now += timedelta(hours=2)
         rolled = await controller.tick("classification")
         for _ in range(4):
@@ -503,8 +511,9 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             rolled = await controller.tick("classification")
         self.assertEqual(rolled["state"], "rolled_back", rolled)
         after = await self._ledger()
-        self.assertEqual(after["best_ever"]["score"], 1)
-        self.assertEqual(after["best_ever"]["id"], promoted["data"]["selected_id"])
+        self.assertEqual(after["best_ever"]["id"], "seeded")
+        self.assertEqual(after["best_ever"]["score"], 0.5)
+        self.assertNotEqual(after["best_ever"]["id"], promoted["data"]["selected_id"])
 
         self._ready([0.4], 0.05)
         await self._seed_best(1, 2)
@@ -519,6 +528,81 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
         held_ledger = await self._ledger()
         self.assertEqual(held_ledger["best_ever"]["id"], "seeded")
         self.assertEqual(held_ledger["best_ever"]["score"], 1)
+
+        self._ready([1], 0.05)
+        finished = await self._finish(self.controller())
+        self.assertEqual(finished["state"], "completed", finished)
+        opened = await self.controller().get_run(finished["run_id"])
+        document = {
+            "version": 3,
+            "namespaces": {self.loop.namespace: self.loop.store._state[self.loop.namespace]},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            state_path.write_text(json.dumps(document), encoding="utf-8")
+            shown = _status_cli(
+                [
+                    sys.executable,
+                    "-m",
+                    "loopiter",
+                    "retention",
+                    "status",
+                    "--file",
+                    str(state_path),
+                    "--namespace",
+                    self.loop.namespace,
+                    "--json",
+                ],
+                cwd=directory,
+                env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            parsed = json.loads(shown.stdout)
+            self.assertEqual(parsed["targets"][0]["bestEver"]["id"], opened["data"]["selected_id"])
+            self.assertEqual(parsed["targets"][0]["bestEver"]["score"], 1)
+
+    async def test_invalid_best_ever_fails_closed(self):
+        from loopiter._validation import fingerprint
+
+        self._ready([1], 0.05)
+        now = self.now.isoformat().replace("+00:00", "Z")
+        key = "target:" + fingerprint(self.workflow.policy["target"])
+        async with self.loop.store.transaction(self.loop.namespace) as tx:
+            await tx.insert(
+                "coordination",
+                {
+                    "id": key,
+                    "namespace": self.loop.namespace,
+                    "revision": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                    "format": 1,
+                    "data": {
+                        "retention": {
+                            "best_ever": {
+                                "id": "bad",
+                                "score": 1,
+                                "items": [
+                                    {"id": "customer-audit-0", "score": 1},
+                                    {"id": "customer-audit-0", "score": 1},
+                                ],
+                            },
+                            "decisions": [],
+                        }
+                    },
+                },
+            )
+        result = await self.controller().tick("classification")
+        for _ in range(8):
+            if result["reason"] == "invalid_retention":
+                break
+            result = await self.controller().tick("classification")
+        self.assertEqual(result["reason"], "invalid_retention", result)
+        self.assertIn("Duplicate retention best-ever item id", result.get("detail") or "")
+        self.assertEqual(self.registry.calls, 0)
 
     async def test_shared_behavioral_fixtures(self):
         for scenario in FIXTURES["scenarios"]:

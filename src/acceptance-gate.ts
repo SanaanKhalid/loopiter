@@ -736,9 +736,10 @@ export function decideRetention(input: {
 }
 
 /**
- * Replace the record only when `items` has a strictly better control mean.
- * Maximize treats a larger mean as better. Minimize treats a smaller mean as better.
- * An equal mean keeps the current id. A missing record accepts the first score.
+ * Replace the record only when the shared item ids have a strictly better mean.
+ * Maximize treats a larger shared mean as better. Minimize treats a smaller one as better.
+ * No shared ids leaves the current record unchanged. A missing record accepts the first score.
+ * The stored score is the mean of the winning candidate's own items.
  */
 export function nextBestEver(input: {
   current: BestEverRecord | null;
@@ -750,14 +751,101 @@ export function nextBestEver(input: {
     throw new Error("Best-ever id must be a non-empty string.");
   const items = orderedScores(input.items, "candidate");
   if (items.length === 0) throw new Error("Best-ever record needs at least one item.");
-  const score = meanOf(items.map((item) => item.score));
-  const next: BestEverRecord = { id: input.candidateId, score, items };
-  if (!input.current) return next;
+  if (!input.current) {
+    return { id: input.candidateId, score: meanOf(items.map((item) => item.score)), items };
+  }
+  const currentItems = orderedScores(input.current.items, "best-ever");
+  const currentById = new Map(currentItems.map((item) => [item.id, item.score]));
+  const overlap = items.filter((item) => currentById.has(item.id));
+  if (overlap.length === 0) return input.current;
+  const candidateMean = meanOf(overlap.map((item) => item.score));
+  const currentMean = meanOf(overlap.map((item) => currentById.get(item.id)!));
   const better =
     (input.direction ?? "maximize") === "minimize"
-      ? score < input.current.score
-      : score > input.current.score;
-  return better ? next : input.current;
+      ? candidateMean < currentMean
+      : candidateMean > currentMean;
+  if (!better) return input.current;
+  return { id: input.candidateId, score: meanOf(items.map((item) => item.score)), items };
+}
+
+/** Read a stored ledger. Invalid best-ever data throws instead of being kept. */
+export function loadRetentionLedger(value: unknown): RetentionLedger {
+  if (value === undefined || value === null) return emptyRetentionLedger();
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Retention ledger must be an object.");
+  const record = value as { bestEver?: unknown; decisions?: unknown };
+  if (!Array.isArray(record.decisions))
+    throw new Error("Retention ledger decisions must be a list.");
+  return {
+    bestEver: record.bestEver == null ? null : loadBestEver(record.bestEver),
+    decisions: record.decisions.map((decision, index) => loadLedgerDecision(decision, index)),
+  };
+}
+
+function loadBestEver(value: unknown): BestEverRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Retention ledger best-ever record must be an object.");
+  const record = value as { id?: unknown; score?: unknown; items?: unknown };
+  if (typeof record.id !== "string" || record.id.length === 0)
+    throw new Error("Retention ledger best-ever id must be a non-empty string.");
+  if (typeof record.score !== "number" || !Number.isFinite(record.score))
+    throw new Error("Retention ledger best-ever score must be finite.");
+  if (!Array.isArray(record.items))
+    throw new Error("Retention ledger best-ever items must be a list.");
+  const items = orderedScores(
+    record.items.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item))
+        throw new Error("Retention ledger best-ever item must be an object.");
+      const row = item as { id?: unknown; score?: unknown };
+      return { id: row.id as string, score: row.score as number };
+    }),
+    "best-ever",
+  );
+  return { id: record.id, score: record.score, items };
+}
+
+function loadLedgerDecision(value: unknown, index: number): RetentionLedgerDecision {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error(`Retention ledger decision ${index} must be an object.`);
+  const row = value as {
+    candidateId?: unknown;
+    outcome?: unknown;
+    reason?: unknown;
+    bestEverId?: unknown;
+    lower?: unknown;
+    margin?: unknown;
+    items?: unknown;
+  };
+  if (typeof row.candidateId !== "string" || row.candidateId.length === 0)
+    throw new Error(`Retention ledger decision ${index} is missing its candidate.`);
+  if (
+    row.outcome !== "pass" &&
+    row.outcome !== "retention_regression" &&
+    row.outcome !== "insufficient" &&
+    row.outcome !== "not_measured"
+  )
+    throw new Error(`Retention ledger decision ${index} has an unknown outcome.`);
+  if (typeof row.reason !== "string")
+    throw new Error(`Retention ledger decision ${index} has no reason.`);
+  if (row.outcome === "not_measured") {
+    if (row.bestEverId != null || row.lower != null || row.margin != null || row.items != null)
+      throw new Error(`Retention ledger decision ${index} records an unmeasured check as a number.`);
+  } else if (typeof row.items !== "number" || !Number.isInteger(row.items) || row.items < 1) {
+    throw new Error(`Retention ledger decision ${index} has an invalid item count.`);
+  }
+  if (row.lower != null && (typeof row.lower !== "number" || !Number.isFinite(row.lower)))
+    throw new Error(`Retention ledger decision ${index} has a non-finite lower bound.`);
+  if (row.margin != null && (typeof row.margin !== "number" || !Number.isFinite(row.margin)))
+    throw new Error(`Retention ledger decision ${index} has a non-finite margin.`);
+  return {
+    candidateId: row.candidateId,
+    outcome: row.outcome,
+    reason: row.reason as RetentionLedgerDecision["reason"],
+    bestEverId: typeof row.bestEverId === "string" ? row.bestEverId : null,
+    lower: typeof row.lower === "number" ? row.lower : null,
+    margin: typeof row.margin === "number" ? row.margin : null,
+    items: typeof row.items === "number" ? row.items : null,
+  };
 }
 
 export function rememberRetentionDecision(
