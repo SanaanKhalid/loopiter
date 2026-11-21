@@ -98,6 +98,7 @@ export function planTask<T extends PublicExample>(
 export function renderTaskEstimate<T extends PublicExample>(
   task: BenchmarkTask<T>,
   env: NodeJS.ProcessEnv,
+  selection?: { seeds?: readonly number[]; sizes?: SplitSizes },
 ): string {
   const { limits, deployment, apiVersion, prices, maxTokensPerMinute } = estimateContext(task, env);
   const smoke = planTask(task, {
@@ -109,8 +110,8 @@ export function renderTaskEstimate<T extends PublicExample>(
   });
   const full = planTask(task, {
     label: "full",
-    seeds: [...FULL_SEEDS],
-    sizes: task.fullSizes,
+    seeds: selection?.seeds ? [...selection.seeds] : [...FULL_SEEDS],
+    sizes: selection?.sizes ?? task.fullSizes,
     limits,
     deployment,
   });

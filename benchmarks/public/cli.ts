@@ -6,18 +6,64 @@ import {
   LiveGateError,
   redactSecrets,
 } from "../kb-qa/live.js";
-import { PRODUCT_MINIMUM_IMPROVEMENT } from "./constants.js";
+import { MAX_SPLIT_ROWS, PRODUCT_MINIMUM_IMPROVEMENT } from "./constants.js";
 import { decisionsBeside } from "./decisions.js";
 import { renderTaskEstimate } from "./estimate.js";
 import { renderMarkdown, runOfflineBenchmark } from "./harness.js";
 import { renderItemFailureSummary } from "./item-failures.js";
 import { liveOptionsFromEnv, runLiveTask } from "./live.js";
+import { applyRowCounts, type SplitSizes } from "./splits.js";
 import type { BenchmarkTask, PublicExample } from "./task.js";
 
+export interface RowCountOverrides {
+  validationRows?: number;
+  auditRows?: number;
+}
+
+/** `--validation-rows` and `--audit-rows` when present. Absent flags are not filled in. */
+export function rowCountOverrides(argv: readonly string[] = process.argv): RowCountOverrides {
+  const overrides: RowCountOverrides = {};
+  if (argv.includes("--validation-rows"))
+    overrides.validationRows = splitRowCount("--validation-rows", 1, argv);
+  if (argv.includes("--audit-rows")) overrides.auditRows = splitRowCount("--audit-rows", 2, argv);
+  return overrides;
+}
+
+/**
+ * Full-plan selection for `--estimate`. Undefined when the caller did not
+ * change seeds or row counts, so the default plan stays the five full seeds.
+ */
+export function estimateSelection(
+  argv: readonly string[],
+  full: SplitSizes,
+): { seeds?: readonly number[]; sizes?: SplitSizes } | undefined {
+  const overrides = rowCountOverrides(argv);
+  const customSeeds = argv.includes("--seeds") || argv.includes("--seed-start");
+  const customSizes =
+    overrides.validationRows !== undefined || overrides.auditRows !== undefined;
+  if (!customSeeds && !customSizes) return undefined;
+  const seeds = customSeeds
+    ? seedList(integerOption("--seeds", 5, argv), integerOption("--seed-start", 1, argv))
+    : undefined;
+  return {
+    ...(seeds === undefined ? {} : { seeds }),
+    ...(customSizes ? { sizes: applyRowCounts(full, overrides) } : {}),
+  };
+}
+
 export async function cliMain<T extends PublicExample>(task: BenchmarkTask<T>): Promise<void> {
+  let overrides: RowCountOverrides;
+  try {
+    overrides = rowCountOverrides(process.argv);
+  } catch (error) {
+    console.error(errorText(error));
+    process.exit(2);
+  }
   if (process.argv.includes("--estimate")) {
     try {
-      process.stdout.write(renderTaskEstimate(task, process.env));
+      process.stdout.write(
+        renderTaskEstimate(task, process.env, estimateSelection(process.argv, task.fullSizes)),
+      );
     } catch (error) {
       console.error(redactSecrets(errorText(error), secretValues()));
       process.exit(2);
@@ -37,7 +83,7 @@ export async function cliMain<T extends PublicExample>(task: BenchmarkTask<T>): 
       console.error("Live mode reads the fetched cache. Refusing to send fixtures.");
       process.exit(2);
     }
-    await runLiveCli(task);
+    await runLiveCli(task, overrides);
     return;
   }
   if (process.argv.includes("--smoke") || process.argv.includes("--stop-at-warn")) {
@@ -50,6 +96,9 @@ export async function cliMain<T extends PublicExample>(task: BenchmarkTask<T>): 
   const minimumEffect = readMinimumEffect();
   const seeds = seedList(integerOption("--seeds", 5), integerOption("--seed-start", 1));
   const source = process.argv.includes("--fixtures") ? "fixtures" : "cache";
+  const customSizes =
+    overrides.validationRows !== undefined || overrides.auditRows !== undefined;
+  const baseSizes = source === "fixtures" ? task.fixtureSizes : task.fullSizes;
   try {
     const out = process.argv.includes("--out") ? option("--out") : "";
     const report = await runOfflineBenchmark(task, {
@@ -57,6 +106,7 @@ export async function cliMain<T extends PublicExample>(task: BenchmarkTask<T>): 
       minimumImprovement,
       ...(minimumEffect === undefined ? {} : { minimumEffect }),
       source,
+      ...(customSizes ? { sizes: applyRowCounts(baseSizes, overrides) } : {}),
       ...(out ? { decisionLogPath: decisionsBeside(out) } : {}),
     });
     const json = `${JSON.stringify(report, null, 2)}\n`;
@@ -78,7 +128,10 @@ export async function cliMain<T extends PublicExample>(task: BenchmarkTask<T>): 
   }
 }
 
-async function runLiveCli<T extends PublicExample>(task: BenchmarkTask<T>): Promise<void> {
+async function runLiveCli<T extends PublicExample>(
+  task: BenchmarkTask<T>,
+  overrides: RowCountOverrides,
+): Promise<void> {
   const smoke = process.argv.includes("--smoke");
   const seeds = seedList(
     integerOption("--seeds", smoke ? 1 : 5),
@@ -105,6 +158,7 @@ async function runLiveCli<T extends PublicExample>(task: BenchmarkTask<T>): Prom
       ledgerPath,
       minimumImprovement: readMinimumImprovement(),
       ...(readMinimumEffect() === undefined ? {} : { minimumEffect: readMinimumEffect() }),
+      sizes: applyRowCounts(task.fullSizes, overrides),
     });
     secret = live.apiKey;
     const loaded = await task.loadCache();
@@ -168,17 +222,27 @@ function secretValues(): string[] {
   return key && key.length >= 4 ? [key] : [];
 }
 
-function option(name: string): string {
-  const index = process.argv.indexOf(name);
-  const value = index === -1 ? undefined : process.argv[index + 1];
+function option(name: string, argv: readonly string[] = process.argv): string {
+  const index = argv.indexOf(name);
+  const value = index === -1 ? undefined : argv[index + 1];
   if (value === undefined || value.startsWith("--"))
     throw new Error(`Missing value for ${name}.`);
   return value;
 }
 
-function integerOption(name: string, fallback: number): number {
-  if (!process.argv.includes(name)) return fallback;
-  const raw = option(name);
+function integerOption(name: string, fallback: number, argv: readonly string[] = process.argv): number {
+  if (!argv.includes(name)) return fallback;
+  const raw = option(name, argv);
   if (!/^-?\d+$/.test(raw)) throw new Error(`${name} must be an integer.`);
   return Number(raw);
+}
+
+function splitRowCount(name: string, minimum: number, argv: readonly string[]): number {
+  const raw = option(name, argv);
+  if (!/^-?\d+$/.test(raw))
+    throw new Error(`${name} must be an integer from ${minimum} to ${MAX_SPLIT_ROWS}.`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > MAX_SPLIT_ROWS)
+    throw new Error(`${name} must be an integer from ${minimum} to ${MAX_SPLIT_ROWS}.`);
+  return value;
 }

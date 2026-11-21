@@ -10,6 +10,8 @@ export const PROMPT_CAP = 8_000;
 export const SMOKE_ROWS = 30;
 export const FULL_SEEDS = [1, 2, 3, 4, 5] as const;
 export const FULL_AUDIT_ROWS = 300;
+/** Upper bound for `--validation-rows` and `--audit-rows`. */
+export const MAX_SPLIT_ROWS = 10_000;
 
 export const FULL_SIZES = {
   optimization: 150,

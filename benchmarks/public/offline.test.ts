@@ -23,18 +23,30 @@ import { hotpotTask } from "../hotpotqa/task.js";
 import {
   FIXTURE_SIZES,
   FULL_AUDIT_ROWS,
+  FULL_SIZES,
+  MAX_SPLIT_ROWS,
   PRODUCT_MINIMUM_IMPROVEMENT,
   PROMPT_CAP,
   observedGainRequired,
 } from "./constants.js";
-import { planTask } from "./estimate.js";
+import { estimateSelection, rowCountOverrides } from "./cli.js";
+import { planTask, renderTaskEstimate } from "./estimate.js";
 import { resolveLimits } from "./limits.js";
-import { readDecisionLog, replaySeed } from "./decisions.js";
+import { readDecisionLog, replaySeed, writeDecisionLog } from "./decisions.js";
 import { runOfflineBenchmark } from "./harness.js";
 import { leakedIds, mockRunner, runOneShot } from "./loop.js";
 import { promptPolicy } from "./policy.js";
 import { repoRoot } from "./paths.js";
-import { buildSeededSplit, idsOf, poolDatasetRow, type HeldOutRow, type PoolRow } from "./splits.js";
+import {
+  applyRowCounts,
+  assertPoolCoversSeeds,
+  buildSeededSplit,
+  idsOf,
+  poolDatasetRow,
+  splitAuditRows,
+  type HeldOutRow,
+  type PoolRow,
+} from "./splits.js";
 
 test.after(async () => {
   await closeVerifier();
@@ -413,6 +425,289 @@ print("ok")
   );
   assert.equal(filtered.status, 0, filtered.stderr || filtered.stdout);
   assert.match(readFileSync(`${root}/benchmarks/hotpotqa/normalize.ts`, "utf8"), new RegExp(HOTPOT_EVAL_SHA));
+});
+
+test("row-count options keep the defaults and reject bad values", () => {
+  assert.deepEqual(rowCountOverrides(["node", "run.js"]), {});
+  assert.deepEqual(applyRowCounts(FULL_SIZES, rowCountOverrides(["--live"])), FULL_SIZES);
+  assert.deepEqual(applyRowCounts(FIXTURE_SIZES, rowCountOverrides(["--fixtures"])), FIXTURE_SIZES);
+  assert.equal(estimateSelection(["--estimate"], FULL_SIZES), undefined);
+  const chosen = rowCountOverrides(["--validation-rows", "500", "--audit-rows", "600"]);
+  assert.deepEqual(chosen, { validationRows: 500, auditRows: 600 });
+  const sizes = applyRowCounts(FULL_SIZES, chosen);
+  assert.equal(sizes.validation, 500);
+  assert.equal(sizes.audit, 600);
+  assert.equal(sizes.optimization, FULL_SIZES.optimization);
+  assert.equal(sizes.production, FULL_SIZES.production);
+  assert.equal(sizes.heldOut, FULL_SIZES.heldOut);
+  const validationOnly = applyRowCounts(FULL_SIZES, rowCountOverrides(["--validation-rows", "40"]));
+  assert.equal(validationOnly.validation, 40);
+  assert.equal(validationOnly.audit, FULL_SIZES.audit);
+  assert.equal(rowCountOverrides(["--validation-rows", "1"]).validationRows, 1);
+  assert.equal(rowCountOverrides(["--audit-rows", "2"]).auditRows, 2);
+  assert.equal(rowCountOverrides(["--audit-rows", String(MAX_SPLIT_ROWS)]).auditRows, MAX_SPLIT_ROWS);
+  const selection = estimateSelection(
+    ["--estimate", "--seeds", "3", "--validation-rows", "500", "--audit-rows", "500"],
+    FULL_SIZES,
+  );
+  assert.deepEqual(selection?.seeds, [1, 2, 3]);
+  assert.equal(selection?.sizes?.validation, 500);
+  assert.equal(selection?.sizes?.audit, 500);
+  assert.equal(selection?.sizes?.heldOut, 300);
+  for (const [flag, value] of [
+    ["--validation-rows", "0"],
+    ["--validation-rows", "-1"],
+    ["--validation-rows", "1.5"],
+    ["--validation-rows", "10001"],
+    ["--validation-rows", "nope"],
+    ["--audit-rows", "1"],
+    ["--audit-rows", "0"],
+    ["--audit-rows", "10001"],
+  ] as const)
+    assert.throws(() => rowCountOverrides([flag, value]), new RegExp(flag));
+  assert.throws(() => rowCountOverrides(["--validation-rows"]), /Missing value for --validation-rows/);
+  assert.throws(() => rowCountOverrides(["--audit-rows", "--seeds"]), /Missing value for --audit-rows/);
+});
+
+test("an odd audit count gives the one-shot the extra row", () => {
+  const rows = ["b", "a", "c", "d", "e"].map((id) => ({ example: { id } }));
+  const [first, second] = splitAuditRows(rows);
+  assert.deepEqual(
+    first.map((row) => row.example.id),
+    ["a", "b", "c"],
+  );
+  assert.deepEqual(
+    second.map((row) => row.example.id),
+    ["d", "e"],
+  );
+  const odd = ["m", "a", "z"].map((id) => ({ example: { id } }));
+  const [left, right] = splitAuditRows(odd);
+  assert.deepEqual(
+    left.map((row) => row.example.id),
+    ["a", "m"],
+  );
+  assert.deepEqual(
+    right.map((row) => row.example.id),
+    ["z"],
+  );
+});
+
+test("chosen row counts set the policy units, reservations, and budget", () => {
+  const sizes = applyRowCounts(FULL_SIZES, { validationRows: 500, auditRows: 500 });
+  const predictReservation = 3;
+  const proposeReservation = 7;
+  const batchSize = 1;
+  const observeChunk = 2;
+  const policy = promptPolicy({
+    taskId: "hotpotqa",
+    promptCap: PROMPT_CAP,
+    minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    sizes,
+    latencyMs: 1000,
+    predictReservation,
+    proposeReservation,
+    batchSize,
+    observeChunk,
+  });
+  assert.equal(policy.minimumValidationUnits, 500);
+  assert.equal(policy.minimumAuditUnits, 500);
+  assert.equal(policy.maximumRows, 500);
+  assert.equal(policy.observation.minimumUnits, sizes.production);
+  const evaluateCalls = batchSize * 2;
+  const observeCalls = observeChunk;
+  assert.equal(
+    policy.callbackReservation.modelRequests,
+    Math.max(sizes.validation, sizes.audit, evaluateCalls, observeCalls, 1) * 2 + 10,
+  );
+  assert.equal(
+    policy.callbackReservation.tokens,
+    Math.max(proposeReservation, evaluateCalls * predictReservation, observeCalls * predictReservation),
+  );
+  const loopCalls = 1 + sizes.validation * 2 + sizes.audit * 2 + sizes.production;
+  assert.equal(policy.daily.modelRequests, loopCalls * 4);
+  assert.equal(
+    policy.daily.tokens,
+    proposeReservation +
+      (sizes.optimization +
+        sizes.validation * 2 +
+        sizes.audit * 2 +
+        sizes.production +
+        sizes.heldOut * 2) *
+        predictReservation,
+  );
+  const phase = promptPolicy({
+    taskId: "hotpotqa",
+    promptCap: PROMPT_CAP,
+    minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    sizes: { ...sizes, audit: Math.ceil(7 / 2) },
+    latencyMs: 1000,
+    predictReservation,
+    proposeReservation,
+    batchSize,
+    observeChunk,
+  });
+  assert.equal(phase.minimumValidationUnits, sizes.validation);
+  assert.equal(phase.minimumAuditUnits, 4);
+  assert.equal(phase.maximumRows, Math.max(4, sizes.validation, sizes.optimization));
+});
+
+test("the estimate uses the chosen seeds and row counts", () => {
+  const hotpotSizes = applyRowCounts(FULL_SIZES, { validationRows: 500, auditRows: 500 });
+  const hotpot = planTask(hotpotTask, {
+    label: "full",
+    seeds: [1, 2, 3],
+    sizes: hotpotSizes,
+    limits: resolveLimits({}, hotpotTask),
+    deployment: "gpt-5.4-mini",
+  });
+  assert.equal(hotpot.arms.baseline.length, 900);
+  assert.equal(hotpot.arms["one-shot"].length, 903);
+  assert.equal(hotpot.arms.controller.length, 14253);
+  const ifbenchSizes = applyRowCounts(FULL_SIZES, { validationRows: 600, auditRows: 600 });
+  const ifbench = planTask(ifbenchTask, {
+    label: "full",
+    seeds: [1, 2, 3],
+    sizes: ifbenchSizes,
+    limits: resolveLimits({}, ifbenchTask),
+    deployment: "gpt-5.4-mini",
+  });
+  assert.equal(ifbench.arms.baseline.length, 900);
+  assert.equal(ifbench.arms["one-shot"].length, 1353);
+  assert.equal(ifbench.arms.controller.length, 17103);
+  const text = renderTaskEstimate(
+    hotpotTask,
+    scrubbed({
+      LOOPITER_BENCH_PRICE_INPUT_PER_1M: "1",
+      LOOPITER_BENCH_PRICE_OUTPUT_PER_1M: "2",
+    }),
+    { seeds: [1, 2, 3], sizes: hotpotSizes },
+  );
+  assert.match(text, /seeds: 1, 2, 3/);
+  assert.match(text, /validation 500, audit 500, production 150, held-out 300/);
+  assert.match(text, /calls: 14253/);
+  assert.match(text, /smoke/);
+});
+
+test("the pool check fails before a run when the rows do not fit", async () => {
+  assert.throws(
+    () =>
+      assertPoolCoversSeeds({
+        pool: [{ id: "only" }],
+        heldOut: [{ id: "held" }],
+        seeds: [1, 2],
+        sizes: { optimization: 1, validation: 500, audit: 500, production: 1, heldOut: 1 },
+      }),
+    /validation 500, audit 500/,
+  );
+  assert.throws(
+    () =>
+      assertPoolCoversSeeds({
+        pool: [{ id: "same" }, { id: "b" }, { id: "c" }, { id: "d" }],
+        heldOut: [{ id: "same" }],
+        seeds: [1],
+        sizes: { optimization: 1, validation: 1, audit: 2, production: 1, heldOut: 1 },
+      }),
+    /also in the pool/,
+  );
+  await assert.rejects(
+    () =>
+      runOfflineBenchmark(hotpotTask, {
+        seeds: [1, 2],
+        source: "fixtures",
+        sizes: { ...FIXTURE_SIZES, validation: 100, audit: 100 },
+      }),
+    /Pool has/,
+  );
+});
+
+test("a fixtures run with non-default row counts replays", async () => {
+  const sizes = { ...FIXTURE_SIZES, validation: 5, audit: 7 };
+  const directory = await mkdtemp(join(tmpdir(), "row-counts-"));
+  try {
+    const report = await runOfflineBenchmark(hotpotTask, {
+      seeds: [1],
+      source: "fixtures",
+      sizes,
+      decisionLogPath: join(directory, "decisions.json"),
+    });
+    assert.deepEqual(report.splits, sizes);
+    assert.equal(report.auditCaveat.auditRows, sizes.audit);
+    const file = readDecisionLog(join(directory, "decisions.json"));
+    const log = file.seeds[0];
+    assert.ok(log);
+    assert.deepEqual(log.splits, sizes);
+    assert.equal(replaySeed(log).matched, true);
+    const validation = log.rounds.filter((round) => round.split === "validation");
+    const audit = log.rounds.filter((round) => round.split === "audit");
+    assert.equal(validation[0]?.items?.length, sizes.validation);
+    assert.equal(audit[0]?.items?.length, Math.ceil(sizes.audit / 2));
+    const legacy = { ...log };
+    delete legacy.splits;
+    writeDecisionLog(join(directory, "legacy.json"), [legacy]);
+    const again = readDecisionLog(join(directory, "legacy.json")).seeds[0];
+    assert.equal(again?.splits, undefined);
+    assert.equal(replaySeed(again!).matched, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the public CLI parses row counts and a fixtures run replays", async () => {
+  const root = repoRoot(import.meta.url);
+  const hotpot = fileURLToPath(new URL("../hotpotqa/run.js", import.meta.url));
+  const bad = spawnSync(process.execPath, [hotpot, "--estimate", "--audit-rows", "1"], {
+    cwd: root,
+    env: scrubbed({}),
+    encoding: "utf8",
+  });
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /--audit-rows must be an integer from 2 to 10000/);
+  const missing = spawnSync(process.execPath, [hotpot, "--fixtures", "--validation-rows"], {
+    cwd: root,
+    env: scrubbed({}),
+    encoding: "utf8",
+  });
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /Missing value for --validation-rows/);
+  const estimate = spawnSync(
+    process.execPath,
+    [hotpot, "--estimate", "--seeds", "3", "--validation-rows", "500", "--audit-rows", "500"],
+    {
+      cwd: root,
+      env: scrubbed({
+        LOOPITER_BENCH_PRICE_INPUT_PER_1M: "1",
+        LOOPITER_BENCH_PRICE_OUTPUT_PER_1M: "2",
+      }),
+      encoding: "utf8",
+    },
+  );
+  assert.equal(estimate.status, 0, estimate.stderr);
+  assert.match(estimate.stdout, /seeds: 1, 2, 3/);
+  assert.match(estimate.stdout, /validation 500, audit 500, production 150, held-out 300/);
+  assert.match(estimate.stdout, /calls: 14253/);
+  const directory = await mkdtemp(join(tmpdir(), "row-cli-"));
+  try {
+    const out = join(directory, "report.json");
+    const fixtures = spawnSync(
+      process.execPath,
+      [hotpot, "--fixtures", "--seeds", "1", "--validation-rows", "5", "--audit-rows", "7", "--out", out],
+      { cwd: root, env: scrubbed({}), encoding: "utf8" },
+    );
+    assert.equal(fixtures.status, 0, fixtures.stderr);
+    const report = JSON.parse(readFileSync(out, "utf8")) as { splits: { validation: number; audit: number; heldOut: number } };
+    assert.equal(report.splits.validation, 5);
+    assert.equal(report.splits.audit, 7);
+    assert.equal(report.splits.heldOut, FIXTURE_SIZES.heldOut);
+    const replay = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL("./replay.js", import.meta.url)), join(directory, "report.decisions.json")],
+      { cwd: root, env: scrubbed({}), encoding: "utf8" },
+    );
+    assert.equal(replay.status, 0, replay.stderr);
+    assert.match(replay.stdout, /matched the logged decisions/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 async function assertRegression<T extends PublicExample>(task: BenchmarkTask<T>): Promise<void> {
