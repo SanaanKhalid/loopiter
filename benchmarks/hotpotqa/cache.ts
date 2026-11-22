@@ -1,11 +1,12 @@
 /** Read the fetch-script cache. The held-out sample is frozen and disjoint from train. */
-import { createReadStream } from "node:fs";
+import { createReadStream, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { mulberry32, shuffle } from "../kb-qa/stats.js";
 import { repoRoot } from "../public/paths.js";
 import { guardEvalSuite, pinnedEvalLockPath } from "../public/eval-lock.js";
+import { asciiJson, lockEvalSet } from "../../src/eval-lock.js";
 import { hotpotDatasetInput, hotpotDatasetLabel, type HotpotExample, type Paragraph } from "./fixtures.js";
 import {
   HOTPOT_HELDOUT_ROWS,
@@ -40,7 +41,8 @@ export function selectHotpotHeldOut<T extends { id: string }>(
   return frozen;
 }
 
-export async function loadHotpotCache(): Promise<{ pool: HotpotExample[]; heldOut: HotpotExample[] }> {
+/** Cache rows only. Does not check the eval lock, so a lock can be rewritten from them. */
+export async function readHotpotCache(): Promise<{ pool: HotpotExample[]; heldOut: HotpotExample[] }> {
   const root = join(repoRoot(import.meta.url), "benchmarks", ".cache", "hotpotqa");
   const manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8")) as {
     revision?: string;
@@ -54,18 +56,40 @@ export async function loadHotpotCache(): Promise<{ pool: HotpotExample[]; heldOu
     if (trainIds.has(row.id))
       throw new Error(`Validation row ${row.id} collides with the train split.`);
   const frozen = selectHotpotHeldOut(validation, { trainIds });
-  guardEvalSuite(
-    {
-      items: frozen.map((row) => ({
-        id: row.id,
-        input: hotpotDatasetInput(row),
-        expected: hotpotDatasetLabel(row),
-      })),
-    },
-    pinnedEvalLockPath("hotpotqa"),
-    true,
-  );
   return { pool: train, heldOut: frozen };
+}
+
+export async function loadHotpotCache(): Promise<{ pool: HotpotExample[]; heldOut: HotpotExample[] }> {
+  const loaded = await readHotpotCache();
+  requireHotpotEvalLock(hotpotEvalSuite(loaded.heldOut));
+  return loaded;
+}
+
+/** Rewrite pinned-eval.lock.json from the cache. A correct file is byte-identical. */
+export async function writeHotpotEvalLock(): Promise<string> {
+  const loaded = await readHotpotCache();
+  const lock = lockEvalSet(hotpotEvalSuite(loaded.heldOut));
+  const path = pinnedEvalLockPath("hotpotqa");
+  writeFileSync(path, `${asciiJson(lock)}\n`);
+  return path;
+}
+
+/** The committed HotpotQA lock is required. A missing file stops the load. */
+export function requireHotpotEvalLock(
+  suite: Parameters<typeof guardEvalSuite>[0],
+  lockPath = pinnedEvalLockPath("hotpotqa"),
+): void {
+  guardEvalSuite(suite, lockPath);
+}
+
+export function hotpotEvalSuite(heldOut: readonly HotpotExample[]) {
+  return {
+    items: heldOut.map((row) => ({
+      id: row.id,
+      input: hotpotDatasetInput(row),
+      expected: hotpotDatasetLabel(row),
+    })),
+  };
 }
 
 async function readJsonl(path: string): Promise<unknown[]> {

@@ -3,9 +3,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { lockEvalSet, readEvalLock, verifyEvalLock } from "../../src/eval-lock.js";
 import { mulberry32 } from "../kb-qa/stats.js";
-import { selectHotpotHeldOut } from "../hotpotqa/cache.js";
+import { requireHotpotEvalLock, selectHotpotHeldOut } from "../hotpotqa/cache.js";
 import { HOTPOT_HELDOUT_ROWS, HOTPOT_HELDOUT_SEED } from "../hotpotqa/pins.js";
 import { HOTPOT_STRONG_PROMPT } from "../hotpotqa/prompt.js";
 import { hotpotTask } from "../hotpotqa/task.js";
@@ -22,15 +23,18 @@ import {
   NON_INFERIORITY_MARGIN,
   PAIRED_BOOTSTRAP_SAMPLES,
   PROMPT_SENSITIVITY_DEFINITION,
+  UNPAIRED_QUESTION_LIMIT,
   addArmFailure,
+  analysisPlanSha256,
   analyzeSeeds,
+  collapseQuestions,
   emptyArmFailures,
   exactMcNemar,
   failureKindForError,
   failureKindForReason,
   headlineVerdict,
+  holmAdjusted,
   pairedBootstrapInterval,
-  poolQuestionPairs,
   promptSensitivity,
   type SeedQuestions,
 } from "./analysis.js";
@@ -49,7 +53,10 @@ test("exact McNemar matches the two-sided binomial on small tables", () => {
   assert.equal(exactMcNemar(8, 8).discordant, 16);
   const large = exactMcNemar(40, 10);
   assert.equal(large.discordant, 50);
-  assert.ok(large.pValue < ANALYSIS_ALPHA);
+  assert.ok(Math.abs(large.pValue / 2.3861331677e-5 - 1) < 1e-6);
+  const edge = exactMcNemar(10, 21);
+  assert.equal(edge.discordant, 31);
+  assert.ok(Math.abs(edge.pValue / 0.070755545981 - 1) < 1e-6);
   assert.equal(MCNEMAR_METHOD, "exact-binomial");
 });
 
@@ -119,7 +126,7 @@ test("pooled pairs, prompt sensitivity, and failure buckets use the plan", () =>
       controllerUngated: null,
     },
   ];
-  const pairs = poolQuestionPairs(
+  const collapsed = collapseQuestions(
     seeds.map((seed) => ({
       seed: seed.seed,
       reference: seed.baseline,
@@ -127,13 +134,13 @@ test("pooled pairs, prompt sensitivity, and failure buckets use the plan", () =>
     })),
   );
   assert.deepEqual(
-    pairs.map((pair) => [pair.seed, pair.id, pair.treatment - pair.reference]),
+    collapsed.questions.map((question) => [question.id, question.treatmentMean - question.referenceMean, question.seeds]),
     [
-      [1, "q0", 1],
-      [2, "q0", 1],
-      [2, "q1", 0],
+      ["q0", 1, 2],
+      ["q1", 0, 1],
     ],
   );
+  assert.equal(collapsed.questions.length, 2);
   const won = Array.from({ length: 20 }, (_, index) => index);
   const analysis = analyzeSeeds(
     [
@@ -224,6 +231,12 @@ test("the offline report serializes per-question results and the headline", asyn
     assert.equal(typeof item.failed, "boolean");
   }
   assert.equal(json.analysisPlan, ANALYSIS_PLAN_PATH);
+  assert.equal(json.analysisPlanSha256, analysisPlanSha256());
+  assert.equal(
+    json.analysisPlanSha256,
+    createHash("sha256").update(await readFile(join(root, ANALYSIS_PLAN_PATH))).digest("hex"),
+  );
+  assert.equal(json.headline.questions > 0, true);
   assert.equal(json.headline.name, "controller-served-vs-baseline");
   assert.equal(json.headline.pairedBootstrap?.samples, PAIRED_BOOTSTRAP_SAMPLES);
   assert.equal(json.headline.pairedBootstrap?.unit, "question");
@@ -259,6 +272,99 @@ test("the strong prompts are wired and stay inside the cap", () => {
   assert.ok(codePoints(ifbenchTask.strongPrompt) <= PROMPT_CAP);
   assert.equal(hotpotTask.fullSizes.heldOut, HOTPOT_HELDOUT_ROWS);
   assert.equal(ifbenchTask.fullSizes.heldOut, FULL_SIZES.heldOut);
+});
+
+test("questions collapse across seeds, ties are incorrect, and a copied seed does not change the tests", () => {
+  const item = (id: string, correct: boolean): QuestionResult => ({ id, correct, failed: false });
+  const arm = (flags: boolean[]) => flags.map((correct, index) => item(`q${index}`, correct));
+  const tied = collapseQuestions([
+    { seed: 1, reference: [item("a", false)], treatment: [item("a", true)] },
+    { seed: 2, reference: [item("a", false)], treatment: [item("a", false)] },
+  ]);
+  assert.equal(tied.questions[0]?.treatmentMajority, 0);
+  assert.equal(tied.questions[0]?.treatmentMean, 0.5);
+  const won = collapseQuestions([
+    { seed: 1, reference: [item("b", false)], treatment: [item("b", true)] },
+    { seed: 2, reference: [item("b", false)], treatment: [item("b", true)] },
+    { seed: 3, reference: [item("b", false)], treatment: [item("b", false)] },
+  ]);
+  assert.equal(won.questions[0]?.treatmentMajority, 1);
+  const one: SeedQuestions[] = [
+    {
+      seed: 1,
+      baseline: arm([false, true, false, true]),
+      strongPrompt: arm([false, true, false, true]),
+      oneShot: arm([true, true, false, false]),
+      controllerServed: arm([true, false, true, false]),
+      controllerUngated: null,
+    },
+  ];
+  const copied = [1, 2, 3, 4].map((seed) => ({ ...one[0]!, seed }));
+  const single = analyzeSeeds(one, { samples: 200, seed: 17 });
+  const repeated = analyzeSeeds(copied, { samples: 200, seed: 17 });
+  assert.equal(single.headline.questions, 4);
+  assert.equal(repeated.headline.questions, single.headline.questions);
+  assert.equal(repeated.headline.pairedBootstrap?.lower, single.headline.pairedBootstrap?.lower);
+  assert.equal(repeated.headline.pairedBootstrap?.upper, single.headline.pairedBootstrap?.upper);
+  assert.equal(repeated.headline.mcnemar?.pValue, single.headline.mcnemar?.pValue);
+  assert.equal(repeated.headline.mcnemar?.discordant, single.headline.mcnemar?.discordant);
+});
+
+test("unpaired question ids are reported and too many throw", () => {
+  const item = (id: string): QuestionResult => ({ id, correct: true, failed: false });
+  const few = collapseQuestions([
+    {
+      seed: 1,
+      reference: [item("keep"), item("only-ref")],
+      treatment: [item("keep"), item("only-treat")],
+    },
+  ]);
+  assert.deepEqual(few.unpairedReferenceIds, ["only-ref"]);
+  assert.deepEqual(few.unpairedTreatmentIds, ["only-treat"]);
+  assert.deepEqual(few.questions.map((question) => question.id), ["keep"]);
+  const extra = Array.from({ length: UNPAIRED_QUESTION_LIMIT + 1 }, (_, index) => item(`extra-${index}`));
+  assert.throws(
+    () => collapseQuestions([{ seed: 1, reference: [item("keep"), ...extra], treatment: [item("keep")] }]),
+    new RegExp(`Unpaired questions ${UNPAIRED_QUESTION_LIMIT + 1}`),
+  );
+});
+
+test("Holm adjusts the three secondary comparisons and leaves the primary raw", () => {
+  assert.deepEqual(
+    holmAdjusted([0.04, 0.01, 0.02]).map((value) => Number(value.toFixed(6))),
+    [0.04, 0.03, 0.04],
+  );
+  const questions = (correct: boolean): QuestionResult[] =>
+    Array.from({ length: 6 }, (_, index) => ({ id: `q${index}`, correct, failed: false }));
+  const analysis = analyzeSeeds(
+    [
+      {
+        seed: 1,
+        baseline: questions(false),
+        strongPrompt: questions(true),
+        oneShot: questions(true),
+        controllerServed: questions(true),
+        controllerUngated: null,
+      },
+    ],
+    { samples: 100, seed: 17 },
+  );
+  assert.equal(analysis.headline.verdict, "improvement");
+  assert.equal(analysis.headline.mcnemar?.adjustment, "none");
+  assert.equal(analysis.headline.mcnemar?.adjustedPValue, null);
+  const secondary = analysis.comparisons.filter((comparison) => !comparison.primary);
+  assert.equal(secondary.length, 3);
+  const adjusted = holmAdjusted(secondary.map((comparison) => comparison.mcnemar!.pValue));
+  secondary.forEach((comparison, index) => {
+    assert.equal(comparison.mcnemar?.adjustment, "holm");
+    assert.equal(comparison.mcnemar?.adjustedPValue, adjusted[index]);
+  });
+  const versusBaseline = secondary.find((comparison) => comparison.name === "strong-prompt-vs-baseline");
+  const raw = versusBaseline?.mcnemar?.pValue;
+  const adjustedP = versusBaseline?.mcnemar?.adjustedPValue;
+  assert.equal(raw !== undefined && raw < ANALYSIS_ALPHA, true);
+  assert.equal(adjustedP !== null && adjustedP !== undefined && adjustedP >= ANALYSIS_ALPHA, true);
+  assert.equal(versusBaseline?.verdict, "safe_never_regresses");
 });
 
 test("the HotpotQA held-out sample is 1000 rows and its eval lock verifies", async () => {
@@ -322,6 +428,10 @@ test("the HotpotQA held-out sample is 1000 rows and its eval lock verifies", asy
   assert.equal(pinned.itemCount, 1000);
   assert.equal(pinned.scheme, 1);
   assert.equal(new Set(pinned.items.map((item) => item.id)).size, 1000);
+  assert.throws(
+    () => requireHotpotEvalLock(suite, join(directory, "missing.lock.json")),
+    /Missing eval lock/,
+  );
 });
 
 function referenceInterval(

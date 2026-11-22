@@ -35,10 +35,12 @@ import { LIVE_INPUT_BYTES } from "./constants.js";
 import { UnsupportedInstructionError } from "../ifbench/score.js";
 import {
   addArmFailure,
+  analysisPlanSha256,
   analyzeSeeds,
   emptyArmFailures,
   failureKindForError,
   failureKindForReason,
+  ANALYSIS_PLAN_PATH,
   type ArmComparison,
   type ArmFailureReport,
   type ArmName,
@@ -128,9 +130,11 @@ export interface PublicLiveReport {
   deployment: string;
   strongPromptVersion: string;
   analysisPlan: string;
-  headline: ArmComparison;
-  comparisons: ArmComparison[];
-  promptSensitivity: PromptSensitivity;
+  analysisPlanSha256: string;
+  /** Null when the run failed or no seed completed. */
+  headline: ArmComparison | null;
+  comparisons: ArmComparison[] | null;
+  promptSensitivity: PromptSensitivity | null;
   armFailures: ArmFailureReport;
   arms: {
     baseline: { served: ScoreView; ungated: null };
@@ -645,16 +649,18 @@ function buildReport<T extends PublicExample>(
   const seedFailures = perSeed.flatMap((row) =>
     row.failure ? [{ seed: row.seed, arm: row.failure.arm, code: row.failure.code, message: row.failure.message }] : [],
   );
-  const analysis = analyzeSeeds(
-    perSeed.map((row) => ({
-      seed: row.seed,
-      baseline: row.baseline.items,
-      strongPrompt: row.strongPrompt.items,
-      oneShot: row.oneShot.items,
-      controllerServed: row.controllerServed.items,
-      controllerUngated: row.controllerUngated?.items ?? null,
-    })),
-  );
+  const analysis = scored
+    ? analyzeSeeds(
+        counted.map((row) => ({
+          seed: row.seed,
+          baseline: row.baseline.items,
+          strongPrompt: row.strongPrompt.items,
+          oneShot: row.oneShot.items,
+          controllerServed: row.controllerServed.items,
+          controllerUngated: row.controllerUngated?.items ?? null,
+        })),
+      )
+    : null;
   return {
     schemaVersion: 1,
     harness: `loopiter-live-${task.id}`,
@@ -670,10 +676,11 @@ function buildReport<T extends PublicExample>(
     promptCapCharacters: task.promptCap,
     deployment: options.deployment,
     strongPromptVersion: task.strongPromptVersion,
-    analysisPlan: analysis.analysisPlan,
-    headline: analysis.headline,
-    comparisons: analysis.comparisons,
-    promptSensitivity: analysis.promptSensitivity,
+    analysisPlan: ANALYSIS_PLAN_PATH,
+    analysisPlanSha256: analysis?.analysisPlanSha256 ?? analysisPlanSha256(),
+    headline: analysis?.headline ?? null,
+    comparisons: analysis?.comparisons ?? null,
+    promptSensitivity: analysis?.promptSensitivity ?? null,
     armFailures,
     arms: scored
       ? {

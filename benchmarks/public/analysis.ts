@@ -3,10 +3,14 @@
  * The constants match benchmarks/analysis-plan.md. The report generator
  * applies `headlineVerdict` and does not choose a rule from the results.
  */
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { isSeedNetworkFailure } from "../kb-qa/live.js";
 import { mulberry32 } from "../kb-qa/stats.js";
 import { perItemReason } from "./item-failures.js";
 import type { QuestionResult } from "./loop.js";
+import { repoRoot } from "./paths.js";
 
 export const ANALYSIS_PLAN_PATH = "benchmarks/analysis-plan.md";
 /** Two-sided alpha. The paired interval uses confidence 1 - alpha. */
@@ -20,6 +24,8 @@ export const NON_INFERIORITY_MARGIN = 0.01;
 export const PAIRED_BOOTSTRAP_SAMPLES = 2_000;
 export const PAIRED_BOOTSTRAP_SEED = 17;
 export const MCNEMAR_METHOD = "exact-binomial" as const;
+/** Unpaired question ids at or below this count are reported. More than this throws. */
+export const UNPAIRED_QUESTION_LIMIT = 5;
 export const PROMPT_SENSITIVITY_DEFINITION =
   "The prompt-sensitivity score is the range, maximum minus minimum, of pooled held-out primary accuracy across the frozen baseline, the strong prompt, the one-shot rewrite, and the served controller prompt. Each seed and item counts once. A provider failure counts as incorrect. The per-seed spread is the largest within-seed range of those arms and is not the score.";
 
@@ -55,7 +61,11 @@ export interface McNemarResult {
   referenceOnly: number;
   concordant: number;
   discordant: number;
+  /** Raw exact binomial p-value. The primary verdict uses this. */
   pValue: number;
+  /** Holm-adjusted p-value for a secondary comparison. Null on the primary. */
+  adjustedPValue: number | null;
+  adjustment: "none" | "holm";
   alpha: number;
   method: typeof MCNEMAR_METHOD;
 }
@@ -65,7 +75,12 @@ export interface ArmComparison {
   treatment: string;
   reference: string;
   primary: boolean;
-  pairs: number;
+  /** Questions in the comparison. This is n. */
+  questions: number;
+  unpairedReference: number;
+  unpairedTreatment: number;
+  unpairedReferenceIds: string[];
+  unpairedTreatmentIds: string[];
   mean: number;
   pairedBootstrap: PairedBootstrapInterval | null;
   mcnemar: McNemarResult | null;
@@ -244,6 +259,29 @@ export function pairedBootstrapInterval(
   };
 }
 
+/** Holm adjusted p-values, in the input order. The family is the array length. */
+export function holmAdjusted(pValues: readonly number[]): number[] {
+  const family = pValues.length;
+  const adjusted = new Array<number>(family).fill(1);
+  const order = pValues
+    .map((pValue, index) => ({ pValue, index }))
+    .sort((left, right) => left.pValue - right.pValue || left.index - right.index);
+  let running = 0;
+  for (let rank = 0; rank < order.length; rank += 1) {
+    const item = order[rank]!;
+    if (!(item.pValue >= 0 && item.pValue <= 1))
+      throw new Error("Holm p-values must be between 0 and 1.");
+    running = Math.max(running, Math.min(1, (family - rank) * item.pValue));
+    adjusted[item.index] = running;
+  }
+  return adjusted;
+}
+
+export function analysisPlanSha256(): string {
+  const bytes = readFileSync(join(repoRoot(import.meta.url), ANALYSIS_PLAN_PATH));
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 export function headlineVerdict(input: {
   lower: number;
   upper: number;
@@ -251,22 +289,23 @@ export function headlineVerdict(input: {
   pValue: number;
   alpha?: number;
   margin?: number;
+  /** Secondary comparisons pass the Holm-adjusted p-value and set this. */
+  holm?: boolean;
 }): { verdict: HeadlineVerdict; statement: string } {
   const alpha = input.alpha ?? ANALYSIS_ALPHA;
   const margin = input.margin ?? NON_INFERIORITY_MARGIN;
   if (!(alpha > 0 && alpha < 1)) throw new Error("Alpha must be between 0 and 1.");
   if (!(margin >= 0)) throw new Error("Non-inferiority margin must be non-negative.");
+  const pName = input.holm ? "Holm-adjusted exact McNemar p-value" : "exact McNemar p-value";
   if (input.lower > 0 && input.pValue < alpha && input.mean > 0)
     return {
       verdict: "improvement",
-      statement:
-        "Improvement: the paired bootstrap CI lower bound is above 0 and the exact McNemar p-value is below alpha.",
+      statement: `Improvement: the paired bootstrap CI lower bound is above 0 and the ${pName} is below alpha.`,
     };
   if (input.upper < 0 && input.pValue < alpha && input.mean < 0)
     return {
       verdict: "regression",
-      statement:
-        "Regression: the paired bootstrap CI upper bound is below 0 and the exact McNemar p-value is below alpha.",
+      statement: `Regression: the paired bootstrap CI upper bound is below 0 and the ${pName} is below alpha.`,
     };
   if (input.lower >= -margin)
     return {
@@ -280,36 +319,71 @@ export function headlineVerdict(input: {
   };
 }
 
-export function poolQuestionPairs(
+export interface CollapsedQuestion {
+  id: string;
+  referenceMean: number;
+  treatmentMean: number;
+  /** 1 when correct on strictly more than half of the collapsed seeds. A tie is 0. */
+  referenceMajority: 0 | 1;
+  treatmentMajority: 0 | 1;
+  seeds: number;
+}
+
+export interface CollapsedComparison {
+  questions: CollapsedQuestion[];
+  unpairedReferenceIds: string[];
+  unpairedTreatmentIds: string[];
+}
+
+/**
+ * One row per question. A question is included only when the completed seeds
+ * that have it have it on both arms. Majority is strict: more than half the
+ * seeds, so 1 of 2 is incorrect and 2 of 3 is correct.
+ */
+export function collapseQuestions(
   seeds: readonly {
     seed: number;
     reference: readonly QuestionResult[];
     treatment: readonly QuestionResult[];
   }[],
-): { seed: number; id: string; reference: 0 | 1; treatment: 0 | 1 }[] {
-  const pairs: { seed: number; id: string; reference: 0 | 1; treatment: 0 | 1 }[] = [];
+): CollapsedComparison {
+  const referenceSeeds = new Map<string, Map<number, boolean>>();
+  const treatmentSeeds = new Map<string, Map<number, boolean>>();
   for (const seed of seeds) {
-    const treatment = new Map<string, QuestionResult>();
-    for (const item of seed.treatment) {
-      if (treatment.has(item.id)) throw new Error(`Duplicate question id ${item.id}.`);
-      treatment.set(item.id, item);
-    }
-    const seen = new Set<string>();
-    for (const item of seed.reference) {
-      if (seen.has(item.id)) throw new Error(`Duplicate question id ${item.id}.`);
-      seen.add(item.id);
-      const other = treatment.get(item.id);
-      if (!other) continue;
-      pairs.push({
-        seed: seed.seed,
-        id: item.id,
-        reference: item.correct ? 1 : 0,
-        treatment: other.correct ? 1 : 0,
-      });
-    }
+    addArm(referenceSeeds, seed.seed, seed.reference);
+    addArm(treatmentSeeds, seed.seed, seed.treatment);
   }
-  pairs.sort((left, right) => left.seed - right.seed || compareId(left.id, right.id));
-  return pairs;
+  const ids = [...new Set([...referenceSeeds.keys(), ...treatmentSeeds.keys()])].sort(compareId);
+  const unpairedReferenceIds: string[] = [];
+  const unpairedTreatmentIds: string[] = [];
+  const questions: CollapsedQuestion[] = [];
+  for (const id of ids) {
+    const reference = referenceSeeds.get(id) ?? new Map<number, boolean>();
+    const treatment = treatmentSeeds.get(id) ?? new Map<number, boolean>();
+    const seedIds = [...new Set([...reference.keys(), ...treatment.keys()])].sort((left, right) => left - right);
+    const paired = seedIds.filter((seedId) => reference.has(seedId) && treatment.has(seedId));
+    const referenceOnly = seedIds.some((seedId) => reference.has(seedId) && !treatment.has(seedId));
+    const treatmentOnly = seedIds.some((seedId) => treatment.has(seedId) && !reference.has(seedId));
+    if (referenceOnly) unpairedReferenceIds.push(id);
+    if (treatmentOnly) unpairedTreatmentIds.push(id);
+    if (referenceOnly || treatmentOnly || paired.length === 0) continue;
+    const referenceCorrect = paired.filter((seedId) => reference.get(seedId)).length;
+    const treatmentCorrect = paired.filter((seedId) => treatment.get(seedId)).length;
+    questions.push({
+      id,
+      referenceMean: referenceCorrect / paired.length,
+      treatmentMean: treatmentCorrect / paired.length,
+      referenceMajority: majority(referenceCorrect, paired.length),
+      treatmentMajority: majority(treatmentCorrect, paired.length),
+      seeds: paired.length,
+    });
+  }
+  const unpaired = unpairedReferenceIds.length + unpairedTreatmentIds.length;
+  if (unpaired > UNPAIRED_QUESTION_LIMIT)
+    throw new Error(
+      `Unpaired questions ${unpaired} exceed ${UNPAIRED_QUESTION_LIMIT}: reference ${unpairedReferenceIds.join(", ")}; treatment ${unpairedTreatmentIds.join(", ")}.`,
+    );
+  return { questions, unpairedReferenceIds, unpairedTreatmentIds };
 }
 
 export function promptSensitivity(seeds: readonly SeedQuestions[]): PromptSensitivity {
@@ -351,7 +425,13 @@ export function promptSensitivity(seeds: readonly SeedQuestions[]): PromptSensit
 export function analyzeSeeds(
   seeds: readonly SeedQuestions[],
   options?: { samples?: number; seed?: number },
-): { analysisPlan: string; headline: ArmComparison; comparisons: ArmComparison[]; promptSensitivity: PromptSensitivity } {
+): {
+  analysisPlan: string;
+  analysisPlanSha256: string;
+  headline: ArmComparison;
+  comparisons: ArmComparison[];
+  promptSensitivity: PromptSensitivity;
+} {
   const comparisons = COMPARISONS.map((spec) =>
     compareArms(
       spec.name,
@@ -366,10 +446,28 @@ export function analyzeSeeds(
       options,
     ),
   );
+  const secondary = comparisons.filter((comparison) => !comparison.primary && comparison.mcnemar);
+  const adjusted = holmAdjusted(secondary.map((comparison) => comparison.mcnemar!.pValue));
+  secondary.forEach((comparison, index) => {
+    const mcnemar = comparison.mcnemar!;
+    mcnemar.adjustedPValue = adjusted[index]!;
+    mcnemar.adjustment = "holm";
+    if (!comparison.pairedBootstrap) return;
+    const judged = headlineVerdict({
+      lower: comparison.pairedBootstrap.lower,
+      upper: comparison.pairedBootstrap.upper,
+      mean: comparison.pairedBootstrap.mean,
+      pValue: mcnemar.adjustedPValue,
+      holm: true,
+    });
+    comparison.verdict = judged.verdict;
+    comparison.statement = judged.statement;
+  });
   const headline = comparisons.find((comparison) => comparison.primary);
   if (!headline) throw new Error("The analysis plan has no primary comparison.");
   return {
     analysisPlan: ANALYSIS_PLAN_PATH,
+    analysisPlanSha256: analysisPlanSha256(),
     headline,
     comparisons,
     promptSensitivity: promptSensitivity(seeds),
@@ -388,35 +486,39 @@ function compareArms(
   }[],
   options: { samples?: number; seed?: number } | undefined,
 ): ArmComparison {
-  const pairs = poolQuestionPairs(seeds);
+  const collapsed = collapseQuestions(seeds);
   const base = {
     name,
     treatment,
     reference,
     primary,
-    pairs: pairs.length,
+    questions: collapsed.questions.length,
+    unpairedReference: collapsed.unpairedReferenceIds.length,
+    unpairedTreatment: collapsed.unpairedTreatmentIds.length,
+    unpairedReferenceIds: collapsed.unpairedReferenceIds,
+    unpairedTreatmentIds: collapsed.unpairedTreatmentIds,
     alpha: ANALYSIS_ALPHA,
     nonInferiorityMargin: NON_INFERIORITY_MARGIN,
   };
-  if (pairs.length === 0)
+  if (collapsed.questions.length === 0)
     return {
       ...base,
       mean: 0,
       pairedBootstrap: null,
       mcnemar: null,
       verdict: "no_difference",
-      statement: "No difference: there are no pooled paired questions to compare.",
+      statement: "No difference: there are no questions scored on both arms.",
     };
   const interval = pairedBootstrapInterval(
-    pairs.map((pair) => pair.treatment - pair.reference),
+    collapsed.questions.map((question) => question.treatmentMean - question.referenceMean),
     options,
   );
   let treatmentOnly = 0;
   let referenceOnly = 0;
   let concordant = 0;
-  for (const pair of pairs) {
-    if (pair.treatment === 1 && pair.reference === 0) treatmentOnly += 1;
-    else if (pair.treatment === 0 && pair.reference === 1) referenceOnly += 1;
+  for (const question of collapsed.questions) {
+    if (question.treatmentMajority === 1 && question.referenceMajority === 0) treatmentOnly += 1;
+    else if (question.treatmentMajority === 0 && question.referenceMajority === 1) referenceOnly += 1;
     else concordant += 1;
   }
   const exact = exactMcNemar(treatmentOnly, referenceOnly);
@@ -436,12 +538,30 @@ function compareArms(
       concordant,
       discordant: exact.discordant,
       pValue: exact.pValue,
+      adjustedPValue: null,
+      adjustment: "none",
       alpha: ANALYSIS_ALPHA,
       method: MCNEMAR_METHOD,
     },
     verdict: judged.verdict,
     statement: judged.statement,
   };
+}
+
+function addArm(into: Map<string, Map<number, boolean>>, seed: number, items: readonly QuestionResult[]): void {
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (seen.has(item.id)) throw new Error(`Duplicate question id ${item.id}.`);
+    seen.add(item.id);
+    const scores = into.get(item.id) ?? new Map<number, boolean>();
+    scores.set(seed, item.correct);
+    into.set(item.id, scores);
+  }
+}
+
+/** Correct on strictly more than half of the seeds. A tie is incorrect. */
+function majority(correct: number, seeds: number): 0 | 1 {
+  return correct * 2 > seeds ? 1 : 0;
 }
 
 function itemsOf(seed: SeedQuestions, key: QuestionKey): readonly QuestionResult[] {

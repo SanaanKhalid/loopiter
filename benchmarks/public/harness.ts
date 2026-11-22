@@ -74,6 +74,7 @@ export interface OfflineReport {
   promptVersion: string;
   strongPromptVersion: string;
   analysisPlan: string;
+  analysisPlanSha256: string;
   /** Primary comparison from the pre-registered plan. Per-seed intervals stay on each arm. */
   headline: ArmComparison;
   comparisons: ArmComparison[];
@@ -222,6 +223,7 @@ export async function runOfflineBenchmark<T extends PublicExample>(
     promptVersion: task.promptVersion,
     strongPromptVersion: task.strongPromptVersion,
     analysisPlan: analysis.analysisPlan,
+    analysisPlanSha256: analysis.analysisPlanSha256,
     headline: analysis.headline,
     comparisons: analysis.comparisons,
     promptSensitivity: analysis.promptSensitivity,

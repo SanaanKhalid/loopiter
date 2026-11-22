@@ -34,9 +34,17 @@ they are never passed to `dataset`, `propose`, or `evaluate`.
 
 The fixture eval split has a committed lock, `fixtures.eval.lock.json`, checked
 before a fixture run. The 1000-row sample has a committed lock,
-`pinned-eval.lock.json`. Cache load checks it and stops before any model call
-if the loaded eval split differs. See the benchmarks README and
-[analysis-plan.md](../analysis-plan.md).
+`pinned-eval.lock.json`. Cache load requires that file and stops before any
+model call if it is missing or the loaded eval split differs. See the
+benchmarks README and [analysis-plan.md](../analysis-plan.md).
+
+Regenerate the lock from the pinned cache. The cache comes from `fetch.py`.
+A correct file is byte-identical to the committed lock.
+
+```sh
+npm run build
+node dist/benchmarks/hotpotqa/write-eval-lock.js
+```
 
 ## Fetch
 

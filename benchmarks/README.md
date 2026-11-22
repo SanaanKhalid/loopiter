@@ -84,11 +84,11 @@ builders in this repository. The offline harness checks the lock after it
 loads the fixtures and before it scores anything. A drifted fixture split
 stops the process there.
 
-The full pinned rows are not stored in the repository. Cache load checks
-`pinned-eval.lock.json` when that file is present and stops before returning
-the rows if the loaded eval split differs. A run that uses the current pinned
-cache keeps working when that file is absent. The check does not change the
-call plan, the reservations, or the budget.
+The full pinned rows are not stored in the repository. HotpotQA commits
+`pinned-eval.lock.json` for its 1000-row sample. Cache load requires that file
+and stops before returning the rows when it is missing or the loaded split
+differs. IFBench checks `pinned-eval.lock.json` only when that file is present.
+The check does not change the call plan, the reservations, or the budget.
 
 CI runs `loopiter eval verify` and `loopiter eval leakage` on the fixture
 files, and the same commands through `python -m loopiter`. Leakage compares
@@ -105,8 +105,10 @@ regresses. Safe, never regresses means the paired CI lower bound is at or
 above the non-inferiority margin of −0.01. The report generator applies that
 rule. It does not choose a different one from the results.
 
-The headline resamples pooled (seed, item) pairs. The per-seed bootstrap stays
-on each arm as a secondary interval. Each held-out question is stored per arm
+The headline collapses each question across completed seeds, then resamples
+question ids. n is the question count. The three secondary comparisons use a
+Holm correction. The per-seed bootstrap stays on each arm as a secondary
+interval. Each held-out question is stored per arm
 and per seed with its id, a correct bit, and a failure bit. Each arm also
 reports network, timeout, 5xx, refusal, and parse counts. The prompt-sensitivity
 score is the range of pooled held-out accuracy across the prompt arms. The
