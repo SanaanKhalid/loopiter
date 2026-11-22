@@ -129,7 +129,7 @@ export function renderTaskEstimate<T extends PublicExample>(
     `Reasoning effort: ${limits.reasoningEffort ?? "omitted"}`,
     "Arms: frozen baseline, one-shot rewrite with no gates, and the autonomous ImprovementController.",
     "Input tokens repeat one checked-in fixture row up to the split size. Output tokens are the max_output_tokens bound. This is a call plan, not a measured score.",
-    `Projection rounds each call to micro-USD. TPM pacing reserves bytes/4 plus the output bound against ${Math.round(PACE_HEADROOM * 100)}% of LOOPITER_BENCH_MAX_TPM.`,
+    `Projection rounds each call to micro-USD. TPM pacing reserves bytes/4 plus the output bound against ${Math.round(PACE_HEADROOM * 100)}% of LOOPITER_BENCH_MAX_TPM. When LOOPITER_BENCH_MAX_RPM is set, requests are also spaced to 90% of that rolling minute. Unset leaves request pacing off.`,
     "",
     formatPlan(smoke, prices, maxTokensPerMinute),
     "",

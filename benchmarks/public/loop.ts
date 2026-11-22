@@ -20,6 +20,7 @@ import {
 import {
   appendRound,
   emptySeedLog,
+  noteRolledBack,
   promptHash,
   settleSeed,
   type SeedDecisionLog,
@@ -472,7 +473,16 @@ export async function runController<T extends PublicExample>(input: {
         },
       });
     }
-    if (result.state === "rolled_back") decisionLog.observation = "rolled_back";
+    if (result.state === "rolled_back") {
+      const rolled: string[] = [];
+      for (const id of result.candidateIds) {
+        const candidate = await loop.getCandidate(id);
+        if (candidate?.status !== "rolled_back") continue;
+        const hashed = promptHash(fragmentOf(candidate.proposedChange));
+        rolled.push(candidateIdFor(hashed, [{ id, promptHash: hashed }]));
+      }
+      noteRolledBack(decisionLog, rolled.length > 0 ? rolled : result.candidateIds);
+    }
     const settled = settleSeed(decisionLog);
     if (!input.deferServedCheck) {
       if (settled.promptHash !== promptHash(registry.fragment()))

@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import {
   LIVE_ENV,
   LiveGateError,
+  paceOverrides,
   redactSecrets,
 } from "../kb-qa/live.js";
 import { MAX_SPLIT_ROWS, PRODUCT_MINIMUM_IMPROVEMENT } from "./constants.js";
@@ -159,6 +160,7 @@ async function runLiveCli<T extends PublicExample>(
       minimumImprovement: readMinimumImprovement(),
       ...(readMinimumEffect() === undefined ? {} : { minimumEffect: readMinimumEffect() }),
       sizes: applyRowCounts(task.fullSizes, overrides),
+      ...paceOverrides(process.argv),
     });
     secret = live.apiKey;
     const loaded = await task.loadCache();

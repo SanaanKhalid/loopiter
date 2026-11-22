@@ -9,6 +9,7 @@ import {
   ProviderRequestError,
   type SafeProviderDetail,
 } from "../../examples/prompt-improvement/provider.js";
+import { retryableServerStatus } from "../kb-qa/live.js";
 import type { PredictCall } from "./task.js";
 
 /** Stop when failed predictions in one arm and split exceed this share of that split. */
@@ -58,6 +59,7 @@ export class ItemFailureStop extends Error {
 
 /** Reason code for a per-item provider failure, or null when the error must stop the run. */
 export function perItemReason(error: unknown): string | null {
+  if (error instanceof ProviderRequestError && retryableServerStatus(error.status)) return null;
   if (error instanceof IncompleteOutputError) {
     const reason = error.detail.incompleteReason;
     if (reason === "refusal" || reason === "empty_output" || reason === "invalid_output") return reason;

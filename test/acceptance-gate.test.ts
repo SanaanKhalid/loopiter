@@ -22,8 +22,10 @@ import type { AutonomyPolicy, Comparison } from "../src/improvement-contracts.js
 import {
   appendRound,
   emptySeedLog,
+  noteRolledBack,
   readDecisionLog,
   replaySeed,
+  settleSeed,
   writeDecisionLog,
   type SeedDecisionLog,
 } from "../benchmarks/public/decisions.js";
@@ -249,8 +251,30 @@ test("served id is the baseline or a candidate that passed both splits", () => {
   const rolled = acceptedSeed(4);
   rolled.observation = "rolled_back";
   rolled.served = { ...rolled.baseline };
+  assert.equal(rolled.rolledBackIds, undefined);
   assert.equal(settleImported(rolled), "baseline");
   assert.equal(replaySeed(rolled, rule).matched, true);
+});
+
+test("a named rollback drops that candidate and an old log still drops the latest", () => {
+  const log = emptySeedLog(9, "baseline");
+  const strong = pairs(repeated(24, [0, 1]));
+  appendRound(log, { candidateId: "one-shot", promptHash: "one", split: "validation", items: strong, rule });
+  appendRound(log, { candidateId: "one-shot", promptHash: "one", split: "audit", items: strong, rule });
+  noteRolledBack(log, ["one-shot"]);
+  appendRound(log, { candidateId: "follow", promptHash: "follow", split: "validation", items: strong, rule });
+  appendRound(log, { candidateId: "follow", promptHash: "follow", split: "audit", items: strong, rule });
+  assert.equal(log.rounds[2]?.incumbentId, "baseline");
+  assert.equal(log.served.id, "follow");
+  assert.deepEqual(log.rolledBackIds, ["one-shot"]);
+  assert.equal(replaySeed(log, rule).matched, true);
+
+  const legacy = acceptedSeed(10);
+  legacy.observation = "rolled_back";
+  delete legacy.rolledBackIds;
+  legacy.served = settleSeed(legacy);
+  assert.equal(legacy.served.id, "baseline");
+  assert.equal(replaySeed(legacy, rule).matched, true);
 });
 
 test("compare applies a noise floor only when the policy asks for that split", () => {
