@@ -16,9 +16,10 @@ import {
   IFBENCH_VERIFIER_SHA,
 } from "../ifbench/pins.js";
 import { ifbenchTask } from "../ifbench/task.js";
-import type { BenchmarkTask, PublicExample } from "./task.js";
+import type { BenchmarkTask, ModelRunner, PublicExample } from "./task.js";
 import { exactMatch, normalizeAnswer, tokenF1 } from "../hotpotqa/normalize.js";
 import { HOTPOT_EVAL_SHA, HOTPOT_REVISION } from "../hotpotqa/pins.js";
+import type { HotpotExample } from "../hotpotqa/fixtures.js";
 import { hotpotTask } from "../hotpotqa/task.js";
 import {
   FIXTURE_SIZES,
@@ -32,9 +33,9 @@ import {
 import { estimateSelection, rowCountOverrides } from "./cli.js";
 import { planTask, renderTaskEstimate } from "./estimate.js";
 import { resolveLimits } from "./limits.js";
-import { readDecisionLog, replaySeed, writeDecisionLog } from "./decisions.js";
+import { emptySeedLog, promptHash, readDecisionLog, replaySeed, writeDecisionLog } from "./decisions.js";
 import { runOfflineBenchmark } from "./harness.js";
-import { leakedIds, mockRunner, runOneShot } from "./loop.js";
+import { leakedIds, mockRunner, runController, runOneShot } from "./loop.js";
 import { promptPolicy } from "./policy.js";
 import { repoRoot } from "./paths.js";
 import {
@@ -708,6 +709,55 @@ test("the public CLI parses row counts and a fixtures run replays", async () => 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("a rolled-back one-shot gate keeps the accepted follow-up", async () => {
+  const loaded = hotpotTask.fixtures();
+  const split = buildSeededSplit({
+    pool: loaded.pool,
+    heldOut: loaded.heldOut,
+    seed: 1,
+    sizes: FIXTURE_SIZES,
+  });
+  const oneShot = `${hotpotTask.baselinePrompt}\n[[one-shot-gate]]`;
+  const follow = `${hotpotTask.baselinePrompt}\n[[follow-up]]`;
+  const runner: ModelRunner<HotpotExample> = {
+    async answer(prompt, row, context, site) {
+      if (context) await context.meter(64, async () => ({ value: true, tokens: 32 }));
+      const pass = row.answer;
+      const fail = "unknown";
+      if (prompt === oneShot && site?.split === "production") return { text: fail, latencyMs: 1 };
+      if (prompt === oneShot || prompt === follow) return { text: pass, latencyMs: 1 };
+      return { text: row.baselinePass ? pass : fail, latencyMs: 1 };
+    },
+    async propose(_request, context) {
+      if (context) await context.meter(64, async () => ({ value: true, tokens: 32 }));
+      return follow;
+    },
+  };
+  const decisionLog = emptySeedLog(split.seed, hotpotTask.baselinePrompt);
+  const arm = await runController({
+    task: hotpotTask,
+    split,
+    runner,
+    mode: "improve",
+    observation: "honest",
+    minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    oneShotFragment: oneShot,
+    decisionLog,
+    batchSize: Math.max(split.validation.length, split.audit.length),
+    observeChunk: split.production.length,
+    latencyMs: 120_000,
+    modelId: "mock",
+    scenario: "rollback-then-accept",
+    tickLimit: 40,
+  });
+  assert.equal(arm.fragment, follow);
+  assert.equal(arm.decisions?.served.promptHash, promptHash(follow));
+  assert.equal(arm.decisions?.observation, "rolled_back");
+  assert.ok((arm.decisions?.rolledBackIds?.length ?? 0) > 0);
+  assert.notEqual(arm.decisions?.served.id, arm.decisions?.baseline.id);
+  assert.equal(replaySeed(arm.decisions!).matched, true);
 });
 
 async function assertRegression<T extends PublicExample>(task: BenchmarkTask<T>): Promise<void> {

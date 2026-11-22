@@ -9,6 +9,7 @@ import {
   SMOKE_ROWS,
   estimateFromEnv,
   liveOptionsFromEnv,
+  paceOverrides,
   redactSecrets,
   renderLiveMarkdown,
   runLiveBenchmark,
@@ -108,6 +109,7 @@ async function runLiveCli(): Promise<void> {
       smoke,
       stopAtWarn: process.argv.includes("--stop-at-warn"),
       ledgerPath,
+      ...paceOverrides(process.argv),
     });
     secret = live.apiKey;
     const report = await runLiveBenchmark({

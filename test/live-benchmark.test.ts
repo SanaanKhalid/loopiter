@@ -15,6 +15,7 @@ import {
   FACTS,
 } from "../benchmarks/kb-qa/task.js";
 import {
+  ExhaustedProviderError,
   FULL_SEEDS,
   LIVE_ENV,
   LiveExitError,
@@ -22,6 +23,10 @@ import {
   LiveSession,
   MAX_ATTEMPTS,
   MAX_STEP_MS,
+  DEFAULT_NETWORK_FAILURES,
+  NETWORK_ATTEMPTS,
+  NetworkOutageStop,
+  RequestMinuteWindow,
   PREDICT_MAX_OUTPUT_TOKENS,
   PROPOSE_MAX_OUTPUT_TOKENS,
   SMOKE_ROWS,
@@ -665,6 +670,9 @@ test("pacing and HTTP 429 retries stay on the fake server", async () => {
     [LIVE_ENV.maxTpm, "-1"],
     [LIVE_ENV.maxTpm, "1.5"],
     [LIVE_ENV.maxTpm, ""],
+    [LIVE_ENV.maxRpm, "nope"],
+    [LIVE_ENV.maxRpm, "-1"],
+    [LIVE_ENV.networkFailures, "0"],
     [LIVE_ENV.max429Retries, "0"],
     [LIVE_ENV.max429Retries, "NaN"],
     [LIVE_ENV.maxRetryWait, "0"],
@@ -681,6 +689,18 @@ test("pacing and HTTP 429 retries stay on the fake server", async () => {
     blankArgs(),
   );
   assert.equal(disabled.maxTokensPerMinute, 0);
+  assert.equal(disabled.maxRequestsPerMinute, 0);
+  assert.equal(disabled.maxConsecutiveNetworkFailures, DEFAULT_NETWORK_FAILURES);
+  const rpm = liveOptionsFromEnv(
+    scrubbed({ ...readyEnv(), [LIVE_ENV.maxRpm]: "30" }),
+    blankArgs(),
+  );
+  assert.equal(rpm.maxRequestsPerMinute, 30);
+  const flagged = liveOptionsFromEnv(scrubbed({ ...readyEnv(), [LIVE_ENV.maxRpm]: "30" }), {
+    ...blankArgs(),
+    maxRequestsPerMinute: 0,
+  });
+  assert.equal(flagged.maxRequestsPerMinute, 0);
 
   const clock = fakeClock();
   const paced = await fakeServer(async () => ({
@@ -879,6 +899,7 @@ test("request timeout is retried, and the wait watchdog stops the run", async ()
     });
     throw new Error("timed out request continued");
   };
+  const clock = fakeClock();
   const report = await runLiveBenchmark({
     ...liveShape(
       { requests: [], fetch: fetchTimeout, close: async () => undefined },
@@ -891,14 +912,21 @@ test("request timeout is retried, and the wait watchdog stops the run", async ()
     rowLimit: 1,
     seeds: [1],
     requestTimeoutMs: 40,
+    maxRetryWaitMs: 1_000,
+    maxTotalWaitMs: 60_000,
+    now: clock.now,
+    sleep: clock.sleep,
+    random: () => 0,
   });
-  assert.equal(hung, 2);
-  assert.equal(report.attempts, 2);
+  assert.equal(hung, NETWORK_ATTEMPTS);
+  assert.equal(report.attempts, NETWORK_ATTEMPTS);
   assert.equal(report.liveCalls, 0);
   assert.equal(report.passed, false);
-  assert.match(report.stopped?.message ?? "", /timed out|Timeout/i);
+  assert.equal(report.stopped, null);
+  assert.equal(report.perSeed[0]?.candidate?.reason, "network");
+  assert.match(report.perSeed[0]?.candidate?.heldOutNote ?? "", /network retries exhausted/);
 
-  const clock = fakeClock();
+  const limitClock = fakeClock();
   let limited = 0;
   const waiting = await fakeServer(async () => {
     limited += 1;
@@ -920,12 +948,12 @@ test("request timeout is retried, and the wait watchdog stops the run", async ()
       max429Retries: 5,
       maxRetryWaitMs: 60_000,
       maxTotalWaitMs: 3_000,
-      now: clock.now,
-      sleep: clock.sleep,
-      random: clock.random,
+      now: limitClock.now,
+      sleep: limitClock.sleep,
+      random: limitClock.random,
     });
     assert.equal(limited, 2);
-    assert.deepEqual(clock.sleeps, [2_000]);
+    assert.deepEqual(limitClock.sleeps, [2_000]);
     assert.equal(report.stopped?.reason, "wait_limit");
     assert.match(report.stopped?.message ?? "", /LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS/);
     assert.equal(report.passed, false);
@@ -955,7 +983,7 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
   });
   assert.equal(deadline, plan.callbackTimeoutMs);
   assert.equal(plan.attemptDeadlineMs, 255_000);
-  assert.equal(plan.callbackTimeoutMs, 4_920_000);
+  assert.equal(plan.callbackTimeoutMs, 5_640_000);
   assert.equal(MAX_STEP_MS, 7_200_000);
   assert.ok(plan.attemptDeadlineMs >= requestTimeoutMs + 75_000);
   assert.throws(
@@ -1229,7 +1257,7 @@ test("transient fetch failures retry within the attempt and wait caps", async ()
       maxRetryWaitMs: 60_000,
       max429Retries: 1,
       requestTimeoutMs: 1_000,
-      maxTotalWaitMs: 60_000,
+      maxTotalWaitMs: 180_000,
       now: clock.now,
       sleep: clock.sleep,
       random: () => 0,
@@ -1245,10 +1273,14 @@ test("transient fetch failures retry within the attempt and wait caps", async ()
         meter,
         new AbortController().signal,
       ),
-      /fetch failed|ECONNRESET|socket reset/i,
+      (error: unknown) => {
+        assert.equal(error instanceof ExhaustedProviderError && error.seedScoped, true);
+        assert.match(error instanceof Error ? error.message : "", /fetch failed|ECONNRESET|socket reset/i);
+        return true;
+      },
     );
-    assert.equal(exhausted, MAX_ATTEMPTS);
-    assert.equal(open.attempts, MAX_ATTEMPTS);
+    assert.equal(exhausted, NETWORK_ATTEMPTS);
+    assert.equal(open.attempts, NETWORK_ATTEMPTS);
 
     const waitingClock = fakeClock();
     let waitedFetches = 0;
@@ -1354,6 +1386,198 @@ test("transient fetch failures retry within the attempt and wait caps", async ()
   } finally {
     console.error = original;
   }
+});
+
+test("a transient reset recovers after several retries", async () => {
+  const clock = fakeClock();
+  const directory = await tempLedger();
+  let fetches = 0;
+  const ledger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "recovered.json"),
+  );
+  const session = new LiveSession(ledger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => {
+      fetches += 1;
+      if (fetches <= 3) {
+        const cause = new Error("socket reset");
+        (cause as Error & { code: string }).code = "ECONNRESET";
+        const error = new TypeError("fetch failed");
+        (error as TypeError & { cause?: unknown }).cause = cause;
+        throw error;
+      }
+      return completedResponse({ label: "yes" });
+    },
+    maxTokensPerMinute: 0,
+    maxRetryWaitMs: 60_000,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 180_000,
+    now: clock.now,
+    sleep: clock.sleep,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  const meter = async <T>(
+    _maximum: number,
+    call: () => Promise<{ value: T; tokens: number | null }>,
+  ) => (await call()).value;
+  await session.generate(
+    { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+    "xxxx",
+    10,
+    meter,
+    new AbortController().signal,
+  );
+  assert.equal(fetches, 4);
+  assert.equal(ledger.calls, 1);
+  assert.deepEqual(clock.sleeps, [1_000, 2_000, 4_000]);
+});
+
+test("consecutive network exhaustions trip the breaker", async () => {
+  const clock = fakeClock();
+  const directory = await tempLedger();
+  let fetches = 0;
+  const ledger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "breaker.json"),
+  );
+  const session = new LiveSession(ledger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => {
+      fetches += 1;
+      const error = new TypeError("fetch failed");
+      (error as TypeError & { code?: string }).code = "ECONNRESET";
+      throw error;
+    },
+    maxTokensPerMinute: 0,
+    maxConsecutiveNetworkFailures: 2,
+    maxRetryWaitMs: 1,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 60_000,
+    now: clock.now,
+    sleep: clock.sleep,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  const meter = async <T>(
+    _maximum: number,
+    call: () => Promise<{ value: T; tokens: number | null }>,
+  ) => (await call()).value;
+  const input = {
+    instructions: "label",
+    input: "{}",
+    name: "classification",
+    schema: { type: "object" as const },
+  };
+  await assert.rejects(
+    session.generate(input, "xxxx", 10, meter, new AbortController().signal),
+    (error: unknown) => error instanceof ExhaustedProviderError && error.seedScoped,
+  );
+  await assert.rejects(
+    session.generate(input, "xxxx", 10, meter, new AbortController().signal),
+    (error: unknown) => error instanceof NetworkOutageStop,
+  );
+  assert.equal(fetches, NETWORK_ATTEMPTS * 2);
+});
+
+test("request pacing spaces calls and is off when unset", async () => {
+  const clock = fakeClock();
+  const window = new RequestMinuteWindow(2, clock.now, clock.sleep);
+  assert.equal(await window.acquire(), 0);
+  assert.equal(await window.acquire(), 0);
+  assert.equal(await window.acquire(), 60_000);
+  assert.equal(clock.sleeps[0], 60_000);
+  const idle = fakeClock();
+  const open = new RequestMinuteWindow(0, idle.now, idle.sleep);
+  assert.equal(await open.acquire(), 0);
+  assert.equal(await open.acquire(), 0);
+  assert.deepEqual(idle.sleeps, []);
+
+  const directory = await tempLedger();
+  const meter = async <T>(
+    _maximum: number,
+    call: () => Promise<{ value: T; tokens: number | null }>,
+  ) => (await call()).value;
+  const generate = async (session: LiveSession) => {
+    await session.generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      "xxxx",
+      10,
+      meter,
+      new AbortController().signal,
+    );
+  };
+  const pacedClock = fakeClock();
+  const pacedLedger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "rpm.json"),
+  );
+  const paced = new LiveSession(pacedLedger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => completedResponse({ label: "yes" }),
+    maxTokensPerMinute: 0,
+    maxRequestsPerMinute: 1,
+    maxRetryWaitMs: 1_000,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 60_000,
+    now: pacedClock.now,
+    sleep: pacedClock.sleep,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  await generate(paced);
+  await generate(paced);
+  assert.deepEqual(pacedClock.sleeps, [60_000]);
+
+  const freeClock = fakeClock();
+  const freeLedger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "rpm-off.json"),
+  );
+  const free = new LiveSession(freeLedger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => completedResponse({ label: "yes" }),
+    maxTokensPerMinute: 0,
+    maxRetryWaitMs: 1_000,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 60_000,
+    now: freeClock.now,
+    sleep: freeClock.sleep,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  await generate(free);
+  await generate(free);
+  assert.deepEqual(freeClock.sleeps, []);
 });
 
 test("a stalled provider and a stalled ledger stop on the attempt deadline", async () => {
@@ -2064,6 +2288,7 @@ test("cause codes, one timeout sentence, and a retry wait that does not look sta
     {
       ...base,
       requestTimeoutMs: 80,
+      maxTotalWaitMs: 60_000,
       fetch: (_url, init) =>
         new Promise((_resolve, reject) => {
           const signal = init?.signal;

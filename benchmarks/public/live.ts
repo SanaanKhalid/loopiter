@@ -11,6 +11,8 @@ import {
   LiveSession,
   RateLimitStop,
   ExhaustedProviderError,
+  NetworkOutageStop,
+  isSeedNetworkFailure,
   assertLiveSpendGuards,
   createExitGuard,
   createInterruptHandler,
@@ -80,6 +82,10 @@ export interface PublicLiveOptions {
   sizes?: SplitSizes;
   decisionLogPath?: string;
   maxTokensPerMinute: number;
+  /** 0 disables request pacing. Omitted stays off. */
+  maxRequestsPerMinute?: number;
+  /** Consecutive network-budget exhaustions before the run stops. Omitted uses the session default. */
+  maxConsecutiveNetworkFailures?: number;
   maxRetryWaitMs: number;
   max429Retries: number;
   requestTimeoutMs: number;
@@ -156,6 +162,9 @@ export function liveOptionsFromEnv<T extends PublicExample>(
     ledgerPath: string;
     minimumImprovement: number;
     sizes?: SplitSizes;
+    maxTokensPerMinute?: number;
+    maxRequestsPerMinute?: number;
+    maxConsecutiveNetworkFailures?: number;
   },
 ): PublicLiveOptions {
   if (env[LIVE_ENV.allow] !== "1")
@@ -189,7 +198,10 @@ export function liveOptionsFromEnv<T extends PublicExample>(
     ...(args.sizes === undefined ? {} : { sizes: args.sizes }),
     limits: resolveLimits(env, task),
     minimumImprovement: args.minimumImprovement,
-    maxTokensPerMinute: pace.maxTokensPerMinute,
+    maxTokensPerMinute: args.maxTokensPerMinute ?? pace.maxTokensPerMinute,
+    maxRequestsPerMinute: args.maxRequestsPerMinute ?? pace.maxRequestsPerMinute,
+    maxConsecutiveNetworkFailures:
+      args.maxConsecutiveNetworkFailures ?? pace.maxConsecutiveNetworkFailures,
     maxRetryWaitMs: pace.maxRetryWaitMs,
     max429Retries: pace.max429Retries,
     requestTimeoutMs: pace.requestTimeoutMs,
@@ -228,6 +240,12 @@ export async function runLiveTask<T extends PublicExample>(
     apiVersion: options.apiVersion,
     ...(options.fetch ? { fetch: options.fetch } : {}),
     maxTokensPerMinute: options.maxTokensPerMinute,
+    ...(options.maxRequestsPerMinute === undefined
+      ? {}
+      : { maxRequestsPerMinute: options.maxRequestsPerMinute }),
+    ...(options.maxConsecutiveNetworkFailures === undefined
+      ? {}
+      : { maxConsecutiveNetworkFailures: options.maxConsecutiveNetworkFailures }),
     maxRetryWaitMs: options.maxRetryWaitMs,
     max429Retries: options.max429Retries,
     requestTimeoutMs: options.requestTimeoutMs,
@@ -522,9 +540,10 @@ function stopsTheRun(error: unknown): boolean {
 
 /** Policy refusals and a throw from harness or controller logic stay on that seed. */
 function isSeedScoped(error: unknown): boolean {
+  if (error instanceof NetworkOutageStop) return false;
   if (error instanceof ProviderRequestError) return perItemReason(error) !== null;
   if (!(error instanceof Error)) return false;
-  if (error instanceof ExhaustedProviderError) return false;
+  if (error instanceof ExhaustedProviderError) return isSeedNetworkFailure(error);
   if (error instanceof ItemFailureStop) return false;
   if (error instanceof RateLimitStop) return false;
   if (error instanceof UnsupportedInstructionError) return false;
@@ -543,6 +562,7 @@ function seedFailureView(
   if (listed) return { code: listed, message };
   if (error instanceof ProviderRequestError && error.detail.code)
     return { code: error.detail.code, message };
+  if (isSeedNetworkFailure(error)) return { code: "network", message };
   return { code: "seed_failed", message };
 }
 
@@ -550,6 +570,7 @@ function stoppedView(error: unknown, secrets: readonly string[]): { reason: stri
   const message = failureDetailText(
     redactSecrets(error instanceof Error ? error.message : "Live run failed.", secrets),
   );
+  if (error instanceof NetworkOutageStop) return { reason: "network_outage", message };
   if (error instanceof ItemFailureStop) return { reason: error.reason, message };
   if (error instanceof RateLimitStop) return { reason: "rate_limit", message };
   if (error instanceof UnsupportedInstructionError)

@@ -130,8 +130,10 @@ clearly about that prompt (`context_length_exceeded`,
 no usable text scores 0 for that row and the run continues. The same refusal
 on a controller call, including the last call of a seed, is recorded with its
 code and does not stop later seeds. A throw inside one seed is recorded with
-the seed number, arm, and error, and later seeds still run. Exhausted network
-or timeout retries, a 429 that persists after its retries, a 5xx, an auth
+the seed number, arm, and error, and later seeds still run. Exhausted transient
+network or timeout retries fail that seed and later seeds still run. After the
+configured number of those failures in a row, the run stops. A 429 that persists
+after its retries, a 5xx, an auth
 failure, and the budget cap set `stopped` and end the run. If every propose
 call in a seed is refused, that seed is `never_proposed` rather than no
 improvement, and the report counts those refusals. A truncation

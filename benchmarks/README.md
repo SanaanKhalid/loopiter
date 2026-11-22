@@ -44,8 +44,9 @@ scores. Both candidates go through the controller's unit counts, guardrails,
 and budget ledger. The served prompt is the accepted candidate with the highest
 paired effect on its audit round. An equal effect keeps the earlier round, then
 the id in byte order. A rejected round does not replace it. A production
-rollback drops the latest accepted candidate and serves the best one that
-remains.
+rollback drops the candidate that was undone and serves the best one that
+remains. A decision log that only records `rolled_back`, without those ids,
+still drops the latest accepted candidate.
 
 `--validation-rows` and `--audit-rows` override those two sizes on `--live`,
 `--estimate`, and `--fixtures`. See the flags table. Held-out is not
@@ -280,7 +281,9 @@ There are no baked-in prices or caps.
 | `LOOPITER_BENCH_REASONING_EFFORT` | no | `reasoning.effort` on each request. Default `low`. Accepted values: `none`, `minimal`, `low`, `medium`, `high`. `minimal` is for deployments that accept it. `omit` leaves the field off. Anything else refuses to start |
 | `LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS` | no | `max_output_tokens` for an answer. Default `256`. A finite integer greater than zero |
 | `LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS` | no | `max_output_tokens` for a proposal. Default `1024`. A finite integer greater than zero |
-| `LOOPITER_BENCH_MAX_TPM` | no | Tokens per rolling minute, using the realistic reservation (bytes/4 plus the output bound). The pacer uses 90% of this value so a full window is less likely to return HTTP 429. Unset or `0` turns pacing off. Any other value must be a finite integer greater than zero |
+| `LOOPITER_BENCH_MAX_TPM` | no | Tokens per rolling minute, using the realistic reservation (bytes/4 plus the output bound). The pacer uses 90% of this value so a full window is less likely to return HTTP 429. Unset or `0` turns token pacing off. Any other value must be a finite integer greater than zero. Live commands also accept `--max-tpm`, which overrides this variable. The same limit is honored by the KB-QA, HotpotQA, and IFBench live commands |
+| `LOOPITER_BENCH_MAX_RPM` | no | Requests per rolling minute, shared by every call in the run and applied with the token pacer. The pacer uses 90% of this value. Unset or `0` leaves request pacing off, which is the previous behavior. Any other value must be a finite integer greater than zero. `--max-rpm` overrides this variable |
+| `LOOPITER_BENCH_NETWORK_FAILURES` | no | Consecutive calls that exhaust the transient-network retry budget before the run stops. Default `5`. A finite integer greater than zero. `--network-failures` overrides this variable |
 | `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS` | no | Cap on each 429 wait. Default `60`. A finite integer greater than zero |
 | `LOOPITER_BENCH_MAX_429_RETRIES` | no | Extra attempts after HTTP 429. Default `1000`, a fuse. A rate-limited request stops when its wait budget runs out first. A finite integer greater than zero |
 | `LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS` | no | Per-request abort. Default `120`. A timed-out request is retried within the existing attempt limit |
@@ -365,11 +368,16 @@ smaller of the per-call wait cap and `(network retries + 429 retries) × max
 retry wait`. Reserved attempts are `MAX_ATTEMPTS + max 429 retries`. The
 attempt deadline stays at least the request timeout plus 60 seconds of pacing
 and 15 seconds of ledger time. The controller accepts a step of up to 2 hours.
-A plan that still does not fit is refused. The tick deadline covers that step. A per-request timeout, HTTP 500, 502, 503, and 504,
-and transient network failures whose cause is `ECONNRESET`, `ETIMEDOUT`,
+A plan that still does not fit is refused. The tick deadline covers that step. A per-request timeout
+and a transient network failure whose cause is `ECONNRESET`, `ETIMEDOUT`,
 `ECONNREFUSED`, `EAI_AGAIN`, or `UND_ERR_SOCKET` (including a socket hang up)
-are retried once. A bare `fetch failed`, `ENOTFOUND`, and TLS or certificate
-errors stop the run. Each of those retries logs the error class, waits with
+are retried up to 8 attempts, with exponential backoff and jitter. That wait
+stays inside the per-call wait cap. When those attempts run out, the current
+seed fails and later seeds still run. `LOOPITER_BENCH_NETWORK_FAILURES`
+(default 5) stops the run after that many calls in a row exhaust the network
+budget, so a real outage still stops cleanly. HTTP 500, 502, 503, and 504 are
+retried once and still stop the run. A bare `fetch failed`, `ENOTFOUND`, and TLS or certificate
+errors stop the run. Each retry logs the error class, waits with
 the same exponential backoff and jitter as a 429 that has no `Retry-After`,
 and is still checked against the spend cap before it is sent. HTTP 4xx other
 than 429, and any other error, stop the run. A model refusal or a completed
@@ -408,15 +416,19 @@ split; the report says `baseline not re-scored`.
 Every attempt, including those retries, is checked against the spend caps and
 added to the ledger. The pre-call spend check still uses the worst-case
 ceiling (one input token per request byte plus the output bound). If the
-retries run out, the process stops with a partial report that counts the 429
+rate-limit retries run out, the process stops with a partial report that counts the 429
 responses and the total wait. When `LOOPITER_BENCH_MAX_TPM` is set, requests
 are delayed so the rolling minute of the realistic reservation (bytes/4 plus
 the output bound) stays under 90% of that limit. After the response, the reservation
 is settled to the actual input plus output tokens. If actual usage is higher,
 the difference is debited in the same window. A single request larger than the
-limit is sent only while nothing else is in the window. Progress lines print
+limit is sent only while nothing else is in the window. When `LOOPITER_BENCH_MAX_RPM`
+is set, the same calls also wait so the rolling minute stays under 90% of that
+request limit. The two pacers both apply. Unset request pacing does not wait.
+Progress lines print
 every 50 attempts and at least every 2 minutes, including while waiting, with
-the call count, spend, and state. SIGINT or SIGTERM flushes the ledger and
+the call count, spend, state, and, once a call has completed, the HTTP 429
+responses per completed call. SIGINT or SIGTERM flushes the ledger and
 writes a partial report marked interrupted before the process exits. Waits are
 not logged with headers or the API key.
 

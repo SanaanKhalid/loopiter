@@ -61,8 +61,13 @@ export const OMIT_REASONING = "omit";
 export const REQUEST_TIMEOUT_MS = 20_000;
 export const DEFAULT_REQUEST_TIMEOUT_SECONDS = 120;
 export const PROGRESS_INTERVAL_MS = 120_000;
+/** HTTP 500, 502, 503, and 504. The first send plus one retry. */
 export const MAX_ATTEMPTS = 2;
-/** One initial send, plus network retries, plus every 429 retry. */
+/** Transient network and timeout errors, including the first send. */
+export const NETWORK_ATTEMPTS = 8;
+/** Consecutive calls that exhaust the network budget before the run stops. */
+export const DEFAULT_NETWORK_FAILURES = 5;
+/** One initial send, plus the short HTTP retry budget, plus every 429 retry. Network attempts are bounded by the per-call wait cap. */
 export function reservedAttemptsPerCall(max429Retries: number): number {
   return MAX_ATTEMPTS + max429Retries;
 }
@@ -236,7 +241,7 @@ export function perCallRetryWaitMs(input: {
   maxRetryWaitMs: number;
   maxTotalWaitMs: number;
 }): number {
-  const retries = Math.max(0, MAX_ATTEMPTS - 1) + Math.max(0, input.max429Retries);
+  const retries = Math.max(0, NETWORK_ATTEMPTS - 1) + Math.max(0, input.max429Retries);
   return Math.min(input.maxTotalWaitMs, retries * input.maxRetryWaitMs);
 }
 
@@ -323,6 +328,8 @@ export const LIVE_ENV = {
   predictMax: "LOOPITER_BENCH_PREDICT_MAX_OUTPUT_TOKENS",
   proposeMax: "LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS",
   maxTpm: "LOOPITER_BENCH_MAX_TPM",
+  maxRpm: "LOOPITER_BENCH_MAX_RPM",
+  networkFailures: "LOOPITER_BENCH_NETWORK_FAILURES",
   maxRetryWait: "LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS",
   max429Retries: "LOOPITER_BENCH_MAX_429_RETRIES",
   requestTimeout: "LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS",
@@ -810,7 +817,7 @@ export function renderEstimate(
     `Reasoning effort: ${limits.reasoningEffort ?? "omitted"}`,
     `Predict max output tokens: ${limits.predictMaxOutputTokens}`,
     `Propose max output tokens: ${limits.proposeMaxOutputTokens}`,
-    `Projection: input tokens are ceil(UTF-8 bytes / 4) of each request body. Output tokens are the max_output_tokens bound (${limits.predictMaxOutputTokens} for predict, ${limits.proposeMaxOutputTokens} for propose). Each call is rounded to micro-USD and summed. Cache discounts are not included. The pre-call spend ceiling still counts one input token per request byte plus that same output bound. TPM pacing reserves the smaller estimate (bytes/4 plus the output bound) against ${Math.round(PACE_HEADROOM * 100)}% of LOOPITER_BENCH_MAX_TPM, and the wall-time line uses that reservation and that pace, not the spend ceiling.`,
+    `Projection: input tokens are ceil(UTF-8 bytes / 4) of each request body. Output tokens are the max_output_tokens bound (${limits.predictMaxOutputTokens} for predict, ${limits.proposeMaxOutputTokens} for propose). Each call is rounded to micro-USD and summed. Cache discounts are not included. The pre-call spend ceiling still counts one input token per request byte plus that same output bound. TPM pacing reserves the smaller estimate (bytes/4 plus the output bound) against ${Math.round(PACE_HEADROOM * 100)}% of LOOPITER_BENCH_MAX_TPM, and the wall-time line uses that reservation and that pace, not the spend ceiling. When LOOPITER_BENCH_MAX_RPM is set, requests are also spaced to 90% of that rolling minute. Unset leaves request pacing off.`,
     "Candidate prompt sizes use a same-shape replacement fragment because the live proposal is not known ahead of time.",
     "",
     formatPlan(smoke, priced, maxTokensPerMinute),
@@ -842,8 +849,12 @@ export interface LiveRunOptions {
   predictMaxOutputTokens?: number;
   proposeMaxOutputTokens?: number;
   reasoningEffort?: string | null;
-  /** 0 disables pacing. Unset defaults to 0. */
+  /** 0 disables token pacing. Unset defaults to 0. */
   maxTokensPerMinute?: number;
+  /** 0 disables request pacing. Unset defaults to 0. */
+  maxRequestsPerMinute?: number;
+  /** Consecutive network-budget exhaustions before the run stops. Unset uses DEFAULT_NETWORK_FAILURES. */
+  maxConsecutiveNetworkFailures?: number;
   maxRetryWaitMs?: number;
   max429Retries?: number;
   /** Per-request abort. Unset uses DEFAULT_REQUEST_TIMEOUT_SECONDS. */
@@ -973,11 +984,67 @@ export class RateLimitStop extends Error {
   }
 }
 
-/** Network or timeout retries ran out. This stops the run instead of the current seed. */
+/**
+ * Retries ran out.
+ * `seedScoped` is a transient network or timeout budget: that fails the current seed.
+ * An HTTP retry budget still stops the run.
+ */
 export class ExhaustedProviderError extends Error {
-  constructor(message: string) {
+  readonly seedScoped: boolean;
+  constructor(message: string, seedScoped = false) {
     super(message);
     this.name = "ExhaustedProviderError";
+    this.seedScoped = seedScoped;
+  }
+}
+
+/** Too many calls in a row exhausted the transient-network budget. This stops the run. */
+export class NetworkOutageStop extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NetworkOutageStop";
+  }
+}
+
+export function isSeedNetworkFailure(error: unknown): boolean {
+  return error instanceof ExhaustedProviderError && error.seedScoped;
+}
+
+/**
+ * Sliding 60s request window. A limit of zero does not pace.
+ * One window is shared by every call on the session.
+ */
+export class RequestMinuteWindow {
+  private stamps: number[] = [];
+  constructor(
+    private readonly limit: number,
+    private readonly now: () => number,
+    private readonly sleep: (ms: number) => Promise<void>,
+  ) {}
+
+  /** Reserve one request. `beforeWait` may throw to refuse a stall. `signal` aborts a pace sleep. */
+  async acquire(beforeWait?: (ms: number) => void, signal?: AbortSignal): Promise<number> {
+    signal?.throwIfAborted();
+    if (this.limit <= 0) return 0;
+    let waited = 0;
+    for (;;) {
+      signal?.throwIfAborted();
+      const now = this.now();
+      this.stamps = this.stamps.filter((at) => now - at < 60_000);
+      if (this.stamps.length < this.limit) {
+        this.stamps.push(now);
+        return waited;
+      }
+      const oldest = this.stamps[0]!;
+      const wait = Math.max(1, 60_000 - (now - oldest));
+      beforeWait?.(wait);
+      const before = this.now();
+      await abortableSleep(this.sleep, wait, signal);
+      signal?.throwIfAborted();
+      const after = this.now();
+      if (after <= before) throw new Error("Pacer clock did not advance.");
+      waited += after - before;
+    }
   }
 }
 
@@ -1042,6 +1109,8 @@ export class LiveSession {
   readonly provider: AzureOpenAIProvider;
   readonly limits: RequestLimits;
   readonly maxTokensPerMinute: number;
+  readonly maxRequestsPerMinute: number;
+  readonly maxConsecutiveNetworkFailures: number;
   readonly max429Retries: number;
   readonly maxRetryWaitMs: number;
   readonly requestTimeoutMs: number;
@@ -1065,6 +1134,8 @@ export class LiveSession {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly random: () => number;
   private readonly pacer: TokenMinuteWindow;
+  private readonly requests: RequestMinuteWindow;
+  private consecutiveNetworkFailures = 0;
   private readonly secrets: readonly string[];
 
   constructor(
@@ -1078,6 +1149,10 @@ export class LiveSession {
       apiVersion: string;
       fetch?: typeof fetch;
       maxTokensPerMinute: number;
+      /** 0 disables request pacing. Unset defaults to 0. */
+      maxRequestsPerMinute?: number;
+      /** Consecutive network-budget exhaustions before the run stops. Unset uses DEFAULT_NETWORK_FAILURES. */
+      maxConsecutiveNetworkFailures?: number;
       maxRetryWaitMs: number;
       max429Retries: number;
       requestTimeoutMs: number;
@@ -1099,6 +1174,16 @@ export class LiveSession {
       reasoningEffort: options.reasoningEffort,
     };
     this.maxTokensPerMinute = options.maxTokensPerMinute;
+    this.maxRequestsPerMinute = options.maxRequestsPerMinute ?? 0;
+    this.maxConsecutiveNetworkFailures =
+      options.maxConsecutiveNetworkFailures ?? DEFAULT_NETWORK_FAILURES;
+    if (
+      !Number.isSafeInteger(this.maxConsecutiveNetworkFailures) ||
+      this.maxConsecutiveNetworkFailures < 1
+    )
+      throw new LiveGateError(
+        `${LIVE_ENV.networkFailures} must be a finite integer greater than zero. Refusing to start.`,
+      );
     this.max429Retries = options.max429Retries;
     this.maxRetryWaitMs = options.maxRetryWaitMs;
     this.requestTimeoutMs = options.requestTimeoutMs;
@@ -1121,6 +1206,11 @@ export class LiveSession {
     this.random = options.random;
     this.pacer = new TokenMinuteWindow(
       pacedTokenLimit(options.maxTokensPerMinute),
+      options.now,
+      options.sleep,
+    );
+    this.requests = new RequestMinuteWindow(
+      pacedTokenLimit(this.maxRequestsPerMinute),
       options.now,
       options.sleep,
     );
@@ -1200,6 +1290,7 @@ export class LiveSession {
     // retry inside it, so a 429 storm does not exhaust the callback ceiling.
     return meter(reservedModelTokens(body, maxOutput), async () => {
       let otherRetries = 0;
+      let networkRetries = 0;
       let rateRetries = 0;
       let retryWaited = 0;
       for (;;) {
@@ -1208,6 +1299,8 @@ export class LiveSession {
             this.once(input, body, maxOutput, AbortSignal.any([signal, deadline])),
           );
           this.touch();
+          this.consecutiveNetworkFailures = 0;
+          this.lastError = null;
           const tokens =
             value.inputTokens === null || value.outputTokens === null
               ? null
@@ -1272,16 +1365,21 @@ export class LiveSession {
             error instanceof ProviderRequestError && RETRY_STATUSES.has(error.status)
               ? error.status
               : null;
-          if ((!networkClass && httpStatus === null) || otherRetries >= MAX_ATTEMPTS - 1) {
+          const networkBudget = networkClass !== null && networkRetries >= NETWORK_ATTEMPTS - 1;
+          const httpBudget = httpStatus !== null && otherRetries >= MAX_ATTEMPTS - 1;
+          if ((!networkClass && httpStatus === null) || networkBudget || httpBudget) {
             const message = providerFailureMessage(error, this.secrets);
             this.lastError = message;
             this.touch();
             if (shouldLogProviderFailure(error)) console.error(message);
             if (error instanceof ProviderRequestError || error instanceof IncompleteOutputError) {
               error.message = message;
+              this.consecutiveNetworkFailures = 0;
               throw error;
             }
-            if (networkClass || httpStatus !== null) throw new ExhaustedProviderError(message);
+            if (networkClass) this.failNetwork(message);
+            if (httpStatus !== null) throw new ExhaustedProviderError(message);
+            this.consecutiveNetworkFailures = 0;
             throw new Error(message);
           }
           const worst: TokenUse = {
@@ -1291,14 +1389,30 @@ export class LiveSession {
           };
           if (!this.ledger.allow(worst, this.stopAtWarn))
             throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
-          otherRetries += 1;
-          const wait = retryWaitMs(otherRetries, null, this.maxRetryWaitMs, this.random);
+          const retryIndex = networkClass ? networkRetries + 1 : otherRetries + 1;
+          if (networkClass) networkRetries += 1;
+          else otherRetries += 1;
+          const wait = retryWaitMs(retryIndex, null, this.maxRetryWaitMs, this.random);
           console.error(`retrying ${networkClass ?? `HTTP ${httpStatus}`}`);
           await this.waitToRetry(signal, retryWaited, wait);
           retryWaited += wait;
         }
       }
     });
+  }
+
+  /** The network budget for this call is spent. N such calls in a row stop the run. */
+  private failNetwork(message: string): never {
+    this.consecutiveNetworkFailures += 1;
+    if (this.consecutiveNetworkFailures >= this.maxConsecutiveNetworkFailures) {
+      const stop = redactSecrets(
+        `Transient network errors failed ${this.consecutiveNetworkFailures} calls in a row. Stopping the run.`,
+        this.secrets,
+      );
+      this.lastError = stop;
+      throw new NetworkOutageStop(stop);
+    }
+    throw new ExhaustedProviderError(message, true);
   }
 
   private async waitToRetry(signal: AbortSignal, already: number, wait: number): Promise<void> {
@@ -1366,6 +1480,9 @@ export class LiveSession {
       throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
     const reserved = projectedInputTokens(body) + maxOutput;
     this.activity = "waiting on pace";
+    await this.requests.acquire((ms) => {
+      this.waitMs += ms;
+    }, signal);
     const paced = await this.pacer.acquire(
       reserved,
       (ms) => {
@@ -1442,6 +1559,8 @@ export class LiveSession {
         calls: this.ledger.invocationAttempts,
         spendUsd: formatUsd(this.ledger.invocationMicroUsd),
         state: this.activity,
+        rateLimitResponses: this.rateLimitResponses,
+        successes: this.ledger.calls,
       }),
     );
   }
@@ -1567,49 +1686,81 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
     for (const seed of options.seeds) {
       if (ledger.stopReason || session.isStopping()) break;
       const split = limitSplit(buildSplit(seed), options.rowLimit);
-      const baselineFragmentText = baselineFragment();
-      const baselineScore = await scoreSplit(session, split.test, baselineFragmentText);
-      const row: LiveSeed = { seed, baseline: baselineScore, candidate: null };
-      perSeed.push(row);
-      if (ledger.stopReason) {
-        failure = stopView(ledger.stopReason);
-        break;
+      let row: LiveSeed | undefined;
+      try {
+        const baselineFragmentText = baselineFragment();
+        const baselineScore = await scoreSplit(session, split.test, baselineFragmentText);
+        row = { seed, baseline: baselineScore, candidate: null };
+        perSeed.push(row);
+        if (ledger.stopReason) {
+          failure = stopView(ledger.stopReason);
+          break;
+        }
+        const loop = await runCandidate(session, split, seed);
+        const candidateFinished =
+          loop.state === "completed" ||
+          loop.state === "no_improvement" ||
+          loop.state === "rolled_back";
+        const failedOnBaseline =
+          loop.state === "failed" && loop.servedVersion === loop.baselineVersion;
+        const skipHeldOut =
+          session.isStopping() ||
+          !baselineScore.complete ||
+          !candidateFinished ||
+          !loop.servedFragment ||
+          !!ledger.stopReason;
+        const candidateScore =
+          skipHeldOut || !loop.servedFragment
+            ? emptyScore(split.test.length)
+            : await scoreSplit(session, split.test, loop.servedFragment);
+        if (ledger.stopReason && !failure) failure = stopView(ledger.stopReason);
+        row.candidate = {
+          heldOut: candidateScore,
+          state: loop.state,
+          reason: loop.reason,
+          servedArtifactVersion: loop.servedVersion,
+          baselineArtifactVersion: loop.baselineVersion,
+          ...(skipHeldOut
+            ? {
+                heldOutNote: failedOnBaseline ? "baseline not re-scored" : "held-out not scored",
+              }
+            : {}),
+        };
+        if (ledger.stopReason) break;
+        if (loop.failure?.seedScoped) {
+          session.lastError = null;
+          continue;
+        }
+        if (loop.failure) {
+          if (!failure) failure = loop.failure;
+          break;
+        }
+      } catch (error) {
+        if (!(error instanceof NetworkOutageStop) && isSeedNetworkFailure(error)) {
+          if (!row) {
+            perSeed.push({
+              seed,
+              baseline: emptyScore(split.test.length),
+              candidate: {
+                heldOut: emptyScore(split.test.length),
+                state: "failed",
+                reason: "network",
+                servedArtifactVersion: "",
+                baselineArtifactVersion: "",
+                heldOutNote: "network retries exhausted",
+              },
+            });
+          }
+          session.lastError = null;
+          continue;
+        }
+        throw error;
       }
-      const loop = await runCandidate(session, split, seed);
-      if (loop.failure && !failure) failure = loop.failure;
-      const candidateFinished =
-        loop.state === "completed" ||
-        loop.state === "no_improvement" ||
-        loop.state === "rolled_back";
-      const failedOnBaseline =
-        loop.state === "failed" && loop.servedVersion === loop.baselineVersion;
-      const skipHeldOut =
-        session.isStopping() ||
-        !baselineScore.complete ||
-        !candidateFinished ||
-        !loop.servedFragment ||
-        !!ledger.stopReason;
-      const candidateScore =
-        skipHeldOut || !loop.servedFragment
-          ? emptyScore(split.test.length)
-          : await scoreSplit(session, split.test, loop.servedFragment);
-      if (ledger.stopReason && !failure) failure = stopView(ledger.stopReason);
-      row.candidate = {
-        heldOut: candidateScore,
-        state: loop.state,
-        reason: loop.reason,
-        servedArtifactVersion: loop.servedVersion,
-        baselineArtifactVersion: loop.baselineVersion,
-        ...(skipHeldOut
-          ? {
-              heldOutNote: failedOnBaseline ? "baseline not re-scored" : "held-out not scored",
-            }
-          : {}),
-      };
-      if (ledger.stopReason || loop.failure) break;
     }
   } catch (error) {
-    failure = isAttemptDeadline(error)
+    failure = error instanceof NetworkOutageStop
+      ? { reason: "network_outage", message: redactSecrets(error.message, secrets) }
+      : isAttemptDeadline(error)
       ? { reason: "attempt_deadline", message: errorText(error) }
       : session.waitLimitReached
       ? {
@@ -1716,6 +1867,9 @@ export function liveOptionsFromEnv(
     smoke: boolean;
     stopAtWarn: boolean;
     ledgerPath: string;
+    maxTokensPerMinute?: number;
+    maxRequestsPerMinute?: number;
+    maxConsecutiveNetworkFailures?: number;
   },
 ): LiveRunOptions {
   if (env[LIVE_ENV.allow] !== "1")
@@ -1752,7 +1906,10 @@ export function liveOptionsFromEnv(
     predictMaxOutputTokens: limits.predictMaxOutputTokens,
     proposeMaxOutputTokens: limits.proposeMaxOutputTokens,
     reasoningEffort: limits.reasoningEffort,
-    maxTokensPerMinute: pace.maxTokensPerMinute,
+    maxTokensPerMinute: args.maxTokensPerMinute ?? pace.maxTokensPerMinute,
+    maxRequestsPerMinute: args.maxRequestsPerMinute ?? pace.maxRequestsPerMinute,
+    maxConsecutiveNetworkFailures:
+      args.maxConsecutiveNetworkFailures ?? pace.maxConsecutiveNetworkFailures,
     maxRetryWaitMs: pace.maxRetryWaitMs,
     max429Retries: pace.max429Retries,
     requestTimeoutMs: pace.requestTimeoutMs,
@@ -1799,6 +1956,8 @@ export function assertLiveSpendGuards(input: {
 
 export interface PaceSettings {
   maxTokensPerMinute: number;
+  maxRequestsPerMinute: number;
+  maxConsecutiveNetworkFailures: number;
   maxRetryWaitMs: number;
   max429Retries: number;
   requestTimeoutMs: number;
@@ -1814,6 +1973,17 @@ export function paceSettings(options: LiveRunOptions): PaceSettings {
     throw new LiveGateError(
       `${LIVE_ENV.maxTpm} must be a finite integer greater than zero, or 0 to disable pacing. Refusing to start.`,
     );
+  const maxRequestsPerMinute = options.maxRequestsPerMinute ?? 0;
+  if (!Number.isSafeInteger(maxRequestsPerMinute) || maxRequestsPerMinute < 0)
+    throw new LiveGateError(
+      `${LIVE_ENV.maxRpm} must be a finite integer greater than zero, or 0 to disable pacing. Refusing to start.`,
+    );
+  const maxConsecutiveNetworkFailures =
+    options.maxConsecutiveNetworkFailures ?? DEFAULT_NETWORK_FAILURES;
+  if (!Number.isSafeInteger(maxConsecutiveNetworkFailures) || maxConsecutiveNetworkFailures < 1)
+    throw new LiveGateError(
+      `${LIVE_ENV.networkFailures} must be a finite integer greater than zero. Refusing to start.`,
+    );
   const maxRetryWaitMs = options.maxRetryWaitMs ?? DEFAULT_MAX_RETRY_WAIT_SECONDS * 1000;
   requirePositiveInt(maxRetryWaitMs, LIVE_ENV.maxRetryWait);
   const max429Retries = options.max429Retries ?? RATE_LIMIT_RETRY_FUSE;
@@ -1826,6 +1996,8 @@ export function paceSettings(options: LiveRunOptions): PaceSettings {
   requirePositiveInt(maxTotalWaitMs, LIVE_ENV.maxTotalWait);
   return {
     maxTokensPerMinute,
+    maxRequestsPerMinute,
+    maxConsecutiveNetworkFailures,
     maxRetryWaitMs,
     max429Retries,
     requestTimeoutMs,
@@ -1839,6 +2011,8 @@ export function paceSettings(options: LiveRunOptions): PaceSettings {
 export function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
   PaceSettings,
   | "maxTokensPerMinute"
+  | "maxRequestsPerMinute"
+  | "maxConsecutiveNetworkFailures"
   | "maxRetryWaitMs"
   | "max429Retries"
   | "requestTimeoutMs"
@@ -1846,6 +2020,12 @@ export function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
 > {
   return {
     maxTokensPerMinute: readMaxTpm(env),
+    maxRequestsPerMinute: readMaxRpm(env),
+    maxConsecutiveNetworkFailures: readOptionalIntOr(
+      env,
+      LIVE_ENV.networkFailures,
+      DEFAULT_NETWORK_FAILURES,
+    ),
     maxRetryWaitMs: readOptionalIntOr(env, LIVE_ENV.maxRetryWait, DEFAULT_MAX_RETRY_WAIT_SECONDS) * 1000,
     max429Retries: readOptionalIntOr(env, LIVE_ENV.max429Retries, RATE_LIMIT_RETRY_FUSE),
     requestTimeoutMs:
@@ -1876,17 +2056,59 @@ export function stallTimeoutFromEnv(
 }
 
 export function readMaxTpm(env: NodeJS.ProcessEnv): number {
-  const raw = env[LIVE_ENV.maxTpm];
+  return readPaceCap(env, LIVE_ENV.maxTpm);
+}
+
+export function readMaxRpm(env: NodeJS.ProcessEnv): number {
+  return readPaceCap(env, LIVE_ENV.maxRpm);
+}
+
+function readPaceCap(env: NodeJS.ProcessEnv, name: string): number {
+  const raw = env[name];
   if (raw === undefined) return 0;
   const trimmed = raw.trim();
   if (trimmed === "0") return 0;
   if (!/^[1-9]\d*$/.test(trimmed))
     throw new LiveGateError(
-      `${LIVE_ENV.maxTpm} must be a finite integer greater than zero, or 0 to disable pacing. Refusing to start.`,
+      `${name} must be a finite integer greater than zero, or 0 to disable pacing. Refusing to start.`,
     );
   const value = Number(trimmed);
-  requirePositiveInt(value, LIVE_ENV.maxTpm);
+  requirePositiveInt(value, name);
   return value;
+}
+
+/** CLI overrides for the pace env vars. Absent flags leave the env value in place. */
+export function paceOverrides(argv: readonly string[]): {
+  maxTokensPerMinute?: number;
+  maxRequestsPerMinute?: number;
+  maxConsecutiveNetworkFailures?: number;
+} {
+  const maxTokensPerMinute = optionalWholeFlag(argv, "--max-tpm");
+  const maxRequestsPerMinute = optionalWholeFlag(argv, "--max-rpm");
+  const maxConsecutiveNetworkFailures = optionalWholeFlag(argv, "--network-failures");
+  if (maxConsecutiveNetworkFailures === 0)
+    throw new LiveGateError(
+      "--network-failures must be a finite integer greater than zero. Refusing to start.",
+    );
+  return {
+    ...(maxTokensPerMinute === undefined ? {} : { maxTokensPerMinute }),
+    ...(maxRequestsPerMinute === undefined ? {} : { maxRequestsPerMinute }),
+    ...(maxConsecutiveNetworkFailures === undefined ? {} : { maxConsecutiveNetworkFailures }),
+  };
+}
+
+/** Whole-number flag. Absent is undefined so the env value still applies. */
+export function optionalWholeFlag(argv: readonly string[], name: string): number | undefined {
+  const index = argv.indexOf(name);
+  if (index === -1) return undefined;
+  const raw = argv[index + 1];
+  if (raw === undefined || raw.startsWith("--"))
+    throw new LiveGateError(`Missing value for ${name}.`);
+  if (!/^(?:0|[1-9]\d*)$/.test(raw))
+    throw new LiveGateError(
+      `${name} must be a whole number. Refusing to start.`,
+    );
+  return Number(raw);
 }
 
 function readOptionalIntOr(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -2277,7 +2499,7 @@ async function runCandidate(
   servedFragment: string | null;
   servedVersion: string;
   baselineVersion: string;
-  failure: { reason: string; message: string } | null;
+  failure: { reason: string; message: string; seedScoped?: boolean } | null;
 }> {
   const reserve = widestReserve(session.provider.model, session.limits);
   const inLoop =
@@ -2512,6 +2734,21 @@ async function runCandidate(
                 : null,
     };
   } catch (error) {
+    if (error instanceof NetworkOutageStop) throw error;
+    if (isSeedNetworkFailure(error)) {
+      return {
+        state: "failed",
+        reason: "network",
+        servedFragment: baselineFragment(),
+        servedVersion: baselineVersion,
+        baselineVersion,
+        failure: {
+          reason: "network",
+          message: session.redact(errorText(error)),
+          seedScoped: true,
+        },
+      };
+    }
     if (session.isStopping()) {
       return {
         state: "cancelled",
@@ -2860,8 +3097,16 @@ export function formatProgress(input: {
   calls: number;
   spendUsd: string;
   state: string;
+  /** HTTP 429 responses so far. Omitted leaves the line unchanged. */
+  rateLimitResponses?: number;
+  /** Completed calls. The 429 ratio uses this denominator. */
+  successes?: number;
 }): string {
-  return `progress calls=${input.calls} spend=${input.spendUsd} USD state=${input.state}`;
+  const ratio =
+    input.rateLimitResponses !== undefined && input.successes !== undefined && input.successes > 0
+      ? ` rate429=${(input.rateLimitResponses / input.successes).toFixed(3)}`
+      : "";
+  return `progress calls=${input.calls} spend=${input.spendUsd} USD state=${input.state}${ratio}`;
 }
 
 export function startProgressTicker(intervalMs: number, emit: () => void): { stop: () => void } {

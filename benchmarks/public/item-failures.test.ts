@@ -9,7 +9,7 @@ import type { IfExample } from "../ifbench/fixtures.js";
 import { UnsupportedInstructionError } from "../ifbench/score.js";
 import { hotpotTask } from "../hotpotqa/task.js";
 import { row } from "../hotpotqa/fixtures.js";
-import { LiveLedger, LiveSession } from "../kb-qa/live.js";
+import { LiveLedger, LiveSession, NETWORK_ATTEMPTS } from "../kb-qa/live.js";
 import { PREDICT_NAME, PROPOSE_NAME } from "./instructions.js";
 import {
   ITEM_FAILURE_CONSECUTIVE,
@@ -329,16 +329,26 @@ test("a throw inside one seed is reported and the other seeds finish", async () 
   assertNoLeaks(JSON.stringify(seen.report));
 });
 
-test("exhausted network retries stop the run", async () => {
-  const seen = await runIfbench(2, () => {
-    const error = new Error("socket down") as Error & { code: string };
-    error.code = "ECONNRESET";
-    throw error;
-  });
-  assert.equal(seen.report.stopped?.reason, "provider_error");
-  assert.match(seen.report.stopped?.message ?? "", /socket down/);
-  assert.equal(seen.report.perSeed.length, 0);
-  assert.equal(seen.fetches, 2);
+test("exhausted network retries fail the seed and the run continues", async () => {
+  const seen = await runNetwork({ seeds: 2, failCalls: 1 });
+  assert.equal(seen.report.stopped, null);
+  assert.equal(seen.report.perSeed.length, 2);
+  assert.equal(seen.report.perSeed[0]?.status, "failed");
+  assert.equal(seen.report.perSeed[0]?.failure?.code, "network");
+  assert.match(seen.report.perSeed[0]?.failure?.message ?? "", /socket down/);
+  assert.equal(seen.report.perSeed[1]?.status, "complete");
+  assert.equal(seen.report.passed, false);
+  assert.ok(seen.fetches > NETWORK_ATTEMPTS);
+  assertNoLeaks(JSON.stringify(seen.report));
+});
+
+test("the network breaker stops the run after consecutive failures", async () => {
+  const seen = await runNetwork({ seeds: 2, failCalls: 99, networkFailures: 2 });
+  assert.equal(seen.report.stopped?.reason, "network_outage");
+  assert.match(seen.report.stopped?.message ?? "", /2 calls in a row/);
+  assert.equal(seen.report.perSeed.length, 1);
+  assert.equal(seen.report.perSeed[0]?.status, "failed");
+  assert.equal(seen.fetches, NETWORK_ATTEMPTS * 2);
   assert.equal(seen.report.passed, false);
   assertNoLeaks(JSON.stringify(seen.report));
 });
@@ -685,6 +695,71 @@ async function runIfbench(
         },
       },
       { pool, heldOut },
+    );
+    return { report, fetches };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function runNetwork(input: {
+  seeds: number;
+  failCalls: number;
+  networkFailures?: number;
+}): Promise<{ report: Awaited<ReturnType<typeof runLiveTask>>; fetches: number }> {
+  const directory = await mkdtemp(join(tmpdir(), "network-seed-"));
+  let fetches = 0;
+  let failedCalls = 0;
+  const sizes = { optimization: 2, validation: 5, audit: 10, production: 2, heldOut: 4 };
+  try {
+    const report = await runLiveTask(
+      { ...hotpotTask, fullSizes: sizes },
+      {
+        seeds: Array.from({ length: input.seeds }, (_, index) => index + 1),
+        smoke: true,
+        deployment: "loopiter-gpt-5-6",
+        apiVersion: "v1",
+        endpoint: "https://example.openai.azure.com/",
+        apiKey: KEY,
+        prices: { inputUsdPerMillion: 1, outputUsdPerMillion: 2, cachedInputUsdPerMillion: 0 },
+        totalCapUsd: 50,
+        warnUsd: 40,
+        invocationCapUsd: 50,
+        stopAtWarn: false,
+        ledgerPath: join(directory, "ledger.json"),
+        limits: resolveLimits({}, hotpotTask),
+        minimumImprovement: 0,
+        maxTokensPerMinute: 0,
+        maxRetryWaitMs: 1,
+        max429Retries: 1,
+        requestTimeoutMs: 1_000,
+        maxTotalWaitMs: 60_000,
+        stallTimeoutMs: 600_000,
+        ...(input.networkFailures === undefined
+          ? {}
+          : { maxConsecutiveNetworkFailures: input.networkFailures }),
+        fetch: async (_url, init) => {
+          fetches += 1;
+          const attempt = (fetches - 1) % NETWORK_ATTEMPTS;
+          if (failedCalls < input.failCalls) {
+            if (attempt === NETWORK_ATTEMPTS - 1) failedCalls += 1;
+            const error = new Error("socket down") as Error & { code: string };
+            error.code = "ECONNRESET";
+            throw error;
+          }
+          const raw = typeof init?.body === "string" ? init.body : "";
+          const parsed = raw
+            ? (JSON.parse(raw) as { text?: { format?: { name?: string } } })
+            : {};
+          if (parsed.text?.format?.name === PROPOSE_NAME)
+            return answerResponse(hotpotTask.baselinePrompt, "fragment");
+          return answerResponse("Paris");
+        },
+      },
+      {
+        pool: Array.from({ length: 19 }, (_, index) => row(`pool-${index}`, "Paris", false)),
+        heldOut: Array.from({ length: sizes.heldOut }, (_, index) => row(`held-${index}`, "Paris", false)),
+      },
     );
     return { report, fetches };
   } finally {

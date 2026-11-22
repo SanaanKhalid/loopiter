@@ -50,8 +50,17 @@ export interface SeedDecisionLog {
   splits?: SplitSizes;
   /** Set only after the harness checks the served prompt against this log. */
   complete?: boolean;
-  /** Production observation undid the last accepted deploy. The rule decisions stay. */
+  /**
+   * Production observation undid a deploy. The rule decisions stay.
+   * Without `rolledBackIds`, this still drops the latest accepted candidate.
+   */
   observation?: "rolled_back";
+  /**
+   * Candidates whose accepted deploy was undone.
+   * When this list is present and non-empty, settle drops these ids and no others.
+   * Logs written before this field still replay through `observation`.
+   */
+  rolledBackIds?: string[];
   /** Optional totals for an offline sanity check. The rule does not read them. */
   heldOut?: Record<string, HeldOutTotal>;
 }
@@ -112,13 +121,24 @@ export function appendRound(
   return round;
 }
 
+/** Record a production rollback against the candidates that were actually undone. */
+export function noteRolledBack(log: SeedDecisionLog, candidateIds: readonly string[]): void {
+  const ids = [
+    ...new Set(candidateIds.filter((id) => typeof id === "string" && id.length > 0)),
+  ];
+  log.observation = "rolled_back";
+  if (ids.length === 0) return;
+  log.rolledBackIds = [...new Set([...(log.rolledBackIds ?? []), ...ids])];
+}
+
 /**
  * The served prompt is the accepted candidate with the highest paired effect
  * on its audit round. Equal effects keep the earlier round, then the id in
- * byte order. A rollback drops the latest accepted candidate.
+ * byte order. A rollback drops the candidates named in `rolledBackIds`.
+ * A log that only says `rolled_back` still drops the latest accepted candidate.
  */
 export function settleSeed(
-  log: Pick<SeedDecisionLog, "baseline" | "rounds" | "observation">,
+  log: Pick<SeedDecisionLog, "baseline" | "rounds" | "observation" | "rolledBackIds">,
 ): PromptRef {
   const validated = new Set<string>();
   const accepted: { id: string; promptHash: string; effect: number; round: number }[] = [];
@@ -135,7 +155,13 @@ export function settleSeed(
       });
     }
   }
-  if (log.observation === "rolled_back" && accepted.length > 0) {
+  const named = log.rolledBackIds?.filter((id) => id.length > 0) ?? [];
+  if (named.length > 0) {
+    const drop = new Set(named);
+    for (let index = accepted.length - 1; index >= 0; index--) {
+      if (drop.has(accepted[index]!.id)) accepted.splice(index, 1);
+    }
+  } else if (log.observation === "rolled_back" && accepted.length > 0) {
     let latest = 0;
     for (let index = 1; index < accepted.length; index++)
       if (accepted[index]!.round > accepted[latest]!.round) latest = index;
@@ -178,6 +204,7 @@ export function replaySeed(
     const incumbent = settleSeed({
       baseline: log.baseline,
       rounds: log.rounds.slice(0, index),
+      ...(log.rolledBackIds ? { rolledBackIds: log.rolledBackIds } : {}),
     });
     if (!sameRule(round.rule, expected))
       mismatches.push(`seed ${log.seed} round ${round.round} rule`);
@@ -288,6 +315,9 @@ function validateSeed(log: SeedDecisionLog): void {
   requireRef(log.baseline, "baseline");
   requireRef(log.served, "served");
   if (log.splits !== undefined) requireSplitSizes(log.splits, log.seed);
+  if (log.observation !== undefined && log.observation !== "rolled_back")
+    throw new Error(`Seed ${log.seed} has an unknown observation.`);
+  if (log.rolledBackIds !== undefined) requireRollbackIds(log.rolledBackIds, log.seed);
   const ids = new Set<string>();
   for (const round of log.rounds) {
     if (!round || typeof round.round !== "number")
@@ -336,6 +366,17 @@ function sameNoise(again: GateDecision, stored: GateDecision): boolean {
     (effective === undefined ? again.effectiveThreshold === null : effective === again.effectiveThreshold) &&
     (binding === undefined ? again.bindingThreshold === null : binding === again.bindingThreshold)
   );
+}
+
+function requireRollbackIds(ids: readonly string[], seed: number): void {
+  if (!Array.isArray(ids)) throw new Error(`Seed ${seed} has a malformed rollback list.`);
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (typeof id !== "string" || id.length === 0)
+      throw new Error(`Seed ${seed} has a malformed rollback list.`);
+    if (seen.has(id)) throw new Error(`Seed ${seed} repeats rolled-back candidate ${id}.`);
+    seen.add(id);
+  }
 }
 
 function requireSplitSizes(sizes: SplitSizes, seed: number): void {

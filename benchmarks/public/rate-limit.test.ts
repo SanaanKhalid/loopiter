@@ -8,6 +8,7 @@ import type { IfExample } from "../ifbench/fixtures.js";
 import {
   LiveLedger,
   LiveSession,
+  NETWORK_ATTEMPTS,
   createStallWatchdog,
   rateLimitBudgetMs,
   DEFAULT_RATE_LIMIT_BUDGET_MS,
@@ -171,7 +172,7 @@ test("a timeout still spends the ceiling after a 429 is released", async () => {
     maxRetryWaitMs: 1_000,
     max429Retries: 2,
     requestTimeoutMs: 30,
-    maxTotalWaitMs: 5_000,
+    maxTotalWaitMs: 60_000,
     now: Date.now,
     sleep: async () => undefined,
     random: () => 0,
@@ -190,7 +191,7 @@ test("a timeout still spends the ceiling after a 429 is released", async () => {
   );
   assert.equal(ledger.rejectedAttempts, 1);
   assert.ok(ledger.totalMicroUsd > 0);
-  assert.equal(fetches, 3);
+  assert.equal(fetches, 1 + NETWORK_ATTEMPTS);
   await import("node:fs/promises").then((fs) => fs.rm(directory, { recursive: true, force: true }));
 });
 
