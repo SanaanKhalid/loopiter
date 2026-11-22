@@ -2,6 +2,8 @@
  * Opt-in Azure path. Live calls require --live and LOOPITER_BENCH_ALLOW_LIVE=1.
  * The spend ledger, pacer, retries, stall watchdog, and redaction are the kb-qa session.
  */
+import { mkdir, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { failureDetailText, LoopiterError, type CallbackContext } from "../../src/index.js";
 import { ProviderRequestError } from "../../examples/prompt-improvement/provider.js";
 import {
@@ -131,8 +133,13 @@ export interface PublicLiveReport {
   strongPromptVersion: string;
   analysisPlan: string;
   analysisPlanSha256: string;
-  /** Null when the run failed or no seed completed. */
+  /** Null when the run failed, no seed completed, or paired analysis threw. */
   headline: ArmComparison | null;
+  /**
+   * Set when paired analysis throws. Headline, comparisons, and prompt
+   * sensitivity stay null. The per-seed items are still on the report.
+   */
+  analysisError?: string;
   comparisons: ArmComparison[] | null;
   promptSensitivity: PromptSensitivity | null;
   armFailures: ArmFailureReport;
@@ -327,6 +334,9 @@ export async function runLiveTask<T extends PublicExample>(
     process.on("SIGINT", onInterrupt);
     process.on("SIGTERM", onInterrupt);
   }
+  const saveHeldOutQuestions = async (): Promise<void> => {
+    if (options.reportPath) await writeHeldOutQuestions(options.reportPath, perSeed);
+  };
   let failure: { reason: string; message: string } | null = null;
   try {
     for (const seed of options.seeds) {
@@ -338,6 +348,7 @@ export async function runLiveTask<T extends PublicExample>(
       let strongPrompt: RateDraft | undefined;
       let oneShot: Awaited<ReturnType<typeof runOneShot>> | undefined;
       let controller: Awaited<ReturnType<typeof runController>> | undefined;
+      let recorded = false;
       try {
         const split = limitSplit(
           buildSeededSplit({
@@ -406,13 +417,15 @@ export async function runLiveTask<T extends PublicExample>(
           status: neverProposed ? "never_proposed" : "complete",
           failure: null,
         });
+        recorded = true;
+        await saveHeldOutQuestions();
         if (ledger.stopReason) {
           failure = { reason: ledger.stopReason, message: "Spend cap reached." };
           break;
         }
       } catch (error) {
-        if (stopsTheRun(error)) throw error;
-        const recorded = seedFailureView(error, secrets);
+        if (stopsTheRun(error) || recorded) throw error;
+        const recordedFailure = seedFailureView(error, secrets);
         const kind = failureKindForError(error);
         if (kind) addArmFailure(armFailures, phase, kind);
         perSeed.push({
@@ -423,13 +436,14 @@ export async function runLiveTask<T extends PublicExample>(
           controllerServed: controller?.heldOut ?? emptyDraft(),
           controllerUngated: controller?.ungated ?? null,
           controllerState: "failed",
-          controllerReason: recorded.code,
-          controllerDetail: recorded.message,
+          controllerReason: recordedFailure.code,
+          controllerDetail: recordedFailure.message,
           proposeCalls: proposeTally.calls - callsAt,
           proposeRefusals: proposeTally.refused - refusedAt,
           status: "failed",
-          failure: { arm: phase, code: recorded.code, message: recorded.message },
+          failure: { arm: phase, code: recordedFailure.code, message: recordedFailure.message },
         });
+        await saveHeldOutQuestions();
       }
     }
   } catch (error) {
@@ -649,8 +663,11 @@ function buildReport<T extends PublicExample>(
   const seedFailures = perSeed.flatMap((row) =>
     row.failure ? [{ seed: row.seed, arm: row.failure.arm, code: row.failure.code, message: row.failure.message }] : [],
   );
-  const analysis = scored
-    ? analyzeSeeds(
+  let analysis: ReturnType<typeof analyzeSeeds> | null = null;
+  let analysisError: string | undefined;
+  if (scored) {
+    try {
+      analysis = analyzeSeeds(
         counted.map((row) => ({
           seed: row.seed,
           baseline: row.baseline.items,
@@ -659,8 +676,11 @@ function buildReport<T extends PublicExample>(
           controllerServed: row.controllerServed.items,
           controllerUngated: row.controllerUngated?.items ?? null,
         })),
-      )
-    : null;
+      );
+    } catch (error) {
+      analysisError = error instanceof Error && error.message.trim() ? error.message : "Analysis failed.";
+    }
+  }
   return {
     schemaVersion: 1,
     harness: `loopiter-live-${task.id}`,
@@ -681,6 +701,7 @@ function buildReport<T extends PublicExample>(
     headline: analysis?.headline ?? null,
     comparisons: analysis?.comparisons ?? null,
     promptSensitivity: analysis?.promptSensitivity ?? null,
+    ...(analysisError === undefined ? {} : { analysisError }),
     armFailures,
     arms: scored
       ? {
@@ -722,10 +743,54 @@ function buildReport<T extends PublicExample>(
       rejectedAttempts: ledger.rejectedAttempts,
     },
     passed:
+      analysisError === undefined &&
       failure === null &&
       perSeed.length === options.seeds.length &&
       perSeed.every((row) => row.status !== "failed"),
   };
+}
+
+/** `<reportPath>.questions.json`, the raw held-out items saved beside a live report. */
+export function heldOutQuestionsPath(reportPath: string): string {
+  return `${reportPath}.questions.json`;
+}
+
+/** Sibling temp path. The target is replaced only after this file is fully written. */
+export function heldOutQuestionsTempPath(reportPath: string): string {
+  return `${heldOutQuestionsPath(reportPath)}.${process.pid}.tmp`;
+}
+
+/**
+ * Write every held-out question recorded so far, per seed and per arm.
+ * The body goes to a temp file in the same directory, then replaces the target.
+ * A crash during the write leaves the previous target intact.
+ */
+export async function writeHeldOutQuestions(
+  reportPath: string,
+  perSeed: PublicLiveReport["perSeed"],
+): Promise<void> {
+  const target = heldOutQuestionsPath(reportPath);
+  const temporary = heldOutQuestionsTempPath(reportPath);
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(
+    temporary,
+    `${JSON.stringify(
+      {
+        perSeed: perSeed.map((row) => ({
+          seed: row.seed,
+          baseline: row.baseline.items,
+          strongPrompt: row.strongPrompt.items,
+          oneShot: row.oneShot.items,
+          controllerServed: row.controllerServed.items,
+          controllerUngated: row.controllerUngated?.items ?? null,
+        })),
+      },
+      null,
+      2,
+    )}\n`,
+    { mode: 0o600 },
+  );
+  await rename(temporary, target);
 }
 
 function signalOf(context: CallbackContext | null): AbortSignal {

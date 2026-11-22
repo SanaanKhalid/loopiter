@@ -152,7 +152,8 @@ outside the default core import.
 
 `npm run benchmark:offline` compares a frozen baseline with the autonomous
 controller on a synthetic knowledge-base task. It uses seeded mocks only.
-See [benchmarks/README.md](benchmarks/README.md).
+See [benchmarks/README.md](benchmarks/README.md). A live run writes its report
+when analysis fails, and it saves raw held-out items after each seed.
 
 ## Capture a local example
 

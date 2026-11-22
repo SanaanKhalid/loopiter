@@ -114,6 +114,13 @@ reports network, timeout, 5xx, refusal, and parse counts. The prompt-sensitivity
 score is the range of pooled held-out accuracy across the prompt arms. The
 plan defines that score.
 
+A live run writes its report when paired analysis fails. The headline,
+comparisons, and prompt sensitivity are null, and `analysisError` is the
+message. The process logs that failure and exits non-zero. Raw held-out items
+are also saved after every seed, including a seed that fails, to
+`<out>.questions.json`. That file is written to a temporary file in the same
+directory and renamed into place, so a crash does not leave a partial file.
+
 The arms are the frozen baseline, a hand-written strong prompt, the one-shot
 rewrite, and the served controller prompt. The strong prompt is scored on the
 same held-out items and seeds. HotpotQA held-out is 1000 rows from the same

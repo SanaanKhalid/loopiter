@@ -12,7 +12,7 @@ import { decisionsBeside } from "./decisions.js";
 import { renderTaskEstimate } from "./estimate.js";
 import { renderMarkdown, runOfflineBenchmark } from "./harness.js";
 import { renderItemFailureSummary } from "./item-failures.js";
-import { liveOptionsFromEnv, runLiveTask } from "./live.js";
+import { liveOptionsFromEnv, runLiveTask, type PublicLiveReport } from "./live.js";
 import { applyRowCounts, type SplitSizes } from "./splits.js";
 import type { BenchmarkTask, PublicExample } from "./task.js";
 
@@ -169,15 +169,7 @@ async function runLiveCli<T extends PublicExample>(
       { ...live, reportPath: out, decisionLogPath: decisionsBeside(out), handleSignals: true },
       loaded,
     );
-    const json = `${JSON.stringify(report, null, 2)}\n`;
-    if (secret && json.includes(secret))
-      throw new LiveGateError("Refusing to write a report that contains a credential.");
-    await boundedWrite(out, json);
-    console.log(`${report.passed ? "PASS" : "FAIL"} ${out}`);
-    const failureSummary = renderItemFailureSummary(report.itemFailures);
-    if (failureSummary) console.error(failureSummary);
-    if (report.stopped) console.error(report.stopped.message);
-    if (!report.passed) process.exitCode = 1;
+    await publishLiveReport(out, report, secret);
   } catch (error) {
     if (error instanceof LiveGateError && !secret) {
       console.error(error.message);
@@ -186,6 +178,27 @@ async function runLiveCli<T extends PublicExample>(
     console.error(redactSecrets(errorText(error), secret ? [secret] : secretValues()));
     process.exit(error instanceof LiveGateError ? 2 : 1);
   }
+}
+
+/** Writes the live report, then logs a failed analysis without printing a headline. */
+export async function publishLiveReport(
+  out: string,
+  report: PublicLiveReport,
+  secret = "",
+): Promise<void> {
+  const json = `${JSON.stringify(report, null, 2)}\n`;
+  if (secret && json.includes(secret))
+    throw new LiveGateError("Refusing to write a report that contains a credential.");
+  await boundedWrite(out, json);
+  console.log(`${report.passed ? "PASS" : "FAIL"} ${out}`);
+  const failureSummary = renderItemFailureSummary(report.itemFailures);
+  if (failureSummary) console.error(failureSummary);
+  if (report.stopped) console.error(report.stopped.message);
+  if (report.analysisError)
+    console.error(
+      redactSecrets(`Analysis failed: ${report.analysisError}`, secret ? [secret] : secretValues()),
+    );
+  if (!report.passed) process.exitCode = 1;
 }
 
 async function boundedWrite(path: string, body: string): Promise<void> {
