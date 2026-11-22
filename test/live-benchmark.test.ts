@@ -995,9 +995,10 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
   });
   assert.equal(deadline, plan.callbackTimeoutMs);
   assert.equal(plan.attemptDeadlineMs, 255_000);
+  const sendMs = requestTimeoutMs + 2 * PACE_WINDOW_MS + 15_000;
   assert.equal(
     plan.callbackTimeoutMs,
-    callsPerStep * reservedAttemptsPerCall(6) * (requestTimeoutMs + PACE_WINDOW_MS) +
+    callsPerStep * reservedAttemptsPerCall(6) * sendMs +
       callsPerStep *
         perCallRetryWaitMs({
           max429Retries: 6,
@@ -1006,6 +1007,15 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
         }),
   );
   assert.ok(plan.callbackTimeoutMs <= MAX_STEP_MS);
+  const fitted = liveDeadlinePlan({
+    callsPerStep,
+    requestTimeoutMs,
+    max429Retries: 1_000,
+    maxRetryWaitMs: 60_000,
+    maxTotalWaitMs,
+  });
+  assert.equal(NETWORK_ATTEMPTS, 4);
+  assert.ok(fitted.callbackTimeoutMs <= MAX_STEP_MS);
   const lowRate = liveDeadlinePlan({
     callsPerStep,
     requestTimeoutMs,
@@ -1016,7 +1026,7 @@ test("step deadline covers a retried evaluate call, and pace waits in one acquir
   assert.equal(reservedAttemptsPerCall(1), NETWORK_ATTEMPTS + 1);
   assert.equal(
     lowRate.callbackTimeoutMs,
-    callsPerStep * (NETWORK_ATTEMPTS + 1) * (requestTimeoutMs + PACE_WINDOW_MS) +
+    callsPerStep * (NETWORK_ATTEMPTS + 1) * sendMs +
       callsPerStep *
         perCallRetryWaitMs({
           max429Retries: 1,
@@ -1849,6 +1859,47 @@ test("request pacing spaces calls and is off when unset", async () => {
   );
   assert.ok(sentAt[1]! - sentAt[0]! >= 60_000);
   assert.ok(sentAt[2]! - sentAt[1]! >= 60_000);
+
+  const restampClock = fakeClock();
+  const restampLedger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "restamp.json"),
+  );
+  const restampSession = new LiveSession(restampLedger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => completedResponse({ label: "yes" }),
+    maxTokensPerMinute: 112,
+    maxRequestsPerMinute: 1,
+    maxRetryWaitMs: 1_000,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 180_000,
+    now: restampClock.now,
+    sleep: restampClock.sleep,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  const askBody = (body: string) =>
+    restampSession.generate(
+      { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+      body,
+      10,
+      meter,
+      new AbortController().signal,
+    );
+  const before = restampClock.sleeps.length;
+  await askBody("xxxx");
+  await restampClock.sleep(30_000);
+  await askBody("x".repeat(280));
+  await askBody("x".repeat(280));
+  const paceSleeps = restampClock.sleeps.slice(before);
+  assert.equal(paceSleeps.at(-1), 60_000);
 });
 
 test("a held-out network failure is recorded on the seed", async () => {

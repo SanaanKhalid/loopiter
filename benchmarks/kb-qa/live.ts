@@ -64,7 +64,7 @@ export const PROGRESS_INTERVAL_MS = 120_000;
 /** Extra attempt reserved in the controller step budget, plus every 429 retry. Server errors use NETWORK_ATTEMPTS. */
 export const MAX_ATTEMPTS = 2;
 /** Default sends for a transient network error, timeout, or listed server error, including the first. */
-export const NETWORK_ATTEMPTS = 8;
+export const NETWORK_ATTEMPTS = 4;
 /** HTTP server errors that share the network attempt budget. Other 5xx and all 4xx do not. */
 export const RETRYABLE_SERVER_STATUSES = new Set([500, 502, 503, 504]);
 
@@ -230,8 +230,15 @@ export function maxModelCallsPerStep(
 /** Controller step cap. Two hours holds the default live budget (16 × 255s plus retry waits). */
 export const MAX_STEP_MS = 7_200_000;
 export const MAX_TICK_MS = 7_260_000;
-/** Pace window plus ledger persist, kept inside every derived attempt deadline. */
-const ATTEMPT_MARGIN_MS = 75_000;
+/** Ledger persist kept in each reserved send, after two pace windows. */
+const LEDGER_MARGIN_MS = 15_000;
+/** One pace window plus ledger persist, kept inside every derived attempt deadline. */
+const ATTEMPT_MARGIN_MS = PACE_WINDOW_MS + LEDGER_MARGIN_MS;
+
+/** Request, a token-pace window, a request-pace window, and the ledger write. */
+export function reservedSendMs(requestTimeoutMs: number): number {
+  return requestTimeoutMs + 2 * PACE_WINDOW_MS + LEDGER_MARGIN_MS;
+}
 
 export function defaultAttemptDeadlineMs(input: {
   requestTimeoutMs: number;
@@ -278,8 +285,8 @@ export function liveDeadlinePlan(input: {
     1,
     explicit ? input.attemptDeadlineMs! : Math.max(defaultAttemptDeadlineMs(input), floor),
   );
-  // Each reserved send needs the request plus one pace window. Retry sleep is `waits`, once per call.
-  const sendMs = Math.max(1, input.requestTimeoutMs + PACE_WINDOW_MS);
+  // Each reserved send can wait out a token window and a request window, then persist the ledger.
+  const sendMs = Math.max(1, reservedSendMs(input.requestTimeoutMs));
   const waits =
     input.callsPerStep *
     perCallRetryWaitMs({
@@ -1126,6 +1133,13 @@ export class TokenMinuteWindow {
     }
   }
 
+  /** Move a reservation to the send time after a later pace wait. */
+  restamp(id: number, at = this.now()): void {
+    const stamp = this.stamps.find((item) => item.id === id);
+    if (!stamp) return;
+    stamp.at = at;
+  }
+
   /** Replace a reservation with actual tokens. A larger actual debits the difference. */
   settle(id: number, actual: number): void {
     if (!Number.isFinite(actual) || actual < 0) throw new Error("Invalid paced token count.");
@@ -1530,9 +1544,10 @@ export class LiveSession {
       },
       signal,
     );
-    await this.requests.acquire((ms) => {
+    const requestWait = await this.requests.acquire((ms) => {
       this.waitMs += ms;
     }, signal);
+    if (requestWait > 0) this.pacer.restamp(paced.id);
     signal.throwIfAborted();
     this.activity = "running";
     const held = await this.ledger.beginAttempt(worst, signal);
