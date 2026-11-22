@@ -342,6 +342,30 @@ test("exhausted network retries fail the seed and the run continues", async () =
   assertNoLeaks(JSON.stringify(seen.report));
 });
 
+test("exhausted server errors fail the seed and the run continues", async () => {
+  const seen = await runNetwork({ seeds: 2, failCalls: 1, status: 500 });
+  assert.equal(seen.report.stopped, null);
+  assert.equal(seen.report.perSeed.length, 2);
+  assert.equal(seen.report.perSeed[0]?.status, "failed");
+  assert.equal(seen.report.perSeed[0]?.failure?.code, "network");
+  assert.match(seen.report.perSeed[0]?.failure?.message ?? "", /HTTP 500/);
+  assert.equal(seen.report.perSeed[1]?.status, "complete");
+  assert.equal(seen.fetches > NETWORK_ATTEMPTS, true);
+  assert.equal(seen.report.passed, false);
+  assertNoLeaks(JSON.stringify(seen.report));
+});
+
+test("consecutive exhausted server errors trip the breaker", async () => {
+  const seen = await runNetwork({ seeds: 2, failCalls: 99, networkFailures: 2, status: 503 });
+  assert.equal(seen.report.stopped?.reason, "network_outage");
+  assert.match(seen.report.stopped?.message ?? "", /2 calls in a row/);
+  assert.equal(seen.report.perSeed.length, 1);
+  assert.equal(seen.report.perSeed[0]?.status, "failed");
+  assert.equal(seen.fetches, NETWORK_ATTEMPTS * 2);
+  assert.equal(seen.report.passed, false);
+  assertNoLeaks(JSON.stringify(seen.report));
+});
+
 test("the network breaker stops the run after consecutive failures", async () => {
   const seen = await runNetwork({ seeds: 2, failCalls: 99, networkFailures: 2 });
   assert.equal(seen.report.stopped?.reason, "network_outage");
@@ -392,7 +416,7 @@ test("an unlisted invalid_request policy code stops the run", async () => {
   assertNoLeaks(JSON.stringify(seen.report));
 });
 
-test("auth, systemic 400, repeated 5xx, and 429 stop the run", async () => {
+test("auth, a systemic 400, and a persistent 429 stop the run", async () => {
   const unauthorized = await runScript(4, () =>
     jsonResponse(401, { error: { message: `${PROMPT} ${KEY}`, code: "invalid_api_key" } }),
   );
@@ -414,15 +438,6 @@ test("auth, systemic 400, repeated 5xx, and 429 stop the run", async () => {
   assert.equal(systemic.report.itemFailures.length, 0);
   assert.equal(systemic.fetches, 1);
   assertNoLeaks(JSON.stringify(systemic.report));
-
-  const server = await runScript(4, () =>
-    jsonResponse(500, { error: { message: `${PROMPT} ${KEY}`, code: "internal_error" } }),
-  );
-  assert.equal(server.report.stopped?.reason, "provider_error");
-  assert.match(server.report.stopped?.message ?? "", /HTTP 500/);
-  assert.equal(server.report.itemFailures.length, 0);
-  assert.equal(server.fetches, 2);
-  assertNoLeaks(JSON.stringify(server.report));
 
   const limited = await runScript(
     4,
@@ -706,6 +721,7 @@ async function runNetwork(input: {
   seeds: number;
   failCalls: number;
   networkFailures?: number;
+  status?: number;
 }): Promise<{ report: Awaited<ReturnType<typeof runLiveTask>>; fetches: number }> {
   const directory = await mkdtemp(join(tmpdir(), "network-seed-"));
   let fetches = 0;
@@ -743,6 +759,10 @@ async function runNetwork(input: {
           const attempt = (fetches - 1) % NETWORK_ATTEMPTS;
           if (failedCalls < input.failCalls) {
             if (attempt === NETWORK_ATTEMPTS - 1) failedCalls += 1;
+            if (input.status !== undefined)
+              return jsonResponse(input.status, {
+                error: { message: "unavailable", type: "server_error", code: "internal_error" },
+              });
             const error = new Error("socket down") as Error & { code: string };
             error.code = "ECONNRESET";
             throw error;

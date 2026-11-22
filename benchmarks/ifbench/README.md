@@ -131,9 +131,9 @@ no usable text scores 0 for that row and the run continues. The same refusal
 on a controller call, including the last call of a seed, is recorded with its
 code and does not stop later seeds. A throw inside one seed is recorded with
 the seed number, arm, and error, and later seeds still run. Exhausted transient
-network or timeout retries fail that seed and later seeds still run. After the
-configured number of those failures in a row, the run stops. A 429 that persists
-after its retries, a 5xx, an auth
+network, timeout, or HTTP 5xx retries fail that seed and later seeds still run.
+After the configured number of those failures in a row, the run stops. A 429
+that persists after its retries, an auth
 failure, and the budget cap set `stopped` and end the run. If every propose
 call in a seed is refused, that seed is `never_proposed` rather than no
 improvement, and the report counts those refusals. A truncation
@@ -148,7 +148,7 @@ and split. The log line is only the HTTP status, error code, error type,
 content-filter category and severity, or `incomplete_details.reason`, after
 the shared error sanitizer. Prompt text, response text, headers, and keys are
 not logged. The run still stops on 401, 403, 404, 429 after the retry policy,
-repeated 5xx, and a 400 that is not clearly per item (invalid parameter,
+and a 400 that is not clearly per item (invalid parameter,
 unknown model or deployment). It also stops after 5 non-truncation prediction
 failures in a row, or when those failures in one arm and split exceed 20% of
 that split. A 4xx with no token usage, including a 429,

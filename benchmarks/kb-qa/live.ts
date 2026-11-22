@@ -61,7 +61,7 @@ export const OMIT_REASONING = "omit";
 export const REQUEST_TIMEOUT_MS = 20_000;
 export const DEFAULT_REQUEST_TIMEOUT_SECONDS = 120;
 export const PROGRESS_INTERVAL_MS = 120_000;
-/** HTTP 500, 502, 503, and 504. The first send plus one retry. */
+/** Extra attempt reserved in the controller step budget, plus every 429 retry. Server errors use NETWORK_ATTEMPTS. */
 export const MAX_ATTEMPTS = 2;
 /** Transient network and timeout errors, including the first send. */
 export const NETWORK_ATTEMPTS = 8;
@@ -279,12 +279,18 @@ export function liveCallbackTimeoutMs(
 const CLOCK_START = "2026-04-15T12:00:00.000Z";
 const BOOTSTRAP_SAMPLES = 2000;
 const BOOTSTRAP_SEED = 17;
-const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 /** Tokens reserved in the rolling minute. Zero stays off. A positive cap keeps at least one token. */
 export function pacedTokenLimit(configured: number): number {
   if (!Number.isFinite(configured) || configured <= 0) return 0;
   return Math.max(1, Math.floor(configured * PACE_HEADROOM));
+}
+
+/** HTTP 5xx, including statuses outside the old 500/502/503/504 list. 4xx is not included. */
+function serverErrorStatus(error: unknown): number | null {
+  if (!(error instanceof ProviderRequestError)) return null;
+  if (error.status < 500 || error.status > 599) return null;
+  return error.status;
 }
 
 /** Class of a transient network failure, or null when the error should stop the run. */
@@ -1289,7 +1295,6 @@ export class LiveSession {
     // One controller reservation covers the successful call. Rejected attempts
     // retry inside it, so a 429 storm does not exhaust the callback ceiling.
     return meter(reservedModelTokens(body, maxOutput), async () => {
-      let otherRetries = 0;
       let networkRetries = 0;
       let rateRetries = 0;
       let retryWaited = 0;
@@ -1360,25 +1365,20 @@ export class LiveSession {
             retryWaited += wait;
             continue;
           }
-          const networkClass = transientErrorClass(error);
-          const httpStatus =
-            error instanceof ProviderRequestError && RETRY_STATUSES.has(error.status)
-              ? error.status
-              : null;
-          const networkBudget = networkClass !== null && networkRetries >= NETWORK_ATTEMPTS - 1;
-          const httpBudget = httpStatus !== null && otherRetries >= MAX_ATTEMPTS - 1;
-          if ((!networkClass && httpStatus === null) || networkBudget || httpBudget) {
+          const serverStatus = serverErrorStatus(error);
+          const networkClass = serverStatus === null ? transientErrorClass(error) : null;
+          const transient = networkClass !== null || serverStatus !== null;
+          if (!transient || networkRetries >= NETWORK_ATTEMPTS - 1) {
             const message = providerFailureMessage(error, this.secrets);
             this.lastError = message;
             this.touch();
             if (shouldLogProviderFailure(error)) console.error(message);
+            if (transient) this.failNetwork(message);
             if (error instanceof ProviderRequestError || error instanceof IncompleteOutputError) {
               error.message = message;
               this.consecutiveNetworkFailures = 0;
               throw error;
             }
-            if (networkClass) this.failNetwork(message);
-            if (httpStatus !== null) throw new ExhaustedProviderError(message);
             this.consecutiveNetworkFailures = 0;
             throw new Error(message);
           }
@@ -1389,11 +1389,10 @@ export class LiveSession {
           };
           if (!this.ledger.allow(worst, this.stopAtWarn))
             throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
-          const retryIndex = networkClass ? networkRetries + 1 : otherRetries + 1;
-          if (networkClass) networkRetries += 1;
-          else otherRetries += 1;
-          const wait = retryWaitMs(retryIndex, null, this.maxRetryWaitMs, this.random);
-          console.error(`retrying ${networkClass ?? `HTTP ${httpStatus}`}`);
+          networkRetries += 1;
+          const retryAfter = error instanceof ProviderRequestError ? error.retryAfterMs : null;
+          const wait = retryWaitMs(networkRetries, retryAfter, this.maxRetryWaitMs, this.random);
+          console.error(`retrying ${networkClass ?? `HTTP ${serverStatus}`}`);
           await this.waitToRetry(signal, retryWaited, wait);
           retryWaited += wait;
         }
@@ -1406,7 +1405,7 @@ export class LiveSession {
     this.consecutiveNetworkFailures += 1;
     if (this.consecutiveNetworkFailures >= this.maxConsecutiveNetworkFailures) {
       const stop = redactSecrets(
-        `Transient network errors failed ${this.consecutiveNetworkFailures} calls in a row. Stopping the run.`,
+        `Transient network or server errors failed ${this.consecutiveNetworkFailures} calls in a row. Stopping the run.`,
         this.secrets,
       );
       this.lastError = stop;

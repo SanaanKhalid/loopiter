@@ -368,16 +368,17 @@ smaller of the per-call wait cap and `(network retries + 429 retries) × max
 retry wait`. Reserved attempts are `MAX_ATTEMPTS + max 429 retries`. The
 attempt deadline stays at least the request timeout plus 60 seconds of pacing
 and 15 seconds of ledger time. The controller accepts a step of up to 2 hours.
-A plan that still does not fit is refused. The tick deadline covers that step. A per-request timeout
-and a transient network failure whose cause is `ECONNRESET`, `ETIMEDOUT`,
-`ECONNREFUSED`, `EAI_AGAIN`, or `UND_ERR_SOCKET` (including a socket hang up)
-are retried up to 8 attempts, with exponential backoff and jitter. That wait
-stays inside the per-call wait cap. When those attempts run out, the current
-seed fails and later seeds still run. `LOOPITER_BENCH_NETWORK_FAILURES`
-(default 5) stops the run after that many calls in a row exhaust the network
-budget, so a real outage still stops cleanly. HTTP 500, 502, 503, and 504 are
-retried once and still stop the run. A bare `fetch failed`, `ENOTFOUND`, and TLS or certificate
-errors stop the run. Each retry logs the error class, waits with
+A plan that still does not fit is refused. The tick deadline covers that step. A per-request timeout,
+a transient network failure whose cause is `ECONNRESET`, `ETIMEDOUT`,
+`ECONNREFUSED`, `EAI_AGAIN`, or `UND_ERR_SOCKET` (including a socket hang up),
+and an HTTP 5xx response (500, 502, 503, 504, and any other 5xx)
+are retried up to 8 attempts, with exponential backoff and jitter. A 5xx
+`Retry-After` is honored. That wait stays inside the per-call wait cap. When
+those attempts run out, the current seed fails and later seeds still run.
+`LOOPITER_BENCH_NETWORK_FAILURES` (default 5) stops the run after that many
+calls in a row exhaust this budget, including exhausted 5xx calls, so a real
+outage still stops cleanly. HTTP 429 keeps its own retry budget. A bare
+`fetch failed`, `ENOTFOUND`, and TLS or certificate errors stop the run. Each retry logs the error class, waits with
 the same exponential backoff and jitter as a 429 that has no `Retry-After`,
 and is still checked against the spend cap before it is sent. HTTP 4xx other
 than 429, and any other error, stop the run. A model refusal or a completed

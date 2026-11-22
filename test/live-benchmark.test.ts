@@ -1441,6 +1441,100 @@ test("a transient reset recovers after several retries", async () => {
   assert.deepEqual(clock.sleeps, [1_000, 2_000, 4_000]);
 });
 
+test("an HTTP 500 recovers after retries and honors Retry-After", async () => {
+  const clock = fakeClock();
+  const directory = await tempLedger();
+  const meter = async <T>(
+    _maximum: number,
+    call: () => Promise<{ value: T; tokens: number | null }>,
+  ) => (await call()).value;
+  const serverError = (status: number, retryAfterMs?: number) =>
+    new Response(JSON.stringify({ error: { message: "down", code: "internal_error" } }), {
+      status,
+      headers: {
+        "content-type": "application/json",
+        ...(retryAfterMs === undefined ? {} : { "retry-after-ms": String(retryAfterMs) }),
+      },
+    });
+  let fetches = 0;
+  const ledger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "server.json"),
+  );
+  const session = new LiveSession(ledger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => {
+      fetches += 1;
+      if (fetches <= 3) return serverError(500);
+      return completedResponse({ label: "yes" });
+    },
+    maxTokensPerMinute: 0,
+    maxRetryWaitMs: 60_000,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 180_000,
+    now: clock.now,
+    sleep: clock.sleep,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  await session.generate(
+    { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+    "xxxx",
+    10,
+    meter,
+    new AbortController().signal,
+  );
+  assert.equal(fetches, 4);
+  assert.equal(ledger.calls, 1);
+  assert.deepEqual(clock.sleeps, [1_000, 2_000, 4_000]);
+
+  let hinted = 0;
+  const hintedClock = fakeClock();
+  const hintedLedger = new LiveLedger(
+    { totalMicroUsd: 50_000_000, invocationMicroUsd: 50_000_000, warnMicroUsd: 40_000_000 },
+    pricesOf(1, 1, 0),
+    join(directory, "retry-after.json"),
+  );
+  const hintedSession = new LiveSession(hintedLedger, [], false, {
+    endpoint: "https://example.openai.azure.com/",
+    apiKey: KEY,
+    deployment: "gpt-5.4-mini",
+    apiVersion: "v1",
+    fetch: async () => {
+      hinted += 1;
+      if (hinted === 1) return serverError(501, 2_500);
+      return completedResponse({ label: "yes" });
+    },
+    maxTokensPerMinute: 0,
+    maxRetryWaitMs: 60_000,
+    max429Retries: 1,
+    requestTimeoutMs: 1_000,
+    maxTotalWaitMs: 180_000,
+    now: hintedClock.now,
+    sleep: hintedClock.sleep,
+    random: () => 0,
+    predictMaxOutputTokens: 10,
+    proposeMaxOutputTokens: 10,
+    reasoningEffort: null,
+  });
+  await hintedSession.generate(
+    { instructions: "label", input: "{}", name: "classification", schema: { type: "object" } },
+    "xxxx",
+    10,
+    meter,
+    new AbortController().signal,
+  );
+  assert.equal(hinted, 2);
+  assert.deepEqual(hintedClock.sleeps, [2_500]);
+});
+
 test("consecutive network exhaustions trip the breaker", async () => {
   const clock = fakeClock();
   const directory = await tempLedger();
