@@ -63,13 +63,22 @@ export const DEFAULT_REQUEST_TIMEOUT_SECONDS = 120;
 export const PROGRESS_INTERVAL_MS = 120_000;
 /** Extra attempt reserved in the controller step budget, plus every 429 retry. Server errors use NETWORK_ATTEMPTS. */
 export const MAX_ATTEMPTS = 2;
-/** Transient network and timeout errors, including the first send. */
+/** Default sends for a transient network error, timeout, or listed server error, including the first. */
 export const NETWORK_ATTEMPTS = 8;
+/** HTTP server errors that share the network attempt budget. Other 5xx and all 4xx do not. */
+export const RETRYABLE_SERVER_STATUSES = new Set([500, 502, 503, 504]);
+
+export function retryableServerStatus(status: number): boolean {
+  return RETRYABLE_SERVER_STATUSES.has(status);
+}
 /** Consecutive calls that exhaust the network budget before the run stops. */
 export const DEFAULT_NETWORK_FAILURES = 5;
-/** One initial send, plus the short HTTP retry budget, plus every 429 retry. Network attempts are bounded by the per-call wait cap. */
-export function reservedAttemptsPerCall(max429Retries: number): number {
-  return MAX_ATTEMPTS + max429Retries;
+/** Network or listed-server attempts, plus every 429 retry. The two budgets are separate. */
+export function reservedAttemptsPerCall(
+  max429Retries: number,
+  networkAttempts = NETWORK_ATTEMPTS,
+): number {
+  return Math.max(1, Math.floor(networkAttempts)) + Math.max(0, Math.floor(max429Retries));
 }
 export const DEFAULT_STALL_MINUTES = 10;
 const REPORT_IO_MS = 10_000;
@@ -240,8 +249,10 @@ export function perCallRetryWaitMs(input: {
   max429Retries: number;
   maxRetryWaitMs: number;
   maxTotalWaitMs: number;
+  networkAttempts?: number;
 }): number {
-  const retries = Math.max(0, NETWORK_ATTEMPTS - 1) + Math.max(0, input.max429Retries);
+  const networkRetries = Math.max(0, (input.networkAttempts ?? NETWORK_ATTEMPTS) - 1);
+  const retries = networkRetries + Math.max(0, input.max429Retries);
   return Math.min(input.maxTotalWaitMs, retries * input.maxRetryWaitMs);
 }
 
@@ -252,9 +263,14 @@ export function liveDeadlinePlan(input: {
   max429Retries: number;
   maxRetryWaitMs: number;
   maxTotalWaitMs: number;
+  networkAttempts?: number;
   attemptDeadlineMs?: number;
 }): { callbackTimeoutMs: number; attemptDeadlineMs: number } {
-  const attempts = reservedAttemptsPerCall(Math.min(input.max429Retries, DEFAULT_MAX_429_RETRIES));
+  const networkAttempts = input.networkAttempts ?? NETWORK_ATTEMPTS;
+  const attempts = reservedAttemptsPerCall(
+    Math.min(input.max429Retries, DEFAULT_MAX_429_RETRIES),
+    networkAttempts,
+  );
   const slots = Math.max(1, input.callsPerStep * attempts);
   const explicit = input.attemptDeadlineMs !== undefined;
   const floor = attemptDeadlineFloorMs(input.requestTimeoutMs);
@@ -262,8 +278,17 @@ export function liveDeadlinePlan(input: {
     1,
     explicit ? input.attemptDeadlineMs! : Math.max(defaultAttemptDeadlineMs(input), floor),
   );
-  const waits = input.callsPerStep * perCallRetryWaitMs(input);
-  const budget = slots * attempt + waits;
+  // Each reserved send needs the request plus one pace window. Retry sleep is `waits`, once per call.
+  const sendMs = Math.max(1, input.requestTimeoutMs + PACE_WINDOW_MS);
+  const waits =
+    input.callsPerStep *
+    perCallRetryWaitMs({
+      max429Retries: input.max429Retries,
+      maxRetryWaitMs: input.maxRetryWaitMs,
+      maxTotalWaitMs: input.maxTotalWaitMs,
+      networkAttempts,
+    });
+  const budget = slots * sendMs + waits;
   if (budget > MAX_STEP_MS)
     throw new LiveGateError(
       `Live step budget is ${budget} ms, above the ${MAX_STEP_MS} ms controller cap. That includes every reserved attempt and the retry sleep a call can still spend. Lower the request timeout or the retry limits. Refusing to start.`,
@@ -286,10 +311,10 @@ export function pacedTokenLimit(configured: number): number {
   return Math.max(1, Math.floor(configured * PACE_HEADROOM));
 }
 
-/** HTTP 5xx, including statuses outside the old 500/502/503/504 list. 4xx is not included. */
+/** 500, 502, 503, or 504. 501, 505, other 5xx, and every 4xx return null. */
 function serverErrorStatus(error: unknown): number | null {
   if (!(error instanceof ProviderRequestError)) return null;
-  if (error.status < 500 || error.status > 599) return null;
+  if (!retryableServerStatus(error.status)) return null;
   return error.status;
 }
 
@@ -336,6 +361,7 @@ export const LIVE_ENV = {
   maxTpm: "LOOPITER_BENCH_MAX_TPM",
   maxRpm: "LOOPITER_BENCH_MAX_RPM",
   networkFailures: "LOOPITER_BENCH_NETWORK_FAILURES",
+  networkAttempts: "LOOPITER_BENCH_NETWORK_ATTEMPTS",
   maxRetryWait: "LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS",
   max429Retries: "LOOPITER_BENCH_MAX_429_RETRIES",
   requestTimeout: "LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS",
@@ -861,6 +887,8 @@ export interface LiveRunOptions {
   maxRequestsPerMinute?: number;
   /** Consecutive network-budget exhaustions before the run stops. Unset uses DEFAULT_NETWORK_FAILURES. */
   maxConsecutiveNetworkFailures?: number;
+  /** Sends per transient network, timeout, or listed server error. Unset uses NETWORK_ATTEMPTS. */
+  networkAttempts?: number;
   maxRetryWaitMs?: number;
   max429Retries?: number;
   /** Per-request abort. Unset uses DEFAULT_REQUEST_TIMEOUT_SECONDS. */
@@ -916,6 +944,8 @@ export interface LiveReport {
     marker: string | null;
   };
   stopped: { reason: string; message: string } | null;
+  /** Seeds that failed because a network or listed server retry budget ran out. */
+  networkSeedFailures: number;
   pacing: {
     maxTokensPerMinute: number;
     rateLimitResponses: number;
@@ -1117,6 +1147,7 @@ export class LiveSession {
   readonly maxTokensPerMinute: number;
   readonly maxRequestsPerMinute: number;
   readonly maxConsecutiveNetworkFailures: number;
+  readonly networkAttempts: number;
   readonly max429Retries: number;
   readonly maxRetryWaitMs: number;
   readonly requestTimeoutMs: number;
@@ -1159,6 +1190,8 @@ export class LiveSession {
       maxRequestsPerMinute?: number;
       /** Consecutive network-budget exhaustions before the run stops. Unset uses DEFAULT_NETWORK_FAILURES. */
       maxConsecutiveNetworkFailures?: number;
+      /** Sends for one transient network, timeout, or listed server error. Unset uses NETWORK_ATTEMPTS. */
+      networkAttempts?: number;
       maxRetryWaitMs: number;
       max429Retries: number;
       requestTimeoutMs: number;
@@ -1183,12 +1216,17 @@ export class LiveSession {
     this.maxRequestsPerMinute = options.maxRequestsPerMinute ?? 0;
     this.maxConsecutiveNetworkFailures =
       options.maxConsecutiveNetworkFailures ?? DEFAULT_NETWORK_FAILURES;
+    this.networkAttempts = options.networkAttempts ?? NETWORK_ATTEMPTS;
     if (
       !Number.isSafeInteger(this.maxConsecutiveNetworkFailures) ||
       this.maxConsecutiveNetworkFailures < 1
     )
       throw new LiveGateError(
         `${LIVE_ENV.networkFailures} must be a finite integer greater than zero. Refusing to start.`,
+      );
+    if (!Number.isSafeInteger(this.networkAttempts) || this.networkAttempts < 1)
+      throw new LiveGateError(
+        `${LIVE_ENV.networkAttempts} must be a finite integer greater than zero. Refusing to start.`,
       );
     this.max429Retries = options.max429Retries;
     this.maxRetryWaitMs = options.maxRetryWaitMs;
@@ -1200,6 +1238,7 @@ export class LiveSession {
       max429Retries: Math.min(options.max429Retries, DEFAULT_MAX_429_RETRIES),
       maxRetryWaitMs: options.maxRetryWaitMs,
       maxTotalWaitMs: options.maxTotalWaitMs,
+      networkAttempts: this.networkAttempts,
       ...(options.attemptDeadlineMs === undefined
         ? {}
         : { attemptDeadlineMs: options.attemptDeadlineMs }),
@@ -1368,18 +1407,23 @@ export class LiveSession {
           const serverStatus = serverErrorStatus(error);
           const networkClass = serverStatus === null ? transientErrorClass(error) : null;
           const transient = networkClass !== null || serverStatus !== null;
-          if (!transient || networkRetries >= NETWORK_ATTEMPTS - 1) {
+          if (transient && networkRetries >= this.networkAttempts - 1) {
             const message = providerFailureMessage(error, this.secrets);
             this.lastError = message;
             this.touch();
             if (shouldLogProviderFailure(error)) console.error(message);
-            if (transient) this.failNetwork(message);
+            this.failNetwork(message);
+          }
+          if (!transient) {
+            const message = providerFailureMessage(error, this.secrets);
+            this.lastError = message;
+            this.touch();
+            if (shouldLogProviderFailure(error)) console.error(message);
+            this.consecutiveNetworkFailures = 0;
             if (error instanceof ProviderRequestError || error instanceof IncompleteOutputError) {
               error.message = message;
-              this.consecutiveNetworkFailures = 0;
               throw error;
             }
-            this.consecutiveNetworkFailures = 0;
             throw new Error(message);
           }
           const worst: TokenUse = {
@@ -1479,9 +1523,6 @@ export class LiveSession {
       throw new LoopiterError("spend_cap", stopMessage(this.ledger.stopReason));
     const reserved = projectedInputTokens(body) + maxOutput;
     this.activity = "waiting on pace";
-    await this.requests.acquire((ms) => {
-      this.waitMs += ms;
-    }, signal);
     const paced = await this.pacer.acquire(
       reserved,
       (ms) => {
@@ -1489,6 +1530,9 @@ export class LiveSession {
       },
       signal,
     );
+    await this.requests.acquire((ms) => {
+      this.waitMs += ms;
+    }, signal);
     signal.throwIfAborted();
     this.activity = "running";
     const held = await this.ledger.beginAttempt(worst, signal);
@@ -1736,19 +1780,22 @@ export async function runLiveBenchmark(options: LiveRunOptions): Promise<LiveRep
         }
       } catch (error) {
         if (!(error instanceof NetworkOutageStop) && isSeedNetworkFailure(error)) {
+          const failedCandidate = {
+            heldOut: emptyScore(split.test.length),
+            state: "failed",
+            reason: "network",
+            servedArtifactVersion: "",
+            baselineArtifactVersion: "",
+            heldOutNote: "network retries exhausted",
+          };
           if (!row) {
             perSeed.push({
               seed,
               baseline: emptyScore(split.test.length),
-              candidate: {
-                heldOut: emptyScore(split.test.length),
-                state: "failed",
-                reason: "network",
-                servedArtifactVersion: "",
-                baselineArtifactVersion: "",
-                heldOutNote: "network retries exhausted",
-              },
+              candidate: failedCandidate,
             });
+          } else if (!row.candidate) {
+            row.candidate = failedCandidate;
           }
           session.lastError = null;
           continue;
@@ -1818,7 +1865,9 @@ export function renderLiveMarkdown(report: LiveReport): string {
     "",
     report.stopped
       ? `Stopped: ${report.stopped.reason}. ${report.stopped.message}`
-      : "Run finished.",
+      : report.networkSeedFailures > 0
+        ? `${report.networkSeedFailures} seed${report.networkSeedFailures === 1 ? "" : "s"} failed after network or server retries.`
+        : "Run finished.",
     "",
     `Spend this invocation ${report.spend.invocationUsd} USD. Cumulative ${report.spend.totalUsd} USD.`,
     `Calls ${report.spend.calls}. Attempts ${report.spend.attempts}.`,
@@ -1869,6 +1918,7 @@ export function liveOptionsFromEnv(
     maxTokensPerMinute?: number;
     maxRequestsPerMinute?: number;
     maxConsecutiveNetworkFailures?: number;
+    networkAttempts?: number;
   },
 ): LiveRunOptions {
   if (env[LIVE_ENV.allow] !== "1")
@@ -1909,6 +1959,7 @@ export function liveOptionsFromEnv(
     maxRequestsPerMinute: args.maxRequestsPerMinute ?? pace.maxRequestsPerMinute,
     maxConsecutiveNetworkFailures:
       args.maxConsecutiveNetworkFailures ?? pace.maxConsecutiveNetworkFailures,
+    networkAttempts: args.networkAttempts ?? pace.networkAttempts,
     maxRetryWaitMs: pace.maxRetryWaitMs,
     max429Retries: pace.max429Retries,
     requestTimeoutMs: pace.requestTimeoutMs,
@@ -1957,6 +2008,7 @@ export interface PaceSettings {
   maxTokensPerMinute: number;
   maxRequestsPerMinute: number;
   maxConsecutiveNetworkFailures: number;
+  networkAttempts: number;
   maxRetryWaitMs: number;
   max429Retries: number;
   requestTimeoutMs: number;
@@ -1983,6 +2035,11 @@ export function paceSettings(options: LiveRunOptions): PaceSettings {
     throw new LiveGateError(
       `${LIVE_ENV.networkFailures} must be a finite integer greater than zero. Refusing to start.`,
     );
+  const networkAttempts = options.networkAttempts ?? NETWORK_ATTEMPTS;
+  if (!Number.isSafeInteger(networkAttempts) || networkAttempts < 1)
+    throw new LiveGateError(
+      `${LIVE_ENV.networkAttempts} must be a finite integer greater than zero. Refusing to start.`,
+    );
   const maxRetryWaitMs = options.maxRetryWaitMs ?? DEFAULT_MAX_RETRY_WAIT_SECONDS * 1000;
   requirePositiveInt(maxRetryWaitMs, LIVE_ENV.maxRetryWait);
   const max429Retries = options.max429Retries ?? RATE_LIMIT_RETRY_FUSE;
@@ -1997,6 +2054,7 @@ export function paceSettings(options: LiveRunOptions): PaceSettings {
     maxTokensPerMinute,
     maxRequestsPerMinute,
     maxConsecutiveNetworkFailures,
+    networkAttempts,
     maxRetryWaitMs,
     max429Retries,
     requestTimeoutMs,
@@ -2012,6 +2070,7 @@ export function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
   | "maxTokensPerMinute"
   | "maxRequestsPerMinute"
   | "maxConsecutiveNetworkFailures"
+  | "networkAttempts"
   | "maxRetryWaitMs"
   | "max429Retries"
   | "requestTimeoutMs"
@@ -2025,6 +2084,7 @@ export function paceSettingsFromEnv(env: NodeJS.ProcessEnv): Pick<
       LIVE_ENV.networkFailures,
       DEFAULT_NETWORK_FAILURES,
     ),
+    networkAttempts: readOptionalIntOr(env, LIVE_ENV.networkAttempts, NETWORK_ATTEMPTS),
     maxRetryWaitMs: readOptionalIntOr(env, LIVE_ENV.maxRetryWait, DEFAULT_MAX_RETRY_WAIT_SECONDS) * 1000,
     max429Retries: readOptionalIntOr(env, LIVE_ENV.max429Retries, RATE_LIMIT_RETRY_FUSE),
     requestTimeoutMs:
@@ -2045,6 +2105,7 @@ export function stallTimeoutFromEnv(
     max429Retries: pace.max429Retries,
     maxRetryWaitMs: pace.maxRetryWaitMs,
     maxTotalWaitMs: pace.maxTotalWaitMs,
+    networkAttempts: pace.networkAttempts,
   }).attemptDeadlineMs;
   const minimum = minimumStallTimeoutMs(attempt);
   if (requested < minimum)
@@ -2081,18 +2142,25 @@ export function paceOverrides(argv: readonly string[]): {
   maxTokensPerMinute?: number;
   maxRequestsPerMinute?: number;
   maxConsecutiveNetworkFailures?: number;
+  networkAttempts?: number;
 } {
   const maxTokensPerMinute = optionalWholeFlag(argv, "--max-tpm");
   const maxRequestsPerMinute = optionalWholeFlag(argv, "--max-rpm");
   const maxConsecutiveNetworkFailures = optionalWholeFlag(argv, "--network-failures");
+  const networkAttempts = optionalWholeFlag(argv, "--network-attempts");
   if (maxConsecutiveNetworkFailures === 0)
     throw new LiveGateError(
       "--network-failures must be a finite integer greater than zero. Refusing to start.",
+    );
+  if (networkAttempts === 0)
+    throw new LiveGateError(
+      "--network-attempts must be a finite integer greater than zero. Refusing to start.",
     );
   return {
     ...(maxTokensPerMinute === undefined ? {} : { maxTokensPerMinute }),
     ...(maxRequestsPerMinute === undefined ? {} : { maxRequestsPerMinute }),
     ...(maxConsecutiveNetworkFailures === undefined ? {} : { maxConsecutiveNetworkFailures }),
+    ...(networkAttempts === undefined ? {} : { networkAttempts }),
   };
 }
 
@@ -2510,7 +2578,10 @@ async function runCandidate(
     split,
     reserve,
     inLoop,
-    reservedAttemptsPerCall(Math.min(session.max429Retries, DEFAULT_MAX_429_RETRIES)),
+    reservedAttemptsPerCall(
+      Math.min(session.max429Retries, DEFAULT_MAX_429_RETRIES),
+      session.networkAttempts,
+    ),
   );
   const clock = { now: new Date(CLOCK_START) };
   const store = new InMemoryStore();
@@ -2978,6 +3049,7 @@ function buildReport(
       marker,
     },
     stopped: failure,
+    networkSeedFailures: perSeed.filter((row) => row.candidate?.reason === "network").length,
     pacing,
     perSeed,
     arms: {

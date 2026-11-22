@@ -131,7 +131,7 @@ no usable text scores 0 for that row and the run continues. The same refusal
 on a controller call, including the last call of a seed, is recorded with its
 code and does not stop later seeds. A throw inside one seed is recorded with
 the seed number, arm, and error, and later seeds still run. Exhausted transient
-network, timeout, or HTTP 5xx retries fail that seed and later seeds still run.
+network, timeout, or HTTP 500, 502, 503, and 504 retries fail that seed and later seeds still run.
 After the configured number of those failures in a row, the run stops. A 429
 that persists after its retries, an auth
 failure, and the budget cap set `stopped` and end the run. If every propose

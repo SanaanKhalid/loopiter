@@ -283,7 +283,8 @@ There are no baked-in prices or caps.
 | `LOOPITER_BENCH_PROPOSE_MAX_OUTPUT_TOKENS` | no | `max_output_tokens` for a proposal. Default `1024`. A finite integer greater than zero |
 | `LOOPITER_BENCH_MAX_TPM` | no | Tokens per rolling minute, using the realistic reservation (bytes/4 plus the output bound). The pacer uses 90% of this value so a full window is less likely to return HTTP 429. Unset or `0` turns token pacing off. Any other value must be a finite integer greater than zero. Live commands also accept `--max-tpm`, which overrides this variable. The same limit is honored by the KB-QA, HotpotQA, and IFBench live commands |
 | `LOOPITER_BENCH_MAX_RPM` | no | Requests per rolling minute, shared by every call in the run and applied with the token pacer. The pacer uses 90% of this value. Unset or `0` leaves request pacing off, which is the previous behavior. Any other value must be a finite integer greater than zero. `--max-rpm` overrides this variable |
-| `LOOPITER_BENCH_NETWORK_FAILURES` | no | Consecutive calls that exhaust the transient-network retry budget before the run stops. Default `5`. A finite integer greater than zero. `--network-failures` overrides this variable |
+| `LOOPITER_BENCH_NETWORK_ATTEMPTS` | no | Sends for one transient network error, timeout, or HTTP 500, 502, 503, or 504, including the first send. Default `8`. A finite integer greater than zero. `--network-attempts` overrides this variable. Each sent attempt is still held at the spend ceiling, and the total and per-invocation caps remain the hard bound |
+| `LOOPITER_BENCH_NETWORK_FAILURES` | no | Consecutive calls that exhaust that attempt budget before the run stops. Default `5`. A finite integer greater than zero. `--network-failures` overrides this variable |
 | `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS` | no | Cap on each 429 wait. Default `60`. A finite integer greater than zero |
 | `LOOPITER_BENCH_MAX_429_RETRIES` | no | Extra attempts after HTTP 429. Default `1000`, a fuse. A rate-limited request stops when its wait budget runs out first. A finite integer greater than zero |
 | `LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS` | no | Per-request abort. Default `120`. A timed-out request is retried within the existing attempt limit |
@@ -365,16 +366,16 @@ A timeout counts as a retryable attempt. The controller step that runs
 `evaluateBatch` or `observe` is calls × reserved attempts × the attempt
 deadline, plus the retry sleep each call can actually spend. That sleep is the
 smaller of the per-call wait cap and `(network retries + 429 retries) × max
-retry wait`. Reserved attempts are `MAX_ATTEMPTS + max 429 retries`. The
+retry wait`. Reserved attempts are the network attempt budget plus the 429 retries. The
 attempt deadline stays at least the request timeout plus 60 seconds of pacing
 and 15 seconds of ledger time. The controller accepts a step of up to 2 hours.
 A plan that still does not fit is refused. The tick deadline covers that step. A per-request timeout,
 a transient network failure whose cause is `ECONNRESET`, `ETIMEDOUT`,
 `ECONNREFUSED`, `EAI_AGAIN`, or `UND_ERR_SOCKET` (including a socket hang up),
-and an HTTP 5xx response (500, 502, 503, 504, and any other 5xx)
-are retried up to 8 attempts, with exponential backoff and jitter. A 5xx
-`Retry-After` is honored. That wait stays inside the per-call wait cap. When
-those attempts run out, the current seed fails and later seeds still run.
+and HTTP 500, 502, 503, and 504
+are retried up to `LOOPITER_BENCH_NETWORK_ATTEMPTS` (default 8), with exponential backoff and jitter. A listed server error's
+`Retry-After` is honored. HTTP 501, 505, other 5xx, and every 4xx except 429 are not retried. That wait stays inside the per-call wait cap. When
+those attempts run out, the current seed fails and later seeds still run. The total and per-invocation spend caps still refuse the next send.
 `LOOPITER_BENCH_NETWORK_FAILURES` (default 5) stops the run after that many
 calls in a row exhaust this budget, including exhausted 5xx calls, so a real
 outage still stops cleanly. HTTP 429 keeps its own retry budget. A bare
@@ -424,8 +425,8 @@ the output bound) stays under 90% of that limit. After the response, the reserva
 is settled to the actual input plus output tokens. If actual usage is higher,
 the difference is debited in the same window. A single request larger than the
 limit is sent only while nothing else is in the window. When `LOOPITER_BENCH_MAX_RPM`
-is set, the same calls also wait so the rolling minute stays under 90% of that
-request limit. The two pacers both apply. Unset request pacing does not wait.
+is set, the token reservation is taken first and the request slot is taken immediately before the send, so a token wait does not hold a request slot. The rolling minute stays under 90% of that
+request limit. Unset request pacing does not wait.
 Progress lines print
 every 50 attempts and at least every 2 minutes, including while waiting, with
 the call count, spend, state, and, once a call has completed, the HTTP 429

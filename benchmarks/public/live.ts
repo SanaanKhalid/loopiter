@@ -13,6 +13,7 @@ import {
   ExhaustedProviderError,
   NetworkOutageStop,
   isSeedNetworkFailure,
+  retryableServerStatus,
   assertLiveSpendGuards,
   createExitGuard,
   createInterruptHandler,
@@ -86,6 +87,8 @@ export interface PublicLiveOptions {
   maxRequestsPerMinute?: number;
   /** Consecutive network-budget exhaustions before the run stops. Omitted uses the session default. */
   maxConsecutiveNetworkFailures?: number;
+  /** Sends per transient network, timeout, or listed server error. Omitted uses the default. */
+  networkAttempts?: number;
   maxRetryWaitMs: number;
   max429Retries: number;
   requestTimeoutMs: number;
@@ -165,6 +168,7 @@ export function liveOptionsFromEnv<T extends PublicExample>(
     maxTokensPerMinute?: number;
     maxRequestsPerMinute?: number;
     maxConsecutiveNetworkFailures?: number;
+    networkAttempts?: number;
   },
 ): PublicLiveOptions {
   if (env[LIVE_ENV.allow] !== "1")
@@ -202,6 +206,7 @@ export function liveOptionsFromEnv<T extends PublicExample>(
     maxRequestsPerMinute: args.maxRequestsPerMinute ?? pace.maxRequestsPerMinute,
     maxConsecutiveNetworkFailures:
       args.maxConsecutiveNetworkFailures ?? pace.maxConsecutiveNetworkFailures,
+    networkAttempts: args.networkAttempts ?? pace.networkAttempts,
     maxRetryWaitMs: pace.maxRetryWaitMs,
     max429Retries: pace.max429Retries,
     requestTimeoutMs: pace.requestTimeoutMs,
@@ -246,6 +251,7 @@ export async function runLiveTask<T extends PublicExample>(
     ...(options.maxConsecutiveNetworkFailures === undefined
       ? {}
       : { maxConsecutiveNetworkFailures: options.maxConsecutiveNetworkFailures }),
+    ...(options.networkAttempts === undefined ? {} : { networkAttempts: options.networkAttempts }),
     maxRetryWaitMs: options.maxRetryWaitMs,
     max429Retries: options.max429Retries,
     requestTimeoutMs: options.requestTimeoutMs,
@@ -541,6 +547,8 @@ function stopsTheRun(error: unknown): boolean {
 /** Policy refusals and a throw from harness or controller logic stay on that seed. */
 function isSeedScoped(error: unknown): boolean {
   if (error instanceof NetworkOutageStop) return false;
+  if (isSeedNetworkFailure(error)) return true;
+  if (error instanceof ProviderRequestError && retryableServerStatus(error.status)) return true;
   if (error instanceof ProviderRequestError) return perItemReason(error) !== null;
   if (!(error instanceof Error)) return false;
   if (error instanceof ExhaustedProviderError) return isSeedNetworkFailure(error);

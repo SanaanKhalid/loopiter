@@ -87,7 +87,7 @@ item-failure summary, but it does not count toward the content-filter
 fraction or the five-in-a-row stop. When truncations in one arm and split
 exceed 20% of that split, the run stops with `output_truncated`. The report
 and summary record the row, arm, split, and reason. Exhausted transient
-network retries and HTTP 5xx responses fail that seed. Enough of those
+network retries and HTTP 500, 502, 503, and 504 fail that seed. Enough of those
 failures in a row stop the run. The run still stops on
 401, 403, 404, 429, and a systemic 400. It also stops after 5
 non-truncation prediction failures in a row, or when those failures in one
