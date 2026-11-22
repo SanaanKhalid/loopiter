@@ -1,0 +1,10 @@
+{
+  "include": [
+    "src/loopiter/integrations/privacy.py",
+    "src/loopiter/integrations/capture.py",
+    "src/loopiter/integrations/observe.py",
+    "src/loopiter/integrations/otel.py"
+  ],
+  "typeCheckingMode": "strict",
+  "pythonVersion": "3.11"
+}

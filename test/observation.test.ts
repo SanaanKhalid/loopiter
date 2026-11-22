@@ -20,6 +20,9 @@ test("capture redacts before bounding, preserves application values, and explici
   assert.deepEqual(capturePayload(raw,{mode:"metadata-only"}).value,{omitted:true});
   assert.equal(capturePayload(raw,{mode:"full"}).complete,true);
   assert.throws(()=>capturePayload(raw,{mode:"redacted",maximumBytes:NaN}));
+  const nested = capturePayload({ headers: { "x-api-key": "opaque-value" }, description: "safe" }, { mode: "redacted" });
+  assert.equal((nested.value as { headers: { "x-api-key": string }; description: string }).headers["x-api-key"], "[REDACTED]");
+  assert.equal((nested.value as { description: string }).description, "safe");
 });
 
 test("observer retains lineage, defaults to no content, preserves return identity and never replays a durable ID", async () => {
