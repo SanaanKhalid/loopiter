@@ -9,7 +9,12 @@ import {
   ifbenchFixtures,
   type IfExample,
 } from "./fixtures.js";
-import { IFBENCH_PROMPT_VERSION, IFBENCH_SYSTEM_PROMPT } from "./prompt.js";
+import {
+  IFBENCH_PROMPT_VERSION,
+  IFBENCH_STRONG_PROMPT,
+  IFBENCH_STRONG_PROMPT_VERSION,
+  IFBENCH_SYSTEM_PROMPT,
+} from "./prompt.js";
 import { selectProposeExamples } from "../public/propose-bound.js";
 import { scoreWithVerifiers } from "./score.js";
 
@@ -22,6 +27,8 @@ export const ifbenchTask: BenchmarkTask<IfExample> = {
   promptCap: PROMPT_CAP,
   promptVersion: IFBENCH_PROMPT_VERSION,
   baselinePrompt: IFBENCH_SYSTEM_PROMPT,
+  strongPromptVersion: IFBENCH_STRONG_PROMPT_VERSION,
+  strongPrompt: IFBENCH_STRONG_PROMPT,
   fullSizes: FULL_SIZES,
   smokeRows: SMOKE_ROWS,
   feedbackPredicts: true,

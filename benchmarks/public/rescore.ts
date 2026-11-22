@@ -1,8 +1,8 @@
 /**
  * Aggregate sanity check for a saved public-benchmark report.
- * This is not a replay. The report has per-seed totals only, so each arm is
- * compared with an unpaired Newcombe interval, not the paired bootstrap the
- * gate uses on item scores.
+ * The run report stores per-question outcomes and a paired headline. This
+ * command still prints unpaired Wilson and Newcombe bounds from the per-seed
+ * totals. It is not a replay of the acceptance gate or of the headline.
  *
  *   node dist/benchmarks/public/rescore.js <report.json>
  */

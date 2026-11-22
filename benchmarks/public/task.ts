@@ -39,10 +39,12 @@ export interface ProposeRequest<T extends PublicExample> {
 export interface ModelAnswer {
   text: string;
   latencyMs: number;
+  /** True when the call failed and the text is not a model answer. */
+  failed?: boolean;
 }
 
 export interface PredictCall {
-  arm: "baseline" | "one-shot" | "controller";
+  arm: "baseline" | "strong-prompt" | "one-shot" | "controller";
   split:
     | "feedback"
     | "validation"
@@ -75,6 +77,9 @@ export interface BenchmarkTask<T extends PublicExample> {
   promptCap: number;
   promptVersion: string;
   baselinePrompt: string;
+  strongPromptVersion: string;
+  /** Hand-written task prompt. Scored on the same held-out items as the other arms. */
+  strongPrompt: string;
   fullSizes: SplitSizes;
   smokeRows: number;
   /** True when the single propose call is preceded by a predict per optimization row. */

@@ -227,7 +227,12 @@ export function maxModelCallsPerStep(
   return Math.max(1, batchSize * 2, observeChunk);
 }
 
-/** Controller step cap. Two hours holds the default live budget (16 × 255s plus retry waits). */
+/**
+ * Controller step cap, two hours. `liveDeadlinePlan` refuses a plan that does
+ * not fit: calls per step times `reservedAttemptsPerCall` (the network budget
+ * plus 429 retries) times `reservedSendMs`, plus the retry sleep those calls
+ * can still spend.
+ */
 export const MAX_STEP_MS = 7_200_000;
 export const MAX_TICK_MS = 7_260_000;
 /** Ledger persist kept in each reserved send, after two pace windows. */
@@ -1133,11 +1138,19 @@ export class TokenMinuteWindow {
     }
   }
 
-  /** Move a reservation to the send time after a later pace wait. */
+  /**
+   * Move a reservation to the send time after a later pace wait.
+   * The list stays oldest-first, so the next wait uses the earliest stamp.
+   */
   restamp(id: number, at = this.now()): void {
-    const stamp = this.stamps.find((item) => item.id === id);
+    const index = this.stamps.findIndex((item) => item.id === id);
+    if (index < 0) return;
+    const [stamp] = this.stamps.splice(index, 1);
     if (!stamp) return;
     stamp.at = at;
+    const place = this.stamps.findIndex((item) => item.at > at);
+    if (place < 0) this.stamps.push(stamp);
+    else this.stamps.splice(place, 0, stamp);
   }
 
   /** Replace a reservation with actual tokens. A larger actual debits the difference. */

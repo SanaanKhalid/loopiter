@@ -33,6 +33,19 @@ import { formatUsd, usdToMicro } from "../kb-qa/money.js";
 import { requestBody } from "./bodies.js";
 import { LIVE_INPUT_BYTES } from "./constants.js";
 import { UnsupportedInstructionError } from "../ifbench/score.js";
+import {
+  addArmFailure,
+  analysisPlanSha256,
+  analyzeSeeds,
+  emptyArmFailures,
+  failureKindForError,
+  failureKindForReason,
+  ANALYSIS_PLAN_PATH,
+  type ArmComparison,
+  type ArmFailureReport,
+  type ArmName,
+  type PromptSensitivity,
+} from "./analysis.js";
 import { viewOf, type ScoreView } from "./harness.js";
 import {
   ItemFailureStop,
@@ -115,14 +128,24 @@ export interface PublicLiveReport {
   minimumImprovement: number;
   promptCapCharacters: number;
   deployment: string;
+  strongPromptVersion: string;
+  analysisPlan: string;
+  analysisPlanSha256: string;
+  /** Null when the run failed or no seed completed. */
+  headline: ArmComparison | null;
+  comparisons: ArmComparison[] | null;
+  promptSensitivity: PromptSensitivity | null;
+  armFailures: ArmFailureReport;
   arms: {
     baseline: { served: ScoreView; ungated: null };
+    strongPrompt: { served: ScoreView; ungated: null; gates: "none" };
     oneShot: { served: ScoreView; ungated: ScoreView; gates: "none" };
     controller: { served: ScoreView; ungated: ScoreView | null; gates: "improvement-controller" };
   } | null;
   perSeed: {
     seed: number;
     baseline: RateDraft;
+    strongPrompt: RateDraft;
     oneShot: RateDraft;
     controllerServed: RateDraft;
     controllerUngated: RateDraft | null;
@@ -132,12 +155,12 @@ export interface PublicLiveReport {
     proposeCalls: number;
     proposeRefusals: number;
     status: "complete" | "never_proposed" | "failed";
-    failure: { arm: "baseline" | "one-shot" | "controller"; code: string; message: string } | null;
+    failure: { arm: ArmName; code: string; message: string } | null;
   }[];
   proposeRefusals: { calls: number; refused: number };
   seedFailures: {
     seed: number;
-    arm: "baseline" | "one-shot" | "controller";
+    arm: ArmName;
     code: string;
     message: string;
   }[];
@@ -265,7 +288,8 @@ export async function runLiveTask<T extends PublicExample>(
   const secrets = redactionSecrets(options.apiKey, options.endpoint);
   const failures = new ItemFailureTracker();
   const proposeTally = { calls: 0, refused: 0 };
-  const runner = liveRunner(task, session, failures, proposeTally);
+  const armFailures = emptyArmFailures();
+  const runner = liveRunner(task, session, failures, proposeTally, armFailures);
   const perSeed: PublicLiveReport["perSeed"] = [];
   const decisionLogs: SeedDecisionLog[] = [];
   const heartbeat = startProgressTicker(120_000, () => session.emitProgress());
@@ -309,8 +333,9 @@ export async function runLiveTask<T extends PublicExample>(
       if (ledger.stopReason || session.isStopping()) break;
       const callsAt = proposeTally.calls;
       const refusedAt = proposeTally.refused;
-      let phase: "baseline" | "one-shot" | "controller" = "baseline";
+      let phase: ArmName = "baseline";
       let baseline: RateDraft | undefined;
+      let strongPrompt: RateDraft | undefined;
       let oneShot: Awaited<ReturnType<typeof runOneShot>> | undefined;
       let controller: Awaited<ReturnType<typeof runController>> | undefined;
       try {
@@ -325,6 +350,12 @@ export async function runLiveTask<T extends PublicExample>(
         );
         baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut, {
           arm: "baseline",
+          split: "held-out",
+          planned: split.heldOut.length,
+        });
+        phase = "strong-prompt";
+        strongPrompt = await scoreHeldOut(task, runner, task.strongPrompt, split.heldOut, {
+          arm: "strong-prompt",
           split: "held-out",
           planned: split.heldOut.length,
         });
@@ -363,6 +394,7 @@ export async function runLiveTask<T extends PublicExample>(
         perSeed.push({
           seed,
           baseline,
+          strongPrompt,
           oneShot: oneShot.heldOut,
           controllerServed: controller.heldOut,
           controllerUngated: controller.ungated,
@@ -381,9 +413,12 @@ export async function runLiveTask<T extends PublicExample>(
       } catch (error) {
         if (stopsTheRun(error)) throw error;
         const recorded = seedFailureView(error, secrets);
+        const kind = failureKindForError(error);
+        if (kind) addArmFailure(armFailures, phase, kind);
         perSeed.push({
           seed,
           baseline: baseline ?? emptyDraft(),
+          strongPrompt: strongPrompt ?? emptyDraft(),
           oneShot: oneShot?.heldOut ?? emptyDraft(),
           controllerServed: controller?.heldOut ?? emptyDraft(),
           controllerUngated: controller?.ungated ?? null,
@@ -418,6 +453,7 @@ export async function runLiveTask<T extends PublicExample>(
     failures,
     proposeTally,
     scoredSizes(sizes, options.rowLimit),
+    armFailures,
   );
   if (options.apiKey.length >= 4 && JSON.stringify(report).includes(options.apiKey))
     throw new LiveGateError("Refusing to write a report that contains a credential.");
@@ -429,6 +465,7 @@ function liveRunner<T extends PublicExample>(
   session: LiveSession,
   failures: ItemFailureTracker,
   proposeTally: { calls: number; refused: number },
+  armFailures: ArmFailureReport,
 ): ModelRunner<T> {
   const callOf = (call: PredictCall | undefined): PredictCall =>
     call ?? { arm: "baseline", split: "held-out", planned: 0 };
@@ -466,7 +503,8 @@ function liveRunner<T extends PublicExample>(
         const text = generation.value.text;
         if (typeof text !== "string" || !text.trim()) {
           failures.noteFailure(site, row.id, "empty_output", []);
-          return { text: "", latencyMs: generation.latencyMs };
+          noteArmReason(armFailures, site.arm, "empty_output");
+          return { text: "", latencyMs: generation.latencyMs, failed: true };
         }
         failures.noteSuccess();
         return { text, latencyMs: generation.latencyMs };
@@ -474,7 +512,8 @@ function liveRunner<T extends PublicExample>(
         const reason = perItemReason(error);
         if (!reason) throw error;
         failures.noteFailure(site, row.id, reason, failureCategories(error));
-        return { text: "", latencyMs: 0 };
+        noteArmReason(armFailures, site.arm, reason);
+        return { text: "", latencyMs: 0, failed: true };
       }
     },
     async propose(request, context) {
@@ -512,6 +551,8 @@ function liveRunner<T extends PublicExample>(
         if (!reason) throw error;
         proposeTally.calls += 1;
         proposeTally.refused += 1;
+        const proposeArm: ArmName = context ? "controller" : "one-shot";
+        noteArmReason(armFailures, proposeArm, reason);
         failures.noteFailure(
           {
             arm: context ? "controller" : "one-shot",
@@ -537,7 +578,13 @@ function emptyDraft(): RateDraft {
     f1: null,
     instructionStrict: null,
     instructionLoose: null,
+    items: [],
   };
+}
+
+function noteArmReason(report: ArmFailureReport, arm: ArmName, reason: string): void {
+  const kind = failureKindForReason(reason);
+  if (kind) addArmFailure(report, arm, kind);
 }
 
 function stopsTheRun(error: unknown): boolean {
@@ -595,12 +642,25 @@ function buildReport<T extends PublicExample>(
   failures: ItemFailureTracker,
   proposeTally: { calls: number; refused: number },
   sizes: SplitSizes,
+  armFailures: ArmFailureReport,
 ): PublicLiveReport {
   const counted = perSeed.filter((row) => row.status !== "failed");
   const scored = counted.length > 0 && failure === null;
   const seedFailures = perSeed.flatMap((row) =>
     row.failure ? [{ seed: row.seed, arm: row.failure.arm, code: row.failure.code, message: row.failure.message }] : [],
   );
+  const analysis = scored
+    ? analyzeSeeds(
+        counted.map((row) => ({
+          seed: row.seed,
+          baseline: row.baseline.items,
+          strongPrompt: row.strongPrompt.items,
+          oneShot: row.oneShot.items,
+          controllerServed: row.controllerServed.items,
+          controllerUngated: row.controllerUngated?.items ?? null,
+        })),
+      )
+    : null;
   return {
     schemaVersion: 1,
     harness: `loopiter-live-${task.id}`,
@@ -615,9 +675,21 @@ function buildReport<T extends PublicExample>(
     minimumImprovement: options.minimumImprovement,
     promptCapCharacters: task.promptCap,
     deployment: options.deployment,
+    strongPromptVersion: task.strongPromptVersion,
+    analysisPlan: ANALYSIS_PLAN_PATH,
+    analysisPlanSha256: analysis?.analysisPlanSha256 ?? analysisPlanSha256(),
+    headline: analysis?.headline ?? null,
+    comparisons: analysis?.comparisons ?? null,
+    promptSensitivity: analysis?.promptSensitivity ?? null,
+    armFailures,
     arms: scored
       ? {
           baseline: { served: viewOf(counted.map((row) => row.baseline), 2000, 17), ungated: null },
+          strongPrompt: {
+            served: viewOf(counted.map((row) => row.strongPrompt), 2000, 17),
+            ungated: null,
+            gates: "none",
+          },
           oneShot: {
             served: viewOf(counted.map((row) => row.oneShot), 2000, 17),
             ungated: viewOf(counted.map((row) => row.oneShot), 2000, 17),

@@ -23,19 +23,28 @@ train and validation splits, and the cache loader drops any short row that is
 still present. The raw, kept, and dropped counts for each split are recorded
 in `benchmarks/.cache/hotpotqa/manifest.json` under `splits`. At the pinned
 revision, train drops 838 of 90,447 rows and validation drops 60 of 7,405.
-The frozen 300-row held-out sample is drawn with seed 1402 from the validation
-rows that remain after that filter. Seed 1402 is not one of the five run seeds. Those
-seeds only reshuffle the train pools. Sizes match IFBench: optimization 150,
-validation 150, audit 300, production 150, held-out 300. Scoring every
-remaining validation row on every seed would not match the other benchmark's
-held-out size, so the scored set is the frozen sample. Held-out ids are
-disjoint from train and are never passed to `dataset`, `propose`, or
-`evaluate`.
+The frozen 1000-row held-out sample is drawn with seed 1402 from the validation
+rows that remain after that filter. It is a longer prefix of that same shuffle,
+so the previous 300-row sample is the first 300 ids. Seed 1402 is not one of
+the five run seeds. Those seeds only reshuffle the train pools. Sizes are
+optimization 150, validation 150, audit 300, production 150, and held-out 1000.
+IFBench held-out stays its official test set. Held-out ids are disjoint from
+train and from the optimization, validation, audit, and production rows, and
+they are never passed to `dataset`, `propose`, or `evaluate`.
 
 The fixture eval split has a committed lock, `fixtures.eval.lock.json`, checked
-before a fixture run. Cache load checks `pinned-eval.lock.json` when that file
-is present and stops before any model call if the loaded eval split differs.
-See the benchmarks README.
+before a fixture run. The 1000-row sample has a committed lock,
+`pinned-eval.lock.json`. Cache load requires that file and stops before any
+model call if it is missing or the loaded eval split differs. See the
+benchmarks README and [analysis-plan.md](../analysis-plan.md).
+
+Regenerate the lock from the pinned cache. The cache comes from `fetch.py`.
+A correct file is byte-identical to the committed lock.
+
+```sh
+npm run build
+node dist/benchmarks/hotpotqa/write-eval-lock.js
+```
 
 ## Fetch
 
@@ -98,16 +107,20 @@ a dropped connection after the request was sent is charged the full ceiling.
 ## Arms
 
 1. Frozen baseline.
-2. One-shot rewrite: one propose call, applied with no gates.
-3. Autonomous `ImprovementController` (`autonomous`, `selfImproving: true`).
+2. Strong prompt: a hand-written multi-hop prompt, scored on the same held-out
+   items and seeds. It is not a model rewrite.
+3. One-shot rewrite: one propose call, applied with no gates.
+4. Autonomous `ImprovementController` (`autonomous`, `selfImproving: true`).
    Validation and audit use the opt-in confidence rule described in the
    benchmarks README. The product default keeps the fixed margin. The served
    prompt is the accepted candidate with the highest paired audit effect.
 
-The report records the served held-out exact match and the ungated proposal's
-held-out exact match, with seed bootstrap intervals, plus mean token F1. The
-offline mock also injects a harmful candidate. The validation gate must reject
-it.
+The report stores each held-out question per arm and per seed. The headline is
+the paired bootstrap and exact McNemar comparison in the analysis plan. The
+seed bootstrap stays as a secondary interval. The report also counts network,
+timeout, 5xx, refusal, and parse failures per arm, and it records the
+prompt-sensitivity score. Mean token F1 is still reported. The offline mock
+also injects a harmful candidate. The validation gate must reject it.
 
 ## Acceptance
 

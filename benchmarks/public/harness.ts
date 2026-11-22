@@ -29,6 +29,7 @@ import {
   type PublicSplit,
   type SplitSizes,
 } from "./splits.js";
+import { analyzeSeeds, emptyArmFailures, type ArmComparison, type ArmFailureReport, type PromptSensitivity } from "./analysis.js";
 import { fixtureEvalLockPath, guardEvalSuite, pinnedEvalLockPath, suiteFromTask } from "./eval-lock.js";
 import type { BenchmarkTask, PublicExample } from "./task.js";
 
@@ -41,6 +42,8 @@ export interface IntervalView {
   upper: number;
   samples: number;
   seed: number;
+  /** Secondary interval. The headline comparison resamples questions, not seeds. */
+  unit: "seed";
 }
 
 export interface MetricView {
@@ -69,6 +72,14 @@ export interface OfflineReport {
   regressionMinimumImprovement: number;
   promptCapCharacters: number;
   promptVersion: string;
+  strongPromptVersion: string;
+  analysisPlan: string;
+  analysisPlanSha256: string;
+  /** Primary comparison from the pre-registered plan. Per-seed intervals stay on each arm. */
+  headline: ArmComparison;
+  comparisons: ArmComparison[];
+  promptSensitivity: PromptSensitivity;
+  armFailures: ArmFailureReport;
   auditCaveat: {
     auditRows: number;
     alpha: number;
@@ -84,6 +95,7 @@ export interface OfflineReport {
   };
   arms: {
     baseline: { served: ScoreView; ungated: null };
+    strongPrompt: { served: ScoreView; ungated: null; gates: "none" };
     oneShot: { served: ScoreView; ungated: ScoreView; gates: "none" };
     controller: {
       served: ScoreView;
@@ -95,6 +107,7 @@ export interface OfflineReport {
     seed: number;
     leakedIds: string[];
     baseline: RateDraft;
+    strongPrompt: RateDraft;
     oneShot: { state: string; gates: "none"; version: string; baselineVersion: string; served: RateDraft };
     controller: {
       state: string;
@@ -146,6 +159,7 @@ export async function runOfflineBenchmark<T extends PublicExample>(
     const runner = mockRunner(task);
     const heldOutIds = idsOf(split.heldOut);
     const baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut);
+    const strongPrompt = await scoreHeldOut(task, runner, task.strongPrompt, split.heldOut);
     const oneShot = await runOneShot({ task, split, runner, mode: "improve" });
     const decisionLog = emptySeedLog(seed, task.baselinePrompt);
     decisionLog.splits = splitSizes(split);
@@ -173,7 +187,7 @@ export async function runOfflineBenchmark<T extends PublicExample>(
     ];
     if (leaked.length)
       throw new Error(`Held-out ids were exposed to the loop: ${leaked.join(", ")}`);
-    perSeed.push({ seed, leakedIds: leaked, baseline, oneShot, controller, split });
+    perSeed.push({ seed, leakedIds: leaked, baseline, strongPrompt, oneShot, controller, split });
   }
   if (options.decisionLogPath) writeDecisionLog(options.decisionLogPath, decisionLogs);
   const regression = await runRegression(task, perSeed[0]!.split);
@@ -185,6 +199,16 @@ export async function runOfflineBenchmark<T extends PublicExample>(
     minimumImprovement,
     alpha: PRODUCT_ALPHA,
   });
+  const analysis = analyzeSeeds(
+    perSeed.map((row) => ({
+      seed: row.seed,
+      baseline: row.baseline.items,
+      strongPrompt: row.strongPrompt.items,
+      oneShot: row.oneShot.heldOut.items,
+      controllerServed: row.controller.heldOut.items,
+      controllerUngated: row.controller.ungated?.items ?? null,
+    })),
+  );
   const report: OfflineReport = {
     schemaVersion: 1,
     harness: `loopiter-offline-${task.id}`,
@@ -197,6 +221,13 @@ export async function runOfflineBenchmark<T extends PublicExample>(
     regressionMinimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
     promptCapCharacters: task.promptCap,
     promptVersion: task.promptVersion,
+    strongPromptVersion: task.strongPromptVersion,
+    analysisPlan: analysis.analysisPlan,
+    analysisPlanSha256: analysis.analysisPlanSha256,
+    headline: analysis.headline,
+    comparisons: analysis.comparisons,
+    promptSensitivity: analysis.promptSensitivity,
+    armFailures: emptyArmFailures(),
     auditCaveat: {
       auditRows: caveatRows,
       alpha: PRODUCT_ALPHA,
@@ -214,6 +245,11 @@ export async function runOfflineBenchmark<T extends PublicExample>(
       baseline: {
         served: viewOf(perSeed.map((row) => row.baseline), samples, bootstrapSeed),
         ungated: null,
+      },
+      strongPrompt: {
+        served: viewOf(perSeed.map((row) => row.strongPrompt), samples, bootstrapSeed),
+        ungated: null,
+        gates: "none",
       },
       oneShot: {
         served: viewOf(perSeed.map((row) => row.oneShot.heldOut), samples, bootstrapSeed),
@@ -236,6 +272,7 @@ export async function runOfflineBenchmark<T extends PublicExample>(
       seed: row.seed,
       leakedIds: row.leakedIds,
       baseline: row.baseline,
+      strongPrompt: row.strongPrompt,
       oneShot: {
         state: row.oneShot.state,
         gates: "none" as const,
@@ -331,9 +368,14 @@ export function renderMarkdown(report: OfflineReport): string {
     "",
     `minimumImprovement ${report.minimumImprovement}. ${report.auditCaveat.note}`,
     "",
+    `Analysis plan: ${report.analysisPlan}.`,
+    `Headline (${report.headline.name}): ${report.headline.verdict}. ${report.headline.statement}`,
+    `Prompt sensitivity: ${fmt(report.promptSensitivity.score)}.`,
+    "",
     "| Arm | Served primary | Ungated primary |",
     "| --- | ---: | ---: |",
     `| Frozen baseline | ${fmt(report.arms.baseline.served.primary.rate)} |  |`,
+    `| Strong prompt | ${fmt(report.arms.strongPrompt.served.primary.rate)} |  |`,
     `| One-shot rewrite | ${fmt(report.arms.oneShot.served.primary.rate)} | ${fmt(report.arms.oneShot.ungated.primary.rate)} |`,
     `| Autonomous controller | ${fmt(report.arms.controller.served.primary.rate)} | ${report.arms.controller.ungated ? fmt(report.arms.controller.ungated.primary.rate) : ""} |`,
     "",
@@ -388,6 +430,7 @@ function metric(
       upper: bootstrap.upper,
       samples: bootstrap.samples,
       seed: bootstrap.seed,
+      unit: "seed",
     },
     wilson: {
       successes: wilson.successes,
@@ -411,6 +454,7 @@ function optionalInterval(
     upper: bootstrap.upper,
     samples: bootstrap.samples,
     seed: bootstrap.seed,
+    unit: "seed",
   };
 }
 

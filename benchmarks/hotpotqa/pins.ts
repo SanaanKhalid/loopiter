@@ -9,7 +9,10 @@ export const HOTPOT_EVAL_REPO = "https://github.com/hotpotqa/hotpot";
 export const HOTPOT_EVAL_SHA = "3635853403a8735609ee997664e1528f4480762a";
 export const HOTPOT_EVAL_FILE = "hotpot_evaluate_v1.py";
 
-/** Frozen sample of the labeled validation split. Not one of the five run seeds. */
+/**
+ * Frozen sample of the labeled validation split. Not one of the five run seeds.
+ * 1000 is a prefix of the same seed-1402 shuffle, so the previous 300 ids stay first.
+ */
 export const HOTPOT_HELDOUT_SEED = 1402;
-export const HOTPOT_HELDOUT_ROWS = 300;
+export const HOTPOT_HELDOUT_ROWS = 1000;
 export const HOTPOT_PARAGRAPHS = 10;

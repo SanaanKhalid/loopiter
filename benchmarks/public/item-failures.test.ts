@@ -195,6 +195,10 @@ test("a refusal and an empty output score 0 and the run continues", async () => 
   );
   assert.equal(seen.report.itemFailures[0]?.arm, "baseline");
   assert.equal(seen.report.itemFailures[0]?.split, "held-out");
+  assert.equal(seen.report.armFailures.baseline.refusal, 1);
+  assert.equal(seen.report.armFailures.baseline.parse, 1);
+  assert.equal(seen.report.armFailures.baseline.network, 0);
+  assert.equal(seen.report.armFailures["strong-prompt"].refusal, 0);
   assertNoLeaks(seen.logs);
   assertNoLeaks(JSON.stringify(seen.report));
 });
@@ -329,6 +333,59 @@ test("a throw inside one seed is reported and the other seeds finish", async () 
   assertNoLeaks(JSON.stringify(seen.report));
 });
 
+test("the headline uses completed seeds and a stopped run has none", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "completed-seeds-"));
+  let predicts = 0;
+  try {
+    const report = await runLiveTask(
+      { ...hotpotTask, fullSizes: { optimization: 2, validation: 5, audit: 10, production: 2, heldOut: 2 } },
+      {
+        seeds: [1, 2],
+        smoke: true,
+        deployment: "loopiter-gpt-5-6",
+        apiVersion: "v1",
+        endpoint: "https://example.openai.azure.com/",
+        apiKey: KEY,
+        prices: { inputUsdPerMillion: 1, outputUsdPerMillion: 2, cachedInputUsdPerMillion: 0 },
+        totalCapUsd: 50,
+        warnUsd: 40,
+        invocationCapUsd: 50,
+        stopAtWarn: false,
+        ledgerPath: join(directory, "ledger.json"),
+        limits: resolveLimits({}, hotpotTask),
+        minimumImprovement: 0,
+        maxTokensPerMinute: 0,
+        maxRetryWaitMs: 1_000,
+        max429Retries: 0,
+        requestTimeoutMs: 5_000,
+        maxTotalWaitMs: 5_000,
+        stallTimeoutMs: 600_000,
+        fetch: async (_url, init) => {
+          const raw = typeof init?.body === "string" ? init.body : "";
+          const parsed = raw ? (JSON.parse(raw) as { text?: { format?: { name?: string } } }) : {};
+          if (parsed.text?.format?.name === PROPOSE_NAME) return answerResponse(hotpotTask.baselinePrompt, "fragment");
+          predicts += 1;
+          if (predicts === 5) throw new Error("seed broke after the prompt arms");
+          return answerResponse("Paris");
+        },
+      },
+      {
+        pool: Array.from({ length: 19 }, (_, index) => row(`pool-${index}`, "Paris", false)),
+        heldOut: [row("held-0", "Paris", false), row("held-1", "Paris", false)],
+      },
+    );
+    assert.equal(report.stopped, null);
+    assert.equal(report.perSeed[0]?.status, "failed");
+    assert.equal(report.perSeed[0]?.baseline.items.length, 2);
+    assert.equal(report.perSeed[1]?.status, "complete");
+    assert.equal(report.headline?.questions, 2);
+    assert.equal(report.headline?.unpairedReference, 0);
+    assert.equal(report.headline?.unpairedTreatment, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("exhausted network retries fail the seed and the run continues", async () => {
   const seen = await runNetwork({ seeds: 2, failCalls: 1 });
   assert.equal(seen.report.stopped, null);
@@ -336,7 +393,11 @@ test("exhausted network retries fail the seed and the run continues", async () =
   assert.equal(seen.report.perSeed[0]?.status, "failed");
   assert.equal(seen.report.perSeed[0]?.failure?.code, "network");
   assert.match(seen.report.perSeed[0]?.failure?.message ?? "", /socket down/);
+  assert.equal(seen.report.armFailures.baseline.network, 1);
+  assert.equal(seen.report.armFailures.baseline.timeout, 0);
   assert.equal(seen.report.perSeed[1]?.status, "complete");
+  assert.equal(seen.report.headline?.questions, 4);
+  assert.equal(seen.report.headline?.unpairedReference, 0);
   assert.equal(seen.report.passed, false);
   assert.ok(seen.fetches > NETWORK_ATTEMPTS);
   assertNoLeaks(JSON.stringify(seen.report));
@@ -349,6 +410,8 @@ test("exhausted server errors fail the seed and the run continues", async () => 
   assert.equal(seen.report.perSeed[0]?.status, "failed");
   assert.equal(seen.report.perSeed[0]?.failure?.code, "network");
   assert.match(seen.report.perSeed[0]?.failure?.message ?? "", /HTTP 500/);
+  assert.equal(seen.report.armFailures.baseline.http5xx, 1);
+  assert.equal(seen.report.armFailures.baseline.network, 0);
   assert.equal(seen.report.perSeed[1]?.status, "complete");
   assert.equal(seen.fetches > NETWORK_ATTEMPTS, true);
   assert.equal(seen.report.passed, false);
@@ -422,6 +485,10 @@ test("auth, a systemic 400, and a persistent 429 stop the run", async () => {
   );
   assert.equal(unauthorized.report.stopped?.reason, "provider_error");
   assert.match(unauthorized.report.stopped?.message ?? "", /HTTP 401/);
+  assert.equal(unauthorized.report.headline, null);
+  assert.equal(unauthorized.report.comparisons, null);
+  assert.equal(unauthorized.report.promptSensitivity, null);
+  assert.match(unauthorized.report.analysisPlanSha256, /^[0-9a-f]{64}$/);
   assert.equal(unauthorized.report.itemFailures.length, 0);
   assert.equal(unauthorized.report.perSeed.length, 0);
   assert.equal(unauthorized.fetches, 1);
