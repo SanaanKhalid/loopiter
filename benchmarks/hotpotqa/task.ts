@@ -1,4 +1,5 @@
 import { FIXTURE_SIZES, FULL_SIZES, PROMPT_CAP, SMOKE_ROWS } from "../public/constants.js";
+import { HOTPOT_HELDOUT_ROWS } from "./pins.js";
 import { fragmentSchema, textSchema } from "../public/instructions.js";
 import { scriptedAnswer } from "../public/propose.js";
 import type { BenchmarkTask, RowScore } from "../public/task.js";
@@ -11,7 +12,12 @@ import {
   type Paragraph,
 } from "./fixtures.js";
 import { exactMatch, tokenF1 } from "./normalize.js";
-import { HOTPOT_PROMPT_VERSION, HOTPOT_SYSTEM_PROMPT } from "./prompt.js";
+import {
+  HOTPOT_PROMPT_VERSION,
+  HOTPOT_STRONG_PROMPT,
+  HOTPOT_STRONG_PROMPT_VERSION,
+  HOTPOT_SYSTEM_PROMPT,
+} from "./prompt.js";
 import { selectProposeExamples } from "../public/propose-bound.js";
 
 const FAIL_TEXT = "unknown";
@@ -23,7 +29,9 @@ export const hotpotTask: BenchmarkTask<HotpotExample> = {
   promptCap: PROMPT_CAP,
   promptVersion: HOTPOT_PROMPT_VERSION,
   baselinePrompt: HOTPOT_SYSTEM_PROMPT,
-  fullSizes: FULL_SIZES,
+  strongPromptVersion: HOTPOT_STRONG_PROMPT_VERSION,
+  strongPrompt: HOTPOT_STRONG_PROMPT,
+  fullSizes: { ...FULL_SIZES, heldOut: HOTPOT_HELDOUT_ROWS },
   smokeRows: SMOKE_ROWS,
   feedbackPredicts: false,
   predict: { min: 1, max: 8192, defaultValue: 2048 },

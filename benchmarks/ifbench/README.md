@@ -28,7 +28,8 @@ set as held-out.
 The fixture eval split has a committed lock, `fixtures.eval.lock.json`, checked
 before a fixture run. Cache load checks `pinned-eval.lock.json` when that file
 is present and stops before any model call if the loaded eval split differs.
-See the benchmarks README.
+Held-out stays the official test set. See the benchmarks README and
+[analysis-plan.md](../analysis-plan.md).
 
 ## Fetch
 
@@ -160,17 +161,22 @@ the cap.
 ## Arms
 
 1. Frozen baseline. The checked-in prompt is scored and not rewritten.
-2. One-shot rewrite. The same propose call runs once and the result is served
+2. Strong prompt. A hand-written constraint prompt, scored on the same held-out
+   items and seeds. It is not a model rewrite.
+3. One-shot rewrite. The same propose call runs once and the result is served
    with no validation, audit, or observation gate.
-3. Autonomous controller. `ImprovementController` with `mode: "autonomous"` and
+4. Autonomous controller. `ImprovementController` with `mode: "autonomous"` and
    `selfImproving: true`. Validation and audit use the opt-in confidence rule
    described in the benchmarks README. The product default keeps the fixed
    margin. The served prompt is the accepted candidate with the highest paired
    audit effect. Production observation still runs.
 
-The report records the served held-out score and the ungated proposal's
-held-out score, with seed bootstrap intervals. A harmful candidate is injected
-in the offline mock. The validation gate must reject it.
+The report stores each held-out question per arm and per seed. The headline is
+the paired bootstrap and exact McNemar comparison in the analysis plan. The
+seed bootstrap stays as a secondary interval. The report also counts network,
+timeout, 5xx, refusal, and parse failures per arm, and it records the
+prompt-sensitivity score. A harmful candidate is injected in the offline mock.
+The validation gate must reject it.
 
 ## Acceptance
 
@@ -191,7 +197,7 @@ node dist/benchmarks/ifbench/run.js --fixtures --seeds 1
 ```
 
 Estimate, no provider call. Set input and output prices. This prints the
-smoke plan (1 seed, 30 rows per split) and the full plan for the three arms:
+smoke plan (1 seed, 30 rows per split) and the full plan for the four arms:
 
 ```sh
 LOOPITER_BENCH_PRICE_INPUT_PER_1M=1 \

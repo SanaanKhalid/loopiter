@@ -2800,6 +2800,21 @@ test("cause codes, one timeout sentence, and a retry wait that does not look sta
   await hungResult;
 });
 
+test("a restamp keeps the reservation list in time order", async () => {
+  const clock = fakeClock();
+  const window = new TokenMinuteWindow(100, clock.now, clock.sleep);
+  const older = await window.acquire(40);
+  await clock.sleep(10_000);
+  await window.acquire(40);
+  await clock.sleep(30_000);
+  window.restamp(older.id);
+  const blocked = await window.acquire(30);
+  // The earlier stamp frees 40 tokens after 30s. Waiting on the restamped
+  // entry would hold the call for a full minute.
+  assert.equal(blocked.waited, 30_000);
+  assert.equal(clock.sleeps.at(-1), 30_000);
+});
+
 test("pace reservation settles to actual tokens", async () => {
   const clock = fakeClock();
   const window = new TokenMinuteWindow(100, clock.now, clock.sleep);

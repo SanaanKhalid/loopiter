@@ -57,6 +57,13 @@ import {
   type BatchCase,
 } from "./workflow.js";
 
+/** One held-out question. `correct` is the primary metric. `failed` is a provider failure. */
+export interface QuestionResult {
+  id: string;
+  correct: boolean;
+  failed: boolean;
+}
+
 export interface RateDraft {
   successes: number;
   trials: number;
@@ -65,6 +72,7 @@ export interface RateDraft {
   f1: number | null;
   instructionStrict: number | null;
   instructionLoose: number | null;
+  items: QuestionResult[];
 }
 
 export interface ArmRun {
@@ -109,10 +117,14 @@ export async function scoreHeldOut<T extends PublicExample>(
     runner.afterPredict?.();
     const answer = await runner.answer(prompt, row.example, null, call);
     runner.afterPredict?.();
-    answers.push({ response: answer.text, row: row.example });
+    answers.push({ response: answer.text, row: row.example, failed: answer.failed === true });
   }
   runner.afterPredict?.();
-  return draftOf(await task.scoreMany(answers));
+  const scores = await task.scoreMany(answers);
+  return draftOf(
+    scores,
+    answers.map((item) => ({ id: item.row.id, failed: item.failed })),
+  );
 }
 
 export async function runOneShot<T extends PublicExample>(input: {
@@ -583,7 +595,10 @@ function exampleOf<T extends PublicExample>(pool: Map<string, T>, id: string): T
   return row;
 }
 
-export function draftOf(scores: readonly RowScore[]): RateDraft {
+export function draftOf(
+  scores: readonly RowScore[],
+  questions: readonly { id: string; failed: boolean }[] = [],
+): RateDraft {
   const trials = scores.length;
   let successes = 0;
   let looseSum = 0;
@@ -612,6 +627,8 @@ export function draftOf(scores: readonly RowScore[]): RateDraft {
     loosePasses += score.instructionLoosePasses;
     looseTotal += score.instructionLooseTotal;
   }
+  if (questions.length !== 0 && questions.length !== scores.length)
+    throw new Error("Question results do not match the scores.");
   return {
     successes,
     trials,
@@ -620,6 +637,11 @@ export function draftOf(scores: readonly RowScore[]): RateDraft {
     f1: f1Count === 0 ? null : f1Sum / f1Count,
     instructionStrict: strictTotal === 0 ? null : strictPasses / strictTotal,
     instructionLoose: looseTotal === 0 ? null : loosePasses / looseTotal,
+    items: scores.map((score, index) => ({
+      id: questions[index]?.id ?? String(index),
+      correct: primaryOf(score) === 1,
+      failed: questions[index]?.failed === true,
+    })),
   };
 }
 

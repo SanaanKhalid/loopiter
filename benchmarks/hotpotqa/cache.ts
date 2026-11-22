@@ -14,6 +14,32 @@ import {
   HOTPOT_REVISION,
 } from "./pins.js";
 
+/**
+ * Prefix of the seed-1402 shuffle of the labeled validation rows.
+ * The same seed and the same ordered source keep the previous shorter sample as a prefix.
+ */
+export function selectHotpotHeldOut<T extends { id: string }>(
+  validation: readonly T[],
+  options?: { rows?: number; seed?: number; trainIds?: ReadonlySet<string> },
+): T[] {
+  const rows = options?.rows ?? HOTPOT_HELDOUT_ROWS;
+  const seed = options?.seed ?? HOTPOT_HELDOUT_SEED;
+  if (!Number.isInteger(rows) || rows < 1)
+    throw new Error("Held-out row count must be a positive integer.");
+  const ordered = [...validation].sort((left, right) =>
+    left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+  );
+  const frozen = shuffle(ordered, mulberry32(seed)).slice(0, rows);
+  if (frozen.length !== rows)
+    throw new Error(`HotpotQA validation source cannot fill ${rows} held-out rows.`);
+  if (options?.trainIds) {
+    for (const row of frozen)
+      if (options.trainIds.has(row.id))
+        throw new Error(`Held-out row ${row.id} overlaps a train row.`);
+  }
+  return frozen;
+}
+
 export async function loadHotpotCache(): Promise<{ pool: HotpotExample[]; heldOut: HotpotExample[] }> {
   const root = join(repoRoot(import.meta.url), "benchmarks", ".cache", "hotpotqa");
   const manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8")) as {
@@ -27,12 +53,7 @@ export async function loadHotpotCache(): Promise<{ pool: HotpotExample[]; heldOu
   for (const row of validation)
     if (trainIds.has(row.id))
       throw new Error(`Validation row ${row.id} collides with the train split.`);
-  const frozen = shuffle(
-    [...validation].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)),
-    mulberry32(HOTPOT_HELDOUT_SEED),
-  ).slice(0, HOTPOT_HELDOUT_ROWS);
-  if (frozen.length !== HOTPOT_HELDOUT_ROWS)
-    throw new Error(`HotpotQA validation cache cannot fill ${HOTPOT_HELDOUT_ROWS} held-out rows.`);
+  const frozen = selectHotpotHeldOut(validation, { trainIds });
   guardEvalSuite(
     {
       items: frozen.map((row) => ({

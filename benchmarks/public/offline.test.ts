@@ -330,13 +330,16 @@ test("estimate prints a per-arm plan for both datasets", () => {
     deployment: "gpt-5.4-mini",
   });
   assert.equal(ifbench.arms.baseline.length, 1500);
+  assert.equal(ifbench.arms["strong-prompt"].length, 1500);
   assert.equal(ifbench.arms["one-shot"].length, 2255);
   assert.equal(ifbench.arms.controller.length, 13505);
-  assert.equal(hotpot.arms.baseline.length, 1500);
-  assert.equal(hotpot.arms["one-shot"].length, 1505);
-  assert.equal(hotpot.arms.controller.length, 12755);
+  assert.equal(hotpot.arms.baseline.length, 5000);
+  assert.equal(hotpot.arms["strong-prompt"].length, 5000);
+  assert.equal(hotpot.arms["one-shot"].length, 5005);
+  assert.equal(hotpot.arms.controller.length, 19755);
   assert.match(combined.stdout, /calls: 13505/);
-  assert.match(combined.stdout, /calls: 12755/);
+  assert.match(combined.stdout, /calls: 19755/);
+  assert.match(combined.stdout, /strong-prompt/);
   assert.match(combined.stdout, /Predict max output tokens: 8192/);
   assert.match(combined.stdout, /Predict max output tokens: 2048/);
   for (const script of ["../ifbench/run.js", "../hotpotqa/run.js"]) {
@@ -684,8 +687,8 @@ test("the public CLI parses row counts and a fixtures run replays", async () => 
   );
   assert.equal(estimate.status, 0, estimate.stderr);
   assert.match(estimate.stdout, /seeds: 1, 2, 3/);
-  assert.match(estimate.stdout, /validation 500, audit 500, production 150, held-out 300/);
-  assert.match(estimate.stdout, /calls: 14253/);
+  assert.match(estimate.stdout, /validation 500, audit 500, production 150, held-out 1000/);
+  assert.match(estimate.stdout, /calls: 18453/);
   const directory = await mkdtemp(join(tmpdir(), "row-cli-"));
   try {
     const out = join(directory, "report.json");

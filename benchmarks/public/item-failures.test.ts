@@ -195,6 +195,10 @@ test("a refusal and an empty output score 0 and the run continues", async () => 
   );
   assert.equal(seen.report.itemFailures[0]?.arm, "baseline");
   assert.equal(seen.report.itemFailures[0]?.split, "held-out");
+  assert.equal(seen.report.armFailures.baseline.refusal, 1);
+  assert.equal(seen.report.armFailures.baseline.parse, 1);
+  assert.equal(seen.report.armFailures.baseline.network, 0);
+  assert.equal(seen.report.armFailures["strong-prompt"].refusal, 0);
   assertNoLeaks(seen.logs);
   assertNoLeaks(JSON.stringify(seen.report));
 });
@@ -336,6 +340,8 @@ test("exhausted network retries fail the seed and the run continues", async () =
   assert.equal(seen.report.perSeed[0]?.status, "failed");
   assert.equal(seen.report.perSeed[0]?.failure?.code, "network");
   assert.match(seen.report.perSeed[0]?.failure?.message ?? "", /socket down/);
+  assert.equal(seen.report.armFailures.baseline.network, 1);
+  assert.equal(seen.report.armFailures.baseline.timeout, 0);
   assert.equal(seen.report.perSeed[1]?.status, "complete");
   assert.equal(seen.report.passed, false);
   assert.ok(seen.fetches > NETWORK_ATTEMPTS);
@@ -349,6 +355,8 @@ test("exhausted server errors fail the seed and the run continues", async () => 
   assert.equal(seen.report.perSeed[0]?.status, "failed");
   assert.equal(seen.report.perSeed[0]?.failure?.code, "network");
   assert.match(seen.report.perSeed[0]?.failure?.message ?? "", /HTTP 500/);
+  assert.equal(seen.report.armFailures.baseline.http5xx, 1);
+  assert.equal(seen.report.armFailures.baseline.network, 0);
   assert.equal(seen.report.perSeed[1]?.status, "complete");
   assert.equal(seen.fetches > NETWORK_ATTEMPTS, true);
   assert.equal(seen.report.passed, false);

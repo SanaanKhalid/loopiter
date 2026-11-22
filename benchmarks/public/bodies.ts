@@ -14,7 +14,7 @@ import { formatUsd } from "../kb-qa/money.js";
 import { pacedTokenLimit, projectedWallMs } from "../kb-qa/live.js";
 
 export interface PlannedCall {
-  arm: "baseline" | "one-shot" | "controller";
+  arm: "baseline" | "strong-prompt" | "one-shot" | "controller";
   kind: "predict" | "propose";
   stage: string;
   seed: number;

@@ -71,9 +71,10 @@ It prints the served candidate and the baseline for each seed, and exits
 non-zero if a recomputed decision differs from the log.
 
 `rescore.js` reads a saved aggregate report and prints Wilson and Newcombe
-bounds for baseline, one-shot, ungated, and served. That is an aggregate
-sanity check. It is not a replay, because those reports do not contain the
-per-item outcomes.
+bounds from the per-seed totals. That is an aggregate sanity check. It is not
+a replay of the acceptance gate. The run report stores per-question outcomes
+and the paired headline from the analysis plan. Rescore does not recompute
+that headline.
 
 ## Eval lock
 
@@ -93,6 +94,28 @@ CI runs `loopiter eval verify` and `loopiter eval leakage` on the fixture
 files, and the same commands through `python -m loopiter`. Leakage compares
 the fixture train file with the fixture eval file. Verify exits nonzero on
 drift. Leakage exits nonzero on overlap.
+
+## Analysis plan
+
+HotpotQA and IFBench reports follow [analysis-plan.md](analysis-plan.md). The
+plan is fixed before a run. It names the primary metric, the arms, the paired
+bootstrap and the exact McNemar test, alpha 0.05, and the headline rule. A
+result is an improvement, a regression, no difference, or safe, never
+regresses. Safe, never regresses means the paired CI lower bound is at or
+above the non-inferiority margin of −0.01. The report generator applies that
+rule. It does not choose a different one from the results.
+
+The headline resamples pooled (seed, item) pairs. The per-seed bootstrap stays
+on each arm as a secondary interval. Each held-out question is stored per arm
+and per seed with its id, a correct bit, and a failure bit. Each arm also
+reports network, timeout, 5xx, refusal, and parse counts. The prompt-sensitivity
+score is the range of pooled held-out accuracy across the prompt arms. The
+plan defines that score.
+
+The arms are the frozen baseline, a hand-written strong prompt, the one-shot
+rewrite, and the served controller prompt. The strong prompt is scored on the
+same held-out items and seeds. HotpotQA held-out is 1000 rows from the same
+validation shuffle. IFBench held-out stays the official test set.
 
 # Offline benchmark
 
@@ -287,7 +310,7 @@ There are no baked-in prices or caps.
 | `LOOPITER_BENCH_NETWORK_FAILURES` | no | Consecutive calls that exhaust that attempt budget before the run stops. Default `5`. A finite integer greater than zero. `--network-failures` overrides this variable |
 | `LOOPITER_BENCH_MAX_RETRY_WAIT_SECONDS` | no | Cap on each 429 wait. Default `60`. A finite integer greater than zero |
 | `LOOPITER_BENCH_MAX_429_RETRIES` | no | Extra attempts after HTTP 429. Default `1000`, a fuse. A rate-limited request stops when its wait budget runs out first. A finite integer greater than zero |
-| `LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS` | no | Per-request abort. Default `120`. A timed-out request is retried within the existing attempt limit |
+| `LOOPITER_BENCH_REQUEST_TIMEOUT_SECONDS` | no | Per-request abort. Default `120`. A timed-out request is retried within the existing attempt limit. A longer timeout may need a smaller `LOOPITER_BENCH_NETWORK_ATTEMPTS` so the reserved sends still fit the controller step cap |
 | `LOOPITER_BENCH_MAX_TOTAL_WAIT_SECONDS` | no | Cap on retry wait for one model call. Pace waits are not counted. Default `900`. The run stops with a clear message instead of waiting longer |
 | `LOOPITER_BENCH_STALL_MINUTES` | no | Exit if a live run records no attempt, ledger write, or retry for this many minutes. Default `10`. The value must be at least 2 × the 60 second pace window plus the attempt deadline, so one pace wait and one slow request cannot trip it. A shorter value refuses to start. A ref'd watchdog, so a stalled socket cannot silence it |
 

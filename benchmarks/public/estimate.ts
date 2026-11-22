@@ -1,5 +1,5 @@
 /**
- * Call plan for the three arms. No provider call is made.
+ * Call plan for the four arms. No provider call is made.
  * Token sizes repeat a checked-in fixture row; they are not measured on the download.
  */
 import {
@@ -19,7 +19,7 @@ export interface ArmPlan {
   label: "smoke" | "full";
   seeds: number[];
   sizes: SplitSizes;
-  arms: Record<"baseline" | "one-shot" | "controller", PlannedCall[]>;
+  arms: Record<"baseline" | "strong-prompt" | "one-shot" | "controller", PlannedCall[]>;
 }
 
 export function planTask<T extends PublicExample>(
@@ -53,6 +53,15 @@ export function planTask<T extends PublicExample>(
     maxOutputTokens: input.limits.predictMaxOutputTokens,
     reasoningEffort: input.limits.reasoningEffort,
   });
+  const predictStrong = requestBody({
+    model: input.deployment,
+    instructions: task.strongPrompt,
+    payload: task.predictPayload(sample),
+    name: PREDICT_NAME,
+    schema: task.predictSchema(),
+    maxOutputTokens: input.limits.predictMaxOutputTokens,
+    reasoningEffort: input.limits.reasoningEffort,
+  });
   const proposeRows = Array.from({ length: input.sizes.optimization }, () => sample);
   const feedback: InstructionMark[][] = task.feedbackPredicts
     ? proposeRows.map(() => [{ id: "example", strict: false, loose: false }])
@@ -68,11 +77,13 @@ export function planTask<T extends PublicExample>(
   });
   const arms = {
     baseline: [] as PlannedCall[],
+    "strong-prompt": [] as PlannedCall[],
     "one-shot": [] as PlannedCall[],
     controller: [] as PlannedCall[],
   };
   for (const seed of input.seeds) {
     pushPredict(arms.baseline, "baseline", "held-out", seed, input.sizes.heldOut, predictBaseline, input.limits.predictMaxOutputTokens);
+    pushPredict(arms["strong-prompt"], "strong-prompt", "held-out", seed, input.sizes.heldOut, predictStrong, input.limits.predictMaxOutputTokens);
     if (task.feedbackPredicts)
       pushPredict(arms["one-shot"], "one-shot", "feedback", seed, input.sizes.optimization, predictBaseline, input.limits.predictMaxOutputTokens);
     arms["one-shot"].push(planCall("one-shot", "propose", "propose", seed, propose, input.limits.proposeMaxOutputTokens));
@@ -127,7 +138,7 @@ export function renderTaskEstimate<T extends PublicExample>(
     `Predict max output tokens: ${limits.predictMaxOutputTokens}`,
     `Propose max output tokens: ${limits.proposeMaxOutputTokens}`,
     `Reasoning effort: ${limits.reasoningEffort ?? "omitted"}`,
-    "Arms: frozen baseline, one-shot rewrite with no gates, and the autonomous ImprovementController.",
+    "Arms: frozen baseline, strong prompt, one-shot rewrite with no gates, and the autonomous ImprovementController.",
     "Input tokens repeat one checked-in fixture row up to the split size. Output tokens are the max_output_tokens bound. This is a call plan, not a measured score.",
     `Projection rounds each call to micro-USD. TPM pacing reserves bytes/4 plus the output bound against ${Math.round(PACE_HEADROOM * 100)}% of LOOPITER_BENCH_MAX_TPM. When LOOPITER_BENCH_MAX_RPM is set, requests are also spaced to 90% of that rolling minute. Unset leaves request pacing off.`,
     "",
@@ -180,6 +191,7 @@ function formatPlan(plan: ArmPlan, prices: LivePrices, maxTokensPerMinute: numbe
     `seeds: ${plan.seeds.join(", ")}`,
     `rows per split: ${sizes}`,
     formatArm("baseline", plan.arms.baseline, prices, maxTokensPerMinute),
+    formatArm("strong-prompt", plan.arms["strong-prompt"], prices, maxTokensPerMinute),
     formatArm("one-shot", plan.arms["one-shot"], prices, maxTokensPerMinute),
     formatArm("controller", plan.arms.controller, prices, maxTokensPerMinute),
   ].join("\n");
