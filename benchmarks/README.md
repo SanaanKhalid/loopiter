@@ -60,11 +60,13 @@ from held-out.
 
 The harness writes a decision log beside a report when `--out` is set
 (`report.json` produces `report.decisions.json`). Each seed records, per
-round, the candidate id, a prompt hash, the prompt text, the split, per-item
-scores for the candidate and the incumbent, the rule parameters, the
-confidence decision, and the point-estimate margin check. It also records the
-split sizes, the controller transitions with timestamps, and the cause of a
-production rollback. `previous_version_restored` remains the rollback outcome.
+round, the candidate id, a prompt hash, the split, per-item scores for the
+candidate and the incumbent, the rule parameters, the confidence decision,
+and the point-estimate margin check. It also records the split sizes, the
+controller transitions with timestamps, and the cause of a production
+rollback. `previous_version_restored` remains the rollback outcome. Prompt
+text can contain user data, so the log writer stores only the hash unless
+`recordPromptText` is set. This harness sets that option.
 
 Replay that log with no model calls:
 

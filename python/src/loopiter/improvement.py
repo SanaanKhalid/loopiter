@@ -1079,17 +1079,21 @@ class ImprovementController:
                             "out_of_band_change",
                             "Reviewed rollback does not match actual serving state.",
                         )
-                    await self._save(
-                        rid,
-                        owner,
-                        {"state": "rolled_back", "reason": "reviewed_rollback_confirmed"},
-                        True,
-                    )
-                    return {
+                    patch = {
+                        "state": "rolled_back",
+                        "reason": "reviewed_rollback_confirmed",
+                    }
+                    if d["state"] == "rolling_back":
+                        patch["cause"] = rollback_cause(d["reason"])
+                    saved = await self._save(rid, owner, patch, True)
+                    result = {
                         **await self._idle(w, "reviewed_rollback_confirmed", "rolled_back"),
                         "run_id": rid,
                         "candidate_ids": d["candidate_ids"],
                     }
+                    if saved["data"].get("cause"):
+                        result["cause"] = saved["data"]["cause"]
+                    return result
             if d["definition_hash"] != self.definitions[w.id]:
                 await self._save(rid, owner, {"reason": "policy_changed_requires_recovery"}, True)
                 return {

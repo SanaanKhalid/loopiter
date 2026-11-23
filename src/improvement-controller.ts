@@ -1198,10 +1198,16 @@ export class ImprovementController {
               "out_of_band_change",
               "Reviewed rollback does not match actual serving state.",
             );
+          const cause =
+            d.state === "rolling_back" ? rollbackCause(d.reason) : undefined;
           run = await this.save(
             rid,
             owner,
-            { state: "rolled_back", reason: "reviewed_rollback_confirmed" },
+            {
+              state: "rolled_back",
+              reason: "reviewed_rollback_confirmed",
+              ...(cause ? { cause } : {}),
+            },
             true,
           );
           return {
@@ -1210,6 +1216,7 @@ export class ImprovementController {
             reason: run.data.reason,
             candidateIds: d.candidateIds,
             budget: await this.budget(w),
+            ...(run.data.cause ? { cause: run.data.cause } : {}),
           };
         }
       }

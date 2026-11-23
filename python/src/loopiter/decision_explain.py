@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 from .acceptance_gate import MAX_BOOTSTRAP_SAMPLES, load_retention_ledger
+from .decision_log import validate_recorded_candidates
 
 _OUTCOMES = {"accepted", "rejected", "insufficient"}
 
@@ -64,6 +65,8 @@ def _explain_seed(value: Any) -> dict[str, Any]:
         or not isinstance(value.get("rounds"), list)
     ):
         raise ValueError("Decision log seed is malformed.")
+    if "candidates" in value:
+        validate_recorded_candidates(value.get("candidates"), value["seed"])
     grouped: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     for round_ in value["rounds"]:

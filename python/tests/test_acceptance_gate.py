@@ -13,6 +13,7 @@ from loopiter.decision_explain import (
     format_explanation,
     format_explanation_json,
 )
+from loopiter.decision_log import note_candidate, prompt_hash, validate_recorded_candidates
 from loopiter.improvement_evidence import compare
 
 
@@ -537,6 +538,61 @@ class AcceptanceGateTest(unittest.TestCase):
         }
         with self.assertRaises(LoopiterError):
             compare(missing, rows, confidence, False)
+
+    def test_prompt_text_is_opt_in_and_validation_accepts_both_shapes(self):
+        text = "answer from the notes"
+        hashed = prompt_hash(text)
+        hidden = {"seed": 1}
+        note_candidate(hidden, {"id": "c", "promptHash": hashed, "prompt": text})
+        self.assertEqual(hidden["candidates"][0]["promptHash"], hashed)
+        self.assertNotIn("prompt", hidden["candidates"][0])
+        shown = {"seed": 2}
+        note_candidate(
+            shown,
+            {"id": "c", "promptHash": hashed, "prompt": text},
+            record_prompt_text=True,
+        )
+        self.assertEqual(shown["candidates"][0]["prompt"], text)
+        validate_recorded_candidates(hidden["candidates"], 1)
+        validate_recorded_candidates(shown["candidates"], 2)
+        explain_decision_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "kind": "acceptance-decisions",
+                    "seeds": [
+                        {
+                            "seed": 1,
+                            "baseline": {"id": "baseline", "promptHash": "base"},
+                            "served": {"id": "baseline", "promptHash": "base"},
+                            "rounds": [],
+                            "candidates": hidden["candidates"],
+                        }
+                    ],
+                }
+            )
+        )
+        explain_decision_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "kind": "acceptance-decisions",
+                    "seeds": [
+                        {
+                            "seed": 2,
+                            "baseline": {"id": "baseline", "promptHash": "base"},
+                            "served": {"id": "baseline", "promptHash": "base"},
+                            "rounds": [],
+                            "candidates": shown["candidates"],
+                        }
+                    ],
+                }
+            )
+        )
+        with self.assertRaises(ValueError):
+            validate_recorded_candidates(
+                [{"id": "c", "promptHash": hashed, "prompt": "other words"}], 3
+            )
 
     def policy(self):
         return {

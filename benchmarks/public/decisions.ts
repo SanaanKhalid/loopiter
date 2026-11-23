@@ -52,7 +52,11 @@ export interface MarginCheck {
 export interface ProposedCandidate {
   id: string;
   promptHash: string;
-  prompt: string;
+  /**
+   * Prompt text. Omitted unless the caller sets `recordPromptText`.
+   * A prompt can contain user data, so the default record is the hash only.
+   */
+  prompt?: string;
 }
 
 export interface ControllerTransition {
@@ -174,24 +178,41 @@ export function marginCheck(effect: number, minimumImprovement: number): MarginC
   };
 }
 
-export function noteCandidate(log: SeedDecisionLog, candidate: ProposedCandidate): void {
+/**
+ * Record a proposed candidate. `recordPromptText` defaults to false: the log
+ * keeps the hash and drops the text, because a prompt can contain user data.
+ */
+export function noteCandidate(
+  log: SeedDecisionLog,
+  candidate: { id: string; promptHash: string; prompt: string },
+  options?: { recordPromptText?: boolean },
+): void {
+  const recordPromptText = options?.recordPromptText === true;
   const hashed = promptHash(candidate.prompt);
   if (hashed !== candidate.promptHash)
     throw new Error(`Candidate ${candidate.id} prompt does not match its hash.`);
   log.candidates ??= [];
+  const stored: ProposedCandidate = recordPromptText
+    ? { id: candidate.id, promptHash: candidate.promptHash, prompt: candidate.prompt }
+    : { id: candidate.id, promptHash: candidate.promptHash };
   const sameId = log.candidates.find((row) => row.id === candidate.id);
   if (sameId) {
-    if (sameId.promptHash !== candidate.promptHash || sameId.prompt !== candidate.prompt)
+    if (sameId.promptHash !== candidate.promptHash)
       throw new Error(`Candidate ${candidate.id} prompt does not match the recorded text.`);
+    if (recordPromptText) sameId.prompt = candidate.prompt;
+    else delete sameId.prompt;
     return;
   }
   const placeholder = `prompt:${hashed.slice(0, 12)}`;
   const pending = log.candidates.find((row) => row.id === placeholder);
   if (pending && candidate.id !== placeholder) {
     pending.id = candidate.id;
+    pending.promptHash = candidate.promptHash;
+    if (recordPromptText) pending.prompt = candidate.prompt;
+    else delete pending.prompt;
     return;
   }
-  log.candidates.push({ ...candidate });
+  log.candidates.push(stored);
 }
 
 export function noteTransition(log: SeedDecisionLog, step: ControllerTransition): void {
@@ -288,6 +309,10 @@ export function replaySeed(
 ): ReplaySeed {
   const mismatches: string[] = [];
   if (log.complete === false) mismatches.push(`seed ${log.seed} incomplete`);
+  for (const candidate of log.candidates ?? []) {
+    if (candidate.prompt !== undefined && candidate.promptHash !== promptHash(candidate.prompt))
+      mismatches.push(`seed ${log.seed} candidate ${candidate.id} prompt`);
+  }
   for (let index = 0; index < log.rounds.length; index++) {
     const round = log.rounds[index]!;
     const incumbent = settleSeed({
@@ -500,10 +525,14 @@ function requireCandidates(candidates: readonly ProposedCandidate[], seed: numbe
   for (const candidate of candidates) {
     if (!candidate || typeof candidate.id !== "string" || candidate.id.length === 0)
       throw new Error(`Seed ${seed} has a candidate without an id.`);
-    if (typeof candidate.prompt !== "string" || candidate.prompt.length === 0)
-      throw new Error(`Seed ${seed} candidate ${candidate.id} is missing its prompt.`);
-    if (candidate.promptHash !== promptHash(candidate.prompt))
-      throw new Error(`Seed ${seed} candidate ${candidate.id} prompt does not match its hash.`);
+    if (typeof candidate.promptHash !== "string" || candidate.promptHash.length === 0)
+      throw new Error(`Seed ${seed} candidate ${candidate.id} is missing its hash.`);
+    if (candidate.prompt !== undefined) {
+      if (typeof candidate.prompt !== "string" || candidate.prompt.length === 0)
+        throw new Error(`Seed ${seed} candidate ${candidate.id} is missing its prompt.`);
+      if (candidate.promptHash !== promptHash(candidate.prompt))
+        throw new Error(`Seed ${seed} candidate ${candidate.id} prompt does not match its hash.`);
+    }
     if (seen.has(candidate.id)) throw new Error(`Seed ${seed} repeats candidate ${candidate.id}.`);
     seen.add(candidate.id);
   }

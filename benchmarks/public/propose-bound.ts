@@ -7,8 +7,20 @@ import { mulberry32, shuffle } from "../kb-qa/stats.js";
 export const PROPOSE_BYTE_BUDGET = 16_384;
 export const PROPOSE_EXAMPLE_CAP = 8;
 export const PROPOSE_SELECTION_SEED = 1402;
+
+/** Mix a seed with a stream label. Distinct labels do not share a mulberry32 stream. */
+export function mixProposeSeed(seed: number, label: string): number {
+  let hash = 0x811c9dc5;
+  const text = `${seed}\0${label}`;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
 /** Follow-up propose samples a different slice than the one-shot propose. */
-export const FOLLOW_PROPOSE_SEED = PROPOSE_SELECTION_SEED + 1;
+export const FOLLOW_PROPOSE_SEED = mixProposeSeed(PROPOSE_SELECTION_SEED, "follow");
 
 export function proposeLimits(env: NodeJS.ProcessEnv = process.env): {
   byteBudget: number;
@@ -36,11 +48,11 @@ export function selectProposeExamples<T>(input: {
   const indexed = input.rows.map((row, index) => ({ row, index }));
   const failed = shuffle(
     indexed.filter((item) => input.failed(item.row, item.index)),
-    mulberry32(seed),
+    mulberry32(mixProposeSeed(seed, "failed")),
   );
   const rest = shuffle(
     indexed.filter((item) => !input.failed(item.row, item.index)),
-    mulberry32(seed + 1),
+    mulberry32(mixProposeSeed(seed, "rest")),
   );
   const chosen: unknown[] = [];
   for (const item of [...failed, ...rest]) {

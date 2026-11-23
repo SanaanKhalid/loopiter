@@ -22,7 +22,9 @@ import type { AutonomyPolicy, Comparison } from "../src/improvement-contracts.js
 import {
   appendRound,
   emptySeedLog,
+  noteCandidate,
   noteRolledBack,
+  promptHash,
   readDecisionLog,
   replaySeed,
   settleSeed,
@@ -326,6 +328,51 @@ test("the decision log records the point-estimate margin and replay checks it", 
   assert.equal(at.rounds[1]?.decision.accept, true);
   assert.equal(settleSeed(at).id, "enough");
   assert.equal(replaySeed(at, gate).matched, true);
+});
+
+test("reading a decision log accepts a hash and a matching prompt", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "prompt-text-"));
+  try {
+    const text = "answer from the notes";
+    const hashed = promptHash(text);
+    const path = join(directory, "log.json");
+    const base = emptySeedLog(1, "baseline");
+    base.candidates = [{ id: "c", promptHash: hashed }];
+    writeDecisionLog(path, [base]);
+    assert.equal(readDecisionLog(path).seeds[0]?.candidates?.[0]?.prompt, undefined);
+    base.candidates = [{ id: "c", promptHash: hashed, prompt: text }];
+    writeDecisionLog(path, [base]);
+    assert.equal(readDecisionLog(path).seeds[0]?.candidates?.[0]?.prompt, text);
+    base.candidates = [{ id: "c", promptHash: hashed, prompt: "other words" }];
+    writeDecisionLog(path, [base]);
+    assert.throws(() => readDecisionLog(path), /does not match its hash/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("decision logs store a prompt hash unless prompt text is requested", () => {
+  const text = "answer from the notes";
+  const hashed = promptHash(text);
+  const hidden = emptySeedLog(21, "baseline");
+  noteCandidate(hidden, { id: "c", promptHash: hashed, prompt: text });
+  assert.equal(hidden.candidates?.[0]?.promptHash, hashed);
+  assert.equal(hidden.candidates?.[0]?.prompt, undefined);
+  const shown = emptySeedLog(22, "baseline");
+  noteCandidate(shown, { id: "c", promptHash: hashed, prompt: text }, { recordPromptText: true });
+  assert.equal(shown.candidates?.[0]?.prompt, text);
+
+  const gate = { ...rule, samples: 400 };
+  const log = emptySeedLog(23, "baseline");
+  const items = pairs(repeated(24, [0, 1]));
+  appendRound(log, { candidateId: "c", promptHash: hashed, split: "validation", items, rule: gate });
+  appendRound(log, { candidateId: "c", promptHash: hashed, split: "audit", items, rule: gate });
+  log.candidates = [{ id: "c", promptHash: hashed }];
+  assert.equal(replaySeed(log, gate).matched, true);
+  log.candidates = [{ id: "c", promptHash: hashed, prompt: text }];
+  assert.equal(replaySeed(log, gate).matched, true);
+  log.candidates = [{ id: "c", promptHash: hashed, prompt: "other words" }];
+  assert.equal(replaySeed(log, gate).matched, false);
 });
 
 test("compare applies a noise floor only when the policy asks for that split", () => {

@@ -411,11 +411,15 @@ export async function runController<T extends PublicExample>(input: {
       propose: async (examples, context) => {
         if (input.fixedFragment) {
           proposal = input.fixedFragment;
-          noteCandidate(decisionLog, {
-            id: `prompt:${promptHash(input.fixedFragment).slice(0, 12)}`,
-            promptHash: promptHash(input.fixedFragment),
-            prompt: input.fixedFragment,
-          });
+          noteCandidate(
+            decisionLog,
+            {
+              id: `prompt:${promptHash(input.fixedFragment).slice(0, 12)}`,
+              promptHash: promptHash(input.fixedFragment),
+              prompt: input.fixedFragment,
+            },
+            { recordPromptText: true },
+          );
           return input.fixedFragment;
         }
         watch(examples);
@@ -442,11 +446,15 @@ export async function runController<T extends PublicExample>(input: {
           input.task.promptCap,
         );
         proposal = fragment;
-        noteCandidate(decisionLog, {
-          id: `prompt:${promptHash(fragment).slice(0, 12)}`,
-          promptHash: promptHash(fragment),
-          prompt: fragment,
-        });
+        noteCandidate(
+          decisionLog,
+          {
+            id: `prompt:${promptHash(fragment).slice(0, 12)}`,
+            promptHash: promptHash(fragment),
+            prompt: fragment,
+          },
+          { recordPromptText: true },
+        );
         return fragment;
       },
       scorePair: async (row, baseline, candidate, context) => {
@@ -536,7 +544,7 @@ export async function runController<T extends PublicExample>(input: {
       const text = fragmentOf(candidate.proposedChange);
       const hashed = promptHash(text);
       candidateIds.set(hashed, id);
-      noteCandidate(decisionLog, { id, promptHash: hashed, prompt: text });
+      noteCandidate(decisionLog, { id, promptHash: hashed, prompt: text }, { recordPromptText: true });
     }
     for (const comparison of recorded) {
       const candidateId = candidateIdFor(comparison.promptHash, [...candidateIds].map(([promptHash, id]) => ({ id, promptHash })));

@@ -39,7 +39,11 @@ import { emptySeedLog, promptHash, readDecisionLog, replaySeed, writeDecisionLog
 import { runOfflineBenchmark } from "./harness.js";
 import { leakedIds, mockRunner, runController, runOneShot } from "./loop.js";
 import { promptPolicy, watchStepMs } from "./policy.js";
-import { FOLLOW_PROPOSE_SEED, PROPOSE_SELECTION_SEED } from "./propose-bound.js";
+import {
+  FOLLOW_PROPOSE_SEED,
+  PROPOSE_SELECTION_SEED,
+  selectProposeExamples,
+} from "./propose-bound.js";
 import { repoRoot } from "./paths.js";
 import {
   applyRowCounts,
@@ -893,6 +897,28 @@ test("the follow-up propose starts from the served prompt and a different sample
   assert.equal(seen[0]?.seed, FOLLOW_PROPOSE_SEED);
   assert.notEqual(FOLLOW_PROPOSE_SEED, PROPOSE_SELECTION_SEED);
   assert.equal(arm.state === "rolled_back", false);
+});
+
+test("propose samples are deterministic and the follow-up stream is separate", () => {
+  const rows = Array.from({ length: 16 }, (_, index) => ({
+    id: `row-${index}`,
+    fail: index % 3 !== 0,
+  }));
+  const sample = (seed: number) =>
+    selectProposeExamples({
+      rows,
+      seed,
+      failed: (row) => row.fail,
+      project: (row) => row.id,
+      envelope: (chosen) => JSON.stringify(chosen),
+      byteBudget: 10_000,
+      exampleCap: 8,
+    });
+  const first = sample(PROPOSE_SELECTION_SEED);
+  assert.deepEqual(first, sample(PROPOSE_SELECTION_SEED));
+  const follow = sample(FOLLOW_PROPOSE_SEED);
+  assert.deepEqual(follow, sample(FOLLOW_PROPOSE_SEED));
+  assert.notDeepEqual(first, follow);
 });
 
 test("HotpotQA propose feedback uses the baseline answer and is not the strong prompt", () => {
