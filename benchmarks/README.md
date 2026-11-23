@@ -64,9 +64,9 @@ round, the candidate id, a prompt hash, the split, per-item scores for the
 candidate and the incumbent, the rule parameters, the confidence decision,
 and the point-estimate margin check. It also records the split sizes, the
 controller transitions with timestamps, and the cause of a production
-rollback. `previous_version_restored` remains the rollback outcome. Prompt
-text can contain user data, so the log writer stores only the hash unless
-`recordPromptText` is set. This harness sets that option.
+rollback. `previous_version_restored` remains the rollback outcome. This
+harness also stores the prompt text beside the hash. The published SDKs do
+not expose that switch, and `explain` reads the rounds either way.
 
 Replay that log with no model calls:
 

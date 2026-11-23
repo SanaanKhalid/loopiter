@@ -351,6 +351,59 @@ test("reading a decision log accepts a hash and a matching prompt", async () => 
   }
 });
 
+test("explain matches Python with and without candidate prompt text", async () => {
+  const fixturePath = fileURLToPath(
+    new URL("../../test/fixtures/explain-candidate-prompts.json", import.meta.url),
+  );
+  const fixture = readFileSync(fixturePath, "utf8");
+  const nodeText = formatExplanation(explainDecisionText(fixture));
+  const parsed = JSON.parse(fixture) as {
+    seeds: { seed: number; candidates: { prompt?: string }[] }[];
+  };
+  const hashOnly = structuredClone(parsed);
+  const withText = structuredClone(parsed);
+  delete hashOnly.seeds[0]!.candidates[0]!.prompt;
+  delete hashOnly.seeds[1]!.candidates[0]!.prompt;
+  withText.seeds[0]!.candidates[0]!.prompt = "notes from the user";
+  withText.seeds[1]!.candidates[0]!.prompt = "notes from the user";
+  assert.equal(
+    formatExplanation(explainDecisionText(JSON.stringify(hashOnly))),
+    formatExplanation(explainDecisionText(JSON.stringify(withText))),
+  );
+  const directory = await mkdtemp(join(tmpdir(), "explain-parity-"));
+  const path = join(directory, "decisions.json");
+  try {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(path, fixture);
+    const root = fileURLToPath(new URL("..", import.meta.url));
+    const nodeJson = spawnSync(process.execPath, [cliPath(), "explain", path, "--json"], {
+      encoding: "utf8",
+    });
+    assert.equal(nodeJson.status, 0, nodeJson.stderr);
+    const pythonJson = spawnSync("python3", ["-m", "loopiter", "explain", path, "--json"], {
+      cwd: root,
+      env: { ...process.env, PYTHONPATH: join(root, "python/src") },
+      encoding: "utf8",
+    });
+    assert.equal(pythonJson.status, 0, pythonJson.stderr);
+    assert.deepEqual(JSON.parse(pythonJson.stdout), JSON.parse(nodeJson.stdout));
+    const pythonText = spawnSync("python3", ["-m", "loopiter", "explain", path], {
+      cwd: root,
+      env: { ...process.env, PYTHONPATH: join(root, "python/src") },
+      encoding: "utf8",
+    });
+    assert.equal(pythonText.status, 0, pythonText.stderr);
+    assert.equal(pythonText.stdout, nodeText);
+    const lines = nodeText.trim().split("\n");
+    assert.deepEqual(
+      lines.filter((line) => line.startsWith("seed 1 ")).map((line) => line.replace("seed 1 ", "")),
+      lines.filter((line) => line.startsWith("seed 2 ")).map((line) => line.replace("seed 2 ", "")),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("decision logs store a prompt hash unless prompt text is requested", () => {
   const text = "answer from the notes";
   const hashed = promptHash(text);
