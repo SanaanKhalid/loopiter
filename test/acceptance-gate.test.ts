@@ -375,7 +375,7 @@ test("explain matches Python with and without candidate prompt text", async () =
   try {
     const { writeFile } = await import("node:fs/promises");
     await writeFile(path, fixture);
-    const root = fileURLToPath(new URL("..", import.meta.url));
+    const root = fileURLToPath(new URL("../..", import.meta.url));
     const nodeJson = spawnSync(process.execPath, [cliPath(), "explain", path, "--json"], {
       encoding: "utf8",
     });
