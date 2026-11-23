@@ -5,6 +5,7 @@
 import { reservedModelTokens } from "../kb-qa/live.js";
 import { requestBody } from "./bodies.js";
 import { PREDICT_NAME, PROPOSE_INSTRUCTIONS, PROPOSE_NAME } from "./instructions.js";
+import { PROPOSE_SELECTION_SEED } from "./propose-bound.js";
 import type { BenchmarkTask, PublicExample } from "./task.js";
 
 export function sizedReservations<T extends PublicExample>(input: {
@@ -28,11 +29,16 @@ export function sizedReservations<T extends PublicExample>(input: {
   });
   const proposeBody = requestBody({
     model,
-    instructions: PROPOSE_INSTRUCTIONS,
+    instructions: input.task.proposeInstructions ?? PROPOSE_INSTRUCTIONS,
     payload: input.task.proposePayload(
       input.prompt,
       input.proposeRows,
       input.proposeRows.map(() => []),
+      {
+        seed: PROPOSE_SELECTION_SEED,
+        predictions: input.proposeRows.map(() => "x".repeat(128)),
+        scores: input.proposeRows.map(() => 0),
+      },
     ),
     name: PROPOSE_NAME,
     schema: input.task.proposeSchema(),

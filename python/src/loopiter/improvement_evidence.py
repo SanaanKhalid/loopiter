@@ -448,6 +448,28 @@ def _cached_acceptance(items, direction, parameters):
     return decision
 
 
+def point_estimate_margin(policy, effect):
+    """Immediate confidence checks minimum_improvement against the point estimate.
+
+    The interval lower bound stays a separate rule. Canary observation keeps its
+    own lower-bound check, so this returns None there.
+    """
+    objective = policy["objective"]
+    if objective.get("acceptance") != "confidence":
+        return None
+    rollout = policy.get("rollout", {}).get("mode", "immediate")
+    if rollout != "immediate":
+        return None
+    minimum = objective["minimum_improvement"]
+    passed = effect >= minimum
+    return {
+        "minimum_improvement": minimum,
+        "effect": effect,
+        "passed": passed,
+        "outcome": "passed" if passed else "below_margin",
+    }
+
+
 def compare(result, rows, p, audit=False):
     v.json_value(result, 16 * 1024 * 1024)
     v.fields(
@@ -539,8 +561,12 @@ def compare(result, rows, p, audit=False):
         if not -(hi - lo) <= u["lower_bound"] <= improvement:
             v.fail("invalid_evaluation", "Custom lower bound inconsistent with observed effect.")
         lower = u["lower_bound"]
+    margin = point_estimate_margin(p, improvement) if confidence else None
+    # The interval rule is unchanged. Immediate confidence also requires the
+    # point estimate to meet minimum_improvement. Canary does not use this check.
+    margin_blocked = bool(margin and confidence["accept"] and not margin["passed"])
     if confidence:
-        margin_passed = bool(n) and confidence["accept"]
+        margin_passed = bool(n) and confidence["accept"] and not margin_blocked
         reported_lower = confidence["lower"]
     else:
         margin_passed = (
@@ -553,9 +579,15 @@ def compare(result, rows, p, audit=False):
         and passes_gates(result["metrics"], p["guardrails"])
         and margin_passed
     )
+    if confidence:
+        outcome = "rejected" if margin_blocked else confidence["outcome"]
+    else:
+        outcome = "accepted" if passed else "rejected"
     return {
         "passed": passed,
-        "outcome": confidence["outcome"] if confidence else ("accepted" if passed else "rejected"),
+        "outcome": outcome,
+        "margin": margin,
+        "margin_blocked": margin_blocked,
         "baseline": a / n if n else 0,
         "candidate": b / n if n else 0,
         "improvement": improvement,

@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "kind": "acceptance-decisions",
+  "seeds": [
+    {
+      "seed": 1,
+      "baseline": { "id": "baseline", "promptHash": "base" },
+      "served": { "id": "baseline", "promptHash": "base" },
+      "rounds": [
+        {
+          "round": 0,
+          "candidateId": "c",
+          "promptHash": "abc",
+          "incumbentId": "baseline",
+          "incumbentPromptHash": "base",
+          "split": "validation",
+          "rule": {
+            "minimumEffect": 0,
+            "confidence": 0.9,
+            "samples": 200,
+            "seed": 17,
+            "minimumItems": 0
+          },
+          "decision": {
+            "accept": false,
+            "outcome": "rejected",
+            "reason": "below_minimum_effect",
+            "lower": -0.1,
+            "upper": 0.2,
+            "effect": 0.01,
+            "method": "paired-bootstrap",
+            "itemCount": 8,
+            "decisive": 8,
+            "required": 5
+          }
+        }
+      ],
+      "candidates": [{ "id": "c", "promptHash": "abc" }]
+    },
+    {
+      "seed": 2,
+      "baseline": { "id": "baseline", "promptHash": "base" },
+      "served": { "id": "baseline", "promptHash": "base" },
+      "rounds": [
+        {
+          "round": 0,
+          "candidateId": "c",
+          "promptHash": "abc",
+          "incumbentId": "baseline",
+          "incumbentPromptHash": "base",
+          "split": "validation",
+          "rule": {
+            "minimumEffect": 0,
+            "confidence": 0.9,
+            "samples": 200,
+            "seed": 17,
+            "minimumItems": 0
+          },
+          "decision": {
+            "accept": false,
+            "outcome": "rejected",
+            "reason": "below_minimum_effect",
+            "lower": -0.1,
+            "upper": 0.2,
+            "effect": 0.01,
+            "method": "paired-bootstrap",
+            "itemCount": 8,
+            "decisive": 8,
+            "required": 5
+          }
+        }
+      ],
+      "candidates": [{ "id": "c", "promptHash": "abc", "prompt": "notes from the user" }]
+    }
+  ]
+}

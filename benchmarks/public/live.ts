@@ -383,6 +383,7 @@ export async function runLiveTask<T extends PublicExample>(
           mode: "improve",
           observation: "honest",
           minimumImprovement: options.minimumImprovement,
+          ...(oneShot.baselineFeedback ? { baselineFeedback: oneShot.baselineFeedback } : {}),
           ...(options.minimumEffect !== undefined ? { minimumEffect: options.minimumEffect } : {}),
           oneShotFragment: oneShot.fragment,
           decisionLog,
@@ -533,18 +534,23 @@ function liveRunner<T extends PublicExample>(
     async propose(request, context) {
       const stop = failures.stop();
       if (stop) throw stop;
-      const payload = task.proposePayload(request.current, request.rows, request.feedback);
+      const instructions = task.proposeInstructions ?? PROPOSE_INSTRUCTIONS;
+      const payload = task.proposePayload(request.current, request.rows, request.feedback, {
+        ...(request.exampleSeed !== undefined ? { seed: request.exampleSeed } : {}),
+        ...(request.predictions !== undefined ? { predictions: request.predictions } : {}),
+        ...(request.scores !== undefined ? { scores: request.scores } : {}),
+      });
       try {
         const generation = await session.generate(
           {
-            instructions: PROPOSE_INSTRUCTIONS,
+            instructions,
             input: payload,
             name: PROPOSE_NAME,
             schema: task.proposeSchema(),
           },
           requestBody({
             model: session.provider.model,
-            instructions: PROPOSE_INSTRUCTIONS,
+            instructions,
             payload,
             name: PROPOSE_NAME,
             schema: task.proposeSchema(),

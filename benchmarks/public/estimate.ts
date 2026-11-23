@@ -11,6 +11,7 @@ import {
 import { formatArm, planCall, requestBody, type PlannedCall } from "./bodies.js";
 import { FOLLOW_MARKER, FULL_SEEDS, appendMarker } from "./constants.js";
 import { PROPOSE_INSTRUCTIONS, PROPOSE_NAME, PREDICT_NAME } from "./instructions.js";
+import { PROPOSE_SELECTION_SEED } from "./propose-bound.js";
 import { deploymentOf, readMaxTpm, resolveLimits } from "./limits.js";
 import type { SplitSizes } from "./splits.js";
 import type { BenchmarkTask, InstructionMark, PublicExample } from "./task.js";
@@ -68,8 +69,12 @@ export function planTask<T extends PublicExample>(
     : proposeRows.map(() => []);
   const propose = requestBody({
     model: input.deployment,
-    instructions: PROPOSE_INSTRUCTIONS,
-    payload: task.proposePayload(task.baselinePrompt, proposeRows, feedback),
+    instructions: task.proposeInstructions ?? PROPOSE_INSTRUCTIONS,
+    payload: task.proposePayload(task.baselinePrompt, proposeRows, feedback, {
+      seed: PROPOSE_SELECTION_SEED,
+      predictions: proposeRows.map(() => "baseline answer"),
+      scores: proposeRows.map(() => 0),
+    }),
     name: PROPOSE_NAME,
     schema: task.proposeSchema(),
     maxOutputTokens: input.limits.proposeMaxOutputTokens,
@@ -88,8 +93,7 @@ export function planTask<T extends PublicExample>(
       pushPredict(arms["one-shot"], "one-shot", "feedback", seed, input.sizes.optimization, predictBaseline, input.limits.predictMaxOutputTokens);
     arms["one-shot"].push(planCall("one-shot", "propose", "propose", seed, propose, input.limits.proposeMaxOutputTokens));
     pushPredict(arms["one-shot"], "one-shot", "held-out", seed, input.sizes.heldOut, predictCandidate, input.limits.predictMaxOutputTokens);
-    if (task.feedbackPredicts)
-      pushPredict(arms.controller, "controller", "feedback", seed, input.sizes.optimization, predictBaseline, input.limits.predictMaxOutputTokens);
+    // The controller follow-up reuses the one-shot baseline pass. It does not score those rows again.
     arms.controller.push(planCall("controller", "propose", "propose", seed, propose, input.limits.proposeMaxOutputTokens));
     pushPredict(arms.controller, "controller", "validation", seed, input.sizes.validation, predictBaseline, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "validation", seed, input.sizes.validation, predictCandidate, input.limits.predictMaxOutputTokens);

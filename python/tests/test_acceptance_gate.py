@@ -98,10 +98,8 @@ class AcceptanceGateTest(unittest.TestCase):
         self.assertIsInstance(shared["lower"], float)
 
     def test_compare_uses_the_confidence_rule_for_validation_and_audit(self):
-        cases = [{"id": f"up-{i}", "baseline": 0, "candidate": 1} for i in range(8)]
-        cases += [{"id": f"tie-{i}", "baseline": 0, "candidate": 0} for i in range(192)]
-        rows = [{"id": case["id"]} for case in cases]
-        report = {"cases": cases, "metrics": {"accuracy": 8 / 200}, "estimated_serving_cost": 0}
+        below = self.paired_cases(8, 192)
+        at = self.paired_cases(10, 190)
         fixed = self.policy()
         confidence = self.policy()
         confidence["objective"] = {
@@ -113,18 +111,52 @@ class AcceptanceGateTest(unittest.TestCase):
             "bootstrap_seed": 17,
             "minimum_items": 0,
         }
-        fixed_validation = compare(report, rows, fixed, False)
-        confidence_validation = compare(report, rows, confidence, False)
+        fixed_validation = compare(self.report_of(below), self.rows_of(below), fixed, False)
+        below_validation = compare(self.report_of(below), self.rows_of(below), confidence, False)
         self.assertFalse(fixed_validation["passed"])
         self.assertEqual(fixed_validation["outcome"], "rejected")
+        self.assertIsNone(fixed_validation["margin"])
         self.assertIsNone(fixed_validation["decisive"])
-        self.assertIsNone(fixed_validation["required"])
-        self.assertTrue(confidence_validation["passed"])
-        self.assertEqual(confidence_validation["outcome"], "accepted")
-        self.assertEqual(confidence_validation["decisive"], 8)
-        self.assertEqual(confidence_validation["required"], minimum_decisive_floor(0.9))
-        self.assertFalse(compare(report, rows, fixed, True)["passed"])
-        self.assertTrue(compare(report, rows, confidence, True)["passed"])
+        self.assertLess(
+            below_validation["improvement"], confidence["objective"]["minimum_improvement"]
+        )
+        self.assertGreater(below_validation["lower"], 0)
+        self.assertFalse(below_validation["passed"])
+        self.assertEqual(below_validation["outcome"], "rejected")
+        self.assertTrue(below_validation["margin_blocked"])
+        self.assertEqual(below_validation["margin"]["outcome"], "below_margin")
+        self.assertEqual(below_validation["decisive"], 8)
+        self.assertEqual(below_validation["required"], minimum_decisive_floor(0.9))
+        self.assertFalse(
+            compare(self.report_of(below), self.rows_of(below), confidence, True)["passed"]
+        )
+
+        at_validation = compare(self.report_of(at), self.rows_of(at), confidence, False)
+        self.assertGreaterEqual(
+            at_validation["improvement"], confidence["objective"]["minimum_improvement"]
+        )
+        self.assertGreater(at_validation["lower"], 0)
+        self.assertTrue(at_validation["passed"])
+        self.assertEqual(at_validation["outcome"], "accepted")
+        self.assertFalse(at_validation["margin_blocked"])
+        self.assertEqual(at_validation["margin"]["outcome"], "passed")
+        self.assertTrue(compare(self.report_of(at), self.rows_of(at), confidence, True)["passed"])
+
+    def paired_cases(self, wins, ties):
+        cases = [{"id": f"up-{i}", "baseline": 0, "candidate": 1} for i in range(wins)]
+        cases += [{"id": f"tie-{i}", "baseline": 0, "candidate": 0} for i in range(ties)]
+        return cases
+
+    def rows_of(self, cases):
+        return [{"id": case["id"]} for case in cases]
+
+    def report_of(self, cases):
+        wins = sum(1 for case in cases if case["candidate"] > case["baseline"])
+        return {
+            "cases": cases,
+            "metrics": {"accuracy": wins / len(cases)},
+            "estimated_serving_cost": 0,
+        }
 
     def test_decisive_floor_and_node_parity(self):
         self.assertEqual(minimum_decisive_floor(0.9), 5)

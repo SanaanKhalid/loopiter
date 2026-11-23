@@ -283,6 +283,11 @@ export interface ImprovementRunData {
   stepTimeouts?: number;
   /** Redacted, truncated text from a failed callback. Absent on a clean tick. */
   detail?: string;
+  /**
+   * Why a finished rollback started. `reason` stays `previous_version_restored`.
+   * Absent until that rollback completes.
+   */
+  cause?: string;
   /** Feedback high-water mark copied when the run starts. Promotion does not pass it. */
   feedbackSeen?: { id: string | null; recordedAt: string | null; seq: number | null };
   /**
@@ -323,6 +328,8 @@ export interface TickResult {
   budget: { modelRequests: number; tokens: number; deployments: number };
   /** Redacted, truncated callback error. Absent when this tick has no failure text. */
   detail?: string;
+  /** Why a finished rollback started. Absent on every other tick. */
+  cause?: string;
 }
 export interface ImprovementControllerOptions {
   selfImproving?: boolean;

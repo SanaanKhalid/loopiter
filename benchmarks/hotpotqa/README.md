@@ -68,12 +68,11 @@ normalized match. The port's copyright and the Apache-2.0 text are in
 [benchmarks/NOTICE](../NOTICE).
 
 The controller's paired cases use exact match. The proposer sees a bounded sample, not every optimization row and not all 10
-paragraphs. Failures come first. The rest are a shuffle with seed 1402. At
-most 8 examples are sent, and the JSON payload stays within 16384 bytes
-(`LOOPITER_BENCH_PROPOSE_EXAMPLES` and `LOOPITER_BENCH_PROPOSE_BYTES`). Each
-example keeps the question, the gold answer, a score, and the supporting-fact
+paragraphs. The baseline is scored once on the optimization rows, and that pass is reused for the one-shot propose and the controller follow-up. Each example keeps the question, the gold answer, the baseline reply, the exact-match score, and the supporting-fact
 paragraphs (the gold titles when the cache has them, otherwise paragraphs that
-contain the answer). Held-out rows are still never passed to propose.
+contain the answer). Failures are shuffled ahead of the other rows. The one-shot sample uses seed 1402. The controller follow-up, which starts from the prompt still being served, uses the next seed. At
+most 8 examples are sent, and the JSON payload stays within 16384 bytes
+(`LOOPITER_BENCH_PROPOSE_EXAMPLES` and `LOOPITER_BENCH_PROPOSE_BYTES`). The propose instruction describes the answer form, yes/no questions, unanswerable questions, and bridge-entity misses. It is not the hand-written strong prompt. Held-out rows are still never passed to propose. The production watch advances simulated time far enough to score every production row before the observation timeout. Held-out is scored once for the served prompt and, when it differs, once for the ungated prompt.
 
 ## Artifact and generation
 
@@ -125,11 +124,11 @@ also injects a harmful candidate. The validation gate must reject it.
 ## Acceptance
 
 `--minimum-improvement` defaults to 0.05 and is written on the report. Benchmark
-acceptance is a paired bootstrap lower bound above `--minimum-effect` (default
-0), at confidence 0.90. That is separate from the product default, which still
-uses the fixed margin. Audit uses the same benchmark rule. The ungated score
-is still reported. See the benchmarks README for the decision log and
-`replay.js`.
+acceptance requires both a paired bootstrap lower bound above `--minimum-effect`
+(default 0), at confidence 0.90, and a paired point estimate at or above that
+minimum improvement. The margin is not applied to the interval bound. Audit
+uses the same rule. Canary observation is unchanged. The ungated score is still
+reported. See the benchmarks README for the decision log and `replay.js`.
 
 ## Commands
 

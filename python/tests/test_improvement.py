@@ -158,6 +158,94 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
             **{"mode": "autonomous", "self_improving": True, **options},
         )
 
+    async def test_immediate_confidence_stops_below_the_point_estimate_margin(self):
+        self.setup_workflow({"name": "margin-validation", "scores": [1], "errors": 0})
+        self.workflow.policy["objective"] = {
+            **self.workflow.policy["objective"],
+            "acceptance": "confidence",
+            "minimum_effect": 0,
+            "minimum_improvement": 0.5,
+            "confidence": 0.9,
+            "bootstrap_samples": 200,
+            "bootstrap_seed": 17,
+        }
+
+        async def validation_scores(input_, _context):
+            return {
+                "cases": [
+                    {"id": row["id"], "baseline": 0, "candidate": 1 if index < 8 else 0}
+                    for index, row in enumerate(input_["examples"])
+                ],
+                "metrics": {"errors": 0},
+                "estimated_serving_cost": 1,
+            }
+
+        self.workflow = replace(self.workflow, evaluate=validation_scores)
+        rejected = await self.controller().tick("classification")
+        for _ in range(8):
+            if rejected["reason"] == "below_minimum_improvement":
+                break
+            rejected = await self.controller().tick("classification")
+        self.assertEqual(rejected["state"], "no_improvement")
+        self.assertEqual(rejected["reason"], "below_minimum_improvement")
+        self.assertEqual(self.registry.calls, 0)
+
+        self.setup_workflow({"name": "margin-audit", "scores": [1], "errors": 0})
+        self.workflow.policy["objective"] = {
+            **self.workflow.policy["objective"],
+            "acceptance": "confidence",
+            "minimum_effect": 0,
+            "minimum_improvement": 0.5,
+            "confidence": 0.9,
+            "bootstrap_samples": 200,
+            "bootstrap_seed": 17,
+        }
+
+        async def audit_scores(input_, _context):
+            wins = input_["partition"] != "audit"
+            return {
+                "cases": [
+                    {
+                        "id": row["id"],
+                        "baseline": 0,
+                        "candidate": 1 if wins or index < 8 else 0,
+                    }
+                    for index, row in enumerate(input_["examples"])
+                ],
+                "metrics": {"errors": 0},
+                "estimated_serving_cost": 1,
+            }
+
+        self.workflow = replace(self.workflow, evaluate=audit_scores)
+        held = await self.controller().tick("classification")
+        for _ in range(10):
+            if held["reason"] == "below_minimum_improvement":
+                break
+            held = await self.controller().tick("classification")
+        self.assertEqual(held["state"], "no_improvement")
+        self.assertEqual(held["reason"], "below_minimum_improvement")
+        self.assertEqual(self.registry.calls, 0)
+
+    async def test_reviewed_rollback_keeps_the_cause_that_started_it(self):
+        self.setup_workflow(
+            {"name": "regression", "scores": [1], "errors": 0, "production_errors": 1}
+        )
+        result = await self.controller().tick("classification")
+        for _ in range(8):
+            if result["state"] == "rolling_back":
+                break
+            if result["state"] == "observing":
+                self.now += timedelta(hours=2)
+            result = await self.controller().tick("classification")
+        self.assertEqual(result["state"], "rolling_back", result)
+        self.assertEqual(result["reason"], "production_guardrail_failed")
+        run = await self.controller().get_run(result["run_id"])
+        await self.loop.rollback_candidate(run["data"]["selected_id"], self.registry)
+        recovered = await self.controller().tick("classification")
+        self.assertEqual(recovered["state"], "rolled_back")
+        self.assertEqual(recovered["reason"], "reviewed_rollback_confirmed")
+        self.assertEqual(recovered["cause"], "error_rate")
+
     async def test_confidence_waits_instead_of_burning_a_short_sample(self):
         self.setup_workflow({"name": "sparse", "scores": [1], "errors": 0})
         objective = {
@@ -514,6 +602,8 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
                 break
             rolled = await controller.tick("classification")
         self.assertEqual(rolled["state"], "rolled_back", rolled)
+        self.assertEqual(rolled["reason"], "previous_version_restored")
+        self.assertEqual(rolled["cause"], "error_rate")
         after = await self._ledger()
         self.assertEqual(after["best_ever"]["id"], "seeded")
         self.assertEqual(after["best_ever"]["score"], 0.5)
@@ -1221,6 +1311,62 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(
                         (await self.controller().tick("classification"))["state"], "rolled_back"
                     )
+
+    async def test_canary_observation_still_uses_the_lower_bound(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.workflow.policy["rollout"]["mode"] = "canary"
+        self.workflow.policy["objective"]["minimum_improvement"] = 0.05
+
+        class Rollout:
+            calls = 0
+
+            async def promote(inner, *_):
+                inner.calls += 1
+
+            async def inspect(inner, *_):
+                return "promoted"
+
+        rollout, observe = Rollout(), self.workflow.observe
+
+        async def blocked(i, c, observe=observe):
+            return {
+                **await observe(i, c),
+                "control_version": i["baseline"]["artifact_version"],
+                "assignment_hash": "stable-cohort-v1",
+                "control_unit_ids": [f"control-{n}" for n in range(10)],
+                "improvement_lower_bound": 0.04,
+            }
+
+        self.workflow = replace(self.workflow, rollout=rollout, observe=blocked)
+        await self.advance_to_observation()
+        self.now += timedelta(hours=2)
+        held = await self.controller().tick("classification")
+        self.assertEqual(held["reason"], "canary_not_superior")
+        self.assertEqual(held["state"], "observing")
+        self.assertEqual(rollout.calls, 0)
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.workflow.policy["rollout"]["mode"] = "canary"
+        self.workflow.policy["objective"]["minimum_improvement"] = 0.05
+        cleared = Rollout()
+        observe = self.workflow.observe
+
+        async def passing(i, c, observe=observe):
+            return {
+                **await observe(i, c),
+                "control_version": i["baseline"]["artifact_version"],
+                "assignment_hash": "stable-cohort-v1",
+                "control_unit_ids": [f"control-{n}" for n in range(10)],
+                "improvement_lower_bound": 0.06,
+            }
+
+        self.workflow = replace(self.workflow, rollout=cleared, observe=passing)
+        await self.advance_to_observation()
+        self.now += timedelta(hours=2)
+        promoted = await self.controller().tick("classification")
+        self.assertEqual(promoted["state"], "completed")
+        self.assertEqual(promoted["reason"], "canary_promoted")
+        self.assertEqual(cleared.calls, 1)
 
     async def test_disable_setting_on_apply_paths(self):
         previous = os.environ.get("LOOPITER_DISABLE")

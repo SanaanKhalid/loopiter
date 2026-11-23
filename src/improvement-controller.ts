@@ -157,6 +157,14 @@ function failureDetailFrom(error: unknown): string | undefined {
 /** First pre-deployment timeout is retried. The next one ends the run as timed_out. */
 const STEP_TIMEOUT_ATTEMPTS = 2;
 const asJson = (x: unknown) => x as JsonObject;
+
+/** The trigger that started a rollback. The terminal reason stays `previous_version_restored`. */
+export function rollbackCause(reason: string): string {
+  if (reason === "observation_timeout") return "watch_timeout";
+  if (reason === "production_guardrail_failed") return "error_rate";
+  if (reason === "retention_regression") return "regression";
+  return reason;
+}
 const plus = (time: string, ms: number) =>
   new Date(Date.parse(time) + ms).toISOString();
 
@@ -393,6 +401,7 @@ export class ImprovementController {
     if (d.leaseOwner !== null) nonempty(d.leaseOwner, "leaseOwner");
     integer(d.proposalCalls, "proposalCalls", 0);
     if (d.stepTimeouts !== undefined) integer(d.stepTimeouts, "stepTimeouts", 0);
+    if (d.cause !== undefined) nonempty(d.cause, "cause");
     if (!Array.isArray(d.candidateIds))
       fail("integrity_error", "Invalid candidate references.");
     d.candidateIds.forEach((v) => nonempty(v, "candidateId"));
@@ -1189,10 +1198,16 @@ export class ImprovementController {
               "out_of_band_change",
               "Reviewed rollback does not match actual serving state.",
             );
+          const cause =
+            d.state === "rolling_back" ? rollbackCause(d.reason) : undefined;
           run = await this.save(
             rid,
             owner,
-            { state: "rolled_back", reason: "reviewed_rollback_confirmed" },
+            {
+              state: "rolled_back",
+              reason: "reviewed_rollback_confirmed",
+              ...(cause ? { cause } : {}),
+            },
             true,
           );
           return {
@@ -1201,6 +1216,7 @@ export class ImprovementController {
             reason: run.data.reason,
             candidateIds: d.candidateIds,
             budget: await this.budget(w),
+            ...(run.data.cause ? { cause: run.data.cause } : {}),
           };
         }
       }
@@ -1387,7 +1403,9 @@ export class ImprovementController {
         else
           run = await this.save(rid, owner, {
             state: "no_improvement",
-            reason: "validation_failed",
+            reason: judged.some((row) => row.gate.marginBlocked)
+              ? "below_minimum_improvement"
+              : "validation_failed",
           });
       } else if (d.state === "selected") {
         const cid = d.selectedId!,
@@ -1465,7 +1483,7 @@ export class ImprovementController {
           run = await this.save(rid, owner, {
             audit,
             state: "no_improvement",
-            reason: "audit_failed",
+            reason: gates.marginBlocked ? "below_minimum_improvement" : "audit_failed",
           });
         else if (mode !== "autonomous")
           run = await this.save(rid, owner, {
@@ -1614,7 +1632,11 @@ export class ImprovementController {
           run = await this.save(
             rid,
             owner,
-            { state: "rolled_back", reason: "previous_version_restored" },
+            {
+              state: "rolled_back",
+              reason: "previous_version_restored",
+              cause: rollbackCause(d.reason),
+            },
             true,
           );
         else {
@@ -1954,6 +1976,7 @@ export class ImprovementController {
         ? { nextEligibleAt: run!.data.nextEligibleAt }
         : {}),
       ...(run!.data.detail ? { detail: safeDetail(run!.data.detail) } : {}),
+      ...(run!.data.cause ? { cause: run!.data.cause } : {}),
     };
   }
   private async evaluatePartition(

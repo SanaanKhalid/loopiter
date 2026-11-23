@@ -34,6 +34,41 @@ export interface DecisionRound {
   unpaired?: UnpairedCounts;
   rule: GateParameters;
   decision: GateDecision;
+  /**
+   * Immediate-mode check of `minimumImprovement` against the paired point estimate.
+   * The confidence interval decision above is unchanged. Absent on older logs.
+   */
+  margin?: MarginCheck;
+}
+
+/** `minimumImprovement` compared with the paired point estimate, not the interval bound. */
+export interface MarginCheck {
+  minimumImprovement: number;
+  effect: number;
+  passed: boolean;
+  outcome: "passed" | "below_margin";
+}
+
+export interface ProposedCandidate {
+  id: string;
+  promptHash: string;
+  /**
+   * Prompt text. Omitted unless the caller sets `recordPromptText`.
+   * A prompt can contain user data, so the default record is the hash only.
+   */
+  prompt?: string;
+}
+
+export interface ControllerTransition {
+  state: string;
+  reason: string;
+  at: string;
+  cause?: string;
+}
+
+export interface RollbackCause {
+  candidateId: string;
+  cause: string;
 }
 
 export interface HeldOutTotal {
@@ -63,6 +98,12 @@ export interface SeedDecisionLog {
   rolledBackIds?: string[];
   /** Optional totals for an offline sanity check. The rule does not read them. */
   heldOut?: Record<string, HeldOutTotal>;
+  /** Prompt text for every candidate this seed proposed. Older logs omit this. */
+  candidates?: ProposedCandidate[];
+  /** Controller ticks, with the simulated clock. Older logs omit this. */
+  transitions?: ControllerTransition[];
+  /** Why a production rollback started. The served prompt still follows `rolledBackIds`. */
+  rollbackCauses?: RollbackCause[];
 }
 
 export interface DecisionLogFile {
@@ -89,6 +130,8 @@ export function appendRound(
     items?: GateItem[];
     unpaired?: UnpairedCounts;
     rule: GateParameters;
+    /** When set, the point estimate must meet this margin as well as the interval rule. */
+    minimumImprovement?: number;
   },
 ): DecisionRound {
   const prior = log.rounds.find(
@@ -115,18 +158,85 @@ export function appendRound(
     ...(input.unpaired ? { unpaired: input.unpaired } : {}),
     rule: { ...input.rule },
     decision,
+    ...(input.minimumImprovement !== undefined
+      ? { margin: marginCheck(decision.effect, input.minimumImprovement) }
+      : {}),
   };
   log.rounds.push(round);
   log.served = settleSeed(log);
   return round;
 }
 
+/** Point estimate versus the policy margin. Passing is at or above the margin. */
+export function marginCheck(effect: number, minimumImprovement: number): MarginCheck {
+  const passed = effect >= minimumImprovement;
+  return {
+    minimumImprovement,
+    effect,
+    passed,
+    outcome: passed ? "passed" : "below_margin",
+  };
+}
+
+/**
+ * Record a proposed candidate. `recordPromptText` defaults to false: the log
+ * keeps the hash and drops the text, because a prompt can contain user data.
+ */
+export function noteCandidate(
+  log: SeedDecisionLog,
+  candidate: { id: string; promptHash: string; prompt: string },
+  options?: { recordPromptText?: boolean },
+): void {
+  const recordPromptText = options?.recordPromptText === true;
+  const hashed = promptHash(candidate.prompt);
+  if (hashed !== candidate.promptHash)
+    throw new Error(`Candidate ${candidate.id} prompt does not match its hash.`);
+  log.candidates ??= [];
+  const stored: ProposedCandidate = recordPromptText
+    ? { id: candidate.id, promptHash: candidate.promptHash, prompt: candidate.prompt }
+    : { id: candidate.id, promptHash: candidate.promptHash };
+  const sameId = log.candidates.find((row) => row.id === candidate.id);
+  if (sameId) {
+    if (sameId.promptHash !== candidate.promptHash)
+      throw new Error(`Candidate ${candidate.id} prompt does not match the recorded text.`);
+    if (recordPromptText) sameId.prompt = candidate.prompt;
+    else delete sameId.prompt;
+    return;
+  }
+  const placeholder = `prompt:${hashed.slice(0, 12)}`;
+  const pending = log.candidates.find((row) => row.id === placeholder);
+  if (pending && candidate.id !== placeholder) {
+    pending.id = candidate.id;
+    pending.promptHash = candidate.promptHash;
+    if (recordPromptText) pending.prompt = candidate.prompt;
+    else delete pending.prompt;
+    return;
+  }
+  log.candidates.push(stored);
+}
+
+export function noteTransition(log: SeedDecisionLog, step: ControllerTransition): void {
+  log.transitions ??= [];
+  log.transitions.push({ ...step });
+}
+
 /** Record a production rollback against the candidates that were actually undone. */
-export function noteRolledBack(log: SeedDecisionLog, candidateIds: readonly string[]): void {
+export function noteRolledBack(
+  log: SeedDecisionLog,
+  candidateIds: readonly string[],
+  cause?: string,
+): void {
   const ids = [
     ...new Set(candidateIds.filter((id) => typeof id === "string" && id.length > 0)),
   ];
   log.observation = "rolled_back";
+  if (cause) {
+    const named = ids.length > 0 ? ids : ["unknown"];
+    log.rollbackCauses = [
+      ...(log.rollbackCauses ?? []),
+      ...named.map((candidateId) => ({ candidateId, cause })),
+    ];
+  }
   if (ids.length === 0) return;
   log.rolledBackIds = [...new Set([...(log.rolledBackIds ?? []), ...ids])];
 }
@@ -144,9 +254,9 @@ export function settleSeed(
   const accepted: { id: string; promptHash: string; effect: number; round: number }[] = [];
   for (const round of log.rounds) {
     if (round.split === "validation") {
-      if (round.decision.accept) validated.add(round.candidateId);
+      if (round.decision.accept && marginAllows(round)) validated.add(round.candidateId);
       else validated.delete(round.candidateId);
-    } else if (round.decision.accept && validated.has(round.candidateId)) {
+    } else if (round.decision.accept && marginAllows(round) && validated.has(round.candidateId)) {
       accepted.push({
         id: round.candidateId,
         promptHash: round.promptHash,
@@ -199,6 +309,10 @@ export function replaySeed(
 ): ReplaySeed {
   const mismatches: string[] = [];
   if (log.complete === false) mismatches.push(`seed ${log.seed} incomplete`);
+  for (const candidate of log.candidates ?? []) {
+    if (candidate.prompt !== undefined && candidate.promptHash !== promptHash(candidate.prompt))
+      mismatches.push(`seed ${log.seed} candidate ${candidate.id} prompt`);
+  }
   for (let index = 0; index < log.rounds.length; index++) {
     const round = log.rounds[index]!;
     const incumbent = settleSeed({
@@ -218,6 +332,22 @@ export function replaySeed(
       ...(round.unpaired ? { unpaired: round.unpaired } : {}),
       parameters: round.rule,
     });
+    if (round.margin) {
+      const againMargin = marginCheck(round.decision.effect, round.margin.minimumImprovement);
+      if (
+        againMargin.passed !== round.margin.passed ||
+        againMargin.outcome !== round.margin.outcome ||
+        againMargin.effect !== round.margin.effect ||
+        againMargin.minimumImprovement !== round.margin.minimumImprovement
+      )
+        mismatches.push(`seed ${log.seed} round ${round.round} margin`);
+    }
+    if (log.candidates) {
+      const recorded = log.candidates.find(
+        (row) => row.id === round.candidateId && row.promptHash === round.promptHash,
+      );
+      if (!recorded) mismatches.push(`seed ${log.seed} round ${round.round} prompt`);
+    }
     if (
       again.accept !== round.decision.accept ||
       again.reason !== round.decision.reason ||
@@ -295,6 +425,10 @@ export function readDecisionLog(path: string): DecisionLogFile {
   return file;
 }
 
+function marginAllows(round: DecisionRound): boolean {
+  return round.margin === undefined || round.margin.passed;
+}
+
 function sameRule(actual: GateParameters, expected: GateParameters): boolean {
   if (
     actual.minimumEffect !== expected.minimumEffect ||
@@ -318,6 +452,9 @@ function validateSeed(log: SeedDecisionLog): void {
   if (log.observation !== undefined && log.observation !== "rolled_back")
     throw new Error(`Seed ${log.seed} has an unknown observation.`);
   if (log.rolledBackIds !== undefined) requireRollbackIds(log.rolledBackIds, log.seed);
+  if (log.candidates !== undefined) requireCandidates(log.candidates, log.seed);
+  if (log.transitions !== undefined) requireTransitions(log.transitions, log.seed);
+  if (log.rollbackCauses !== undefined) requireRollbackCauses(log.rollbackCauses, log.seed);
   const ids = new Set<string>();
   for (const round of log.rounds) {
     if (!round || typeof round.round !== "number")
@@ -328,6 +465,7 @@ function validateSeed(log: SeedDecisionLog): void {
       throw new Error(`Seed ${log.seed} round ${round.round} has an unknown split.`);
     requireRule(round.rule, log.seed, round.round);
     requireDecision(round.decision, log.seed, round.round);
+    if (round.margin !== undefined) requireMargin(round.margin, log.seed, round.round);
     if (round.items) {
       ids.clear();
       for (const item of round.items) {
@@ -366,6 +504,62 @@ function sameNoise(again: GateDecision, stored: GateDecision): boolean {
     (effective === undefined ? again.effectiveThreshold === null : effective === again.effectiveThreshold) &&
     (binding === undefined ? again.bindingThreshold === null : binding === again.bindingThreshold)
   );
+}
+
+function requireMargin(margin: MarginCheck, seed: number, round: number): void {
+  if (
+    !margin ||
+    !Number.isFinite(margin.minimumImprovement) ||
+    margin.minimumImprovement < 0 ||
+    !Number.isFinite(margin.effect) ||
+    typeof margin.passed !== "boolean" ||
+    (margin.outcome !== "passed" && margin.outcome !== "below_margin") ||
+    margin.passed !== (margin.outcome === "passed")
+  )
+    throw new Error(`Seed ${seed} round ${round} has a malformed margin check.`);
+}
+
+function requireCandidates(candidates: readonly ProposedCandidate[], seed: number): void {
+  if (!Array.isArray(candidates)) throw new Error(`Seed ${seed} has a malformed candidate list.`);
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate.id !== "string" || candidate.id.length === 0)
+      throw new Error(`Seed ${seed} has a candidate without an id.`);
+    if (typeof candidate.promptHash !== "string" || candidate.promptHash.length === 0)
+      throw new Error(`Seed ${seed} candidate ${candidate.id} is missing its hash.`);
+    if (candidate.prompt !== undefined) {
+      if (typeof candidate.prompt !== "string" || candidate.prompt.length === 0)
+        throw new Error(`Seed ${seed} candidate ${candidate.id} is missing its prompt.`);
+      if (candidate.promptHash !== promptHash(candidate.prompt))
+        throw new Error(`Seed ${seed} candidate ${candidate.id} prompt does not match its hash.`);
+    }
+    if (seen.has(candidate.id)) throw new Error(`Seed ${seed} repeats candidate ${candidate.id}.`);
+    seen.add(candidate.id);
+  }
+}
+
+function requireTransitions(steps: readonly ControllerTransition[], seed: number): void {
+  if (!Array.isArray(steps)) throw new Error(`Seed ${seed} has a malformed transition list.`);
+  for (const step of steps) {
+    if (!step || typeof step.state !== "string" || step.state.length === 0)
+      throw new Error(`Seed ${seed} has a transition without a state.`);
+    if (typeof step.reason !== "string" || step.reason.length === 0)
+      throw new Error(`Seed ${seed} has a transition without a reason.`);
+    if (typeof step.at !== "string" || Number.isNaN(Date.parse(step.at)))
+      throw new Error(`Seed ${seed} has a transition without a timestamp.`);
+    if (step.cause !== undefined && (typeof step.cause !== "string" || step.cause.length === 0))
+      throw new Error(`Seed ${seed} has a transition with an empty cause.`);
+  }
+}
+
+function requireRollbackCauses(causes: readonly RollbackCause[], seed: number): void {
+  if (!Array.isArray(causes)) throw new Error(`Seed ${seed} has a malformed rollback cause list.`);
+  for (const cause of causes) {
+    if (!cause || typeof cause.candidateId !== "string" || cause.candidateId.length === 0)
+      throw new Error(`Seed ${seed} has a rollback cause without a candidate.`);
+    if (typeof cause.cause !== "string" || cause.cause.length === 0)
+      throw new Error(`Seed ${seed} has a rollback cause without a reason.`);
+  }
 }
 
 function requireRollbackIds(ids: readonly string[], seed: number): void {
