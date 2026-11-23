@@ -28,10 +28,13 @@ it is not wired here, so a benchmark decision log does not record it. `explain`
 shows `not_measured` when a decision has no retention result.
 
 The benchmark opts in with `objective.acceptance: "confidence"`. That is
-intended. The product default, including onboarding, keeps the fixed
-`minimumImprovement` margin. `confidence` is valid only for an immediate
-rollout with no custom audit method. Canary promotion and production
-observation still use the fixed margin.
+intended. Immediate mode still requires the paired point estimate to meet
+`minimumImprovement`. That check is not applied to the confidence interval's
+lower bound; the lower bound still has to clear `minimumEffect`. The product
+default, including onboarding, keeps the fixed margin for policies that do
+not opt into `confidence`. `confidence` is valid only for an immediate
+rollout with no custom audit method. Canary observation is unchanged and
+still compares its lower bound with `minimumImprovement`.
 
 Paired items take precedence when a caller also passes unpaired counts.
 Unpaired counts are the path for aggregate reports that have no item scores.
@@ -57,9 +60,11 @@ from held-out.
 
 The harness writes a decision log beside a report when `--out` is set
 (`report.json` produces `report.decisions.json`). Each seed records, per
-round, the candidate id, a prompt hash, the split, per-item scores for the
-candidate and the incumbent, the rule parameters, and the decision. It also
-records the split sizes used. The log does not contain prompt text.
+round, the candidate id, a prompt hash, the prompt text, the split, per-item
+scores for the candidate and the incumbent, the rule parameters, the
+confidence decision, and the point-estimate margin check. It also records the
+split sizes, the controller transitions with timestamps, and the cause of a
+production rollback. `previous_version_restored` remains the rollback outcome.
 
 Replay that log with no model calls:
 

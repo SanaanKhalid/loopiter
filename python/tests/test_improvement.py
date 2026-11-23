@@ -514,6 +514,8 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
                 break
             rolled = await controller.tick("classification")
         self.assertEqual(rolled["state"], "rolled_back", rolled)
+        self.assertEqual(rolled["reason"], "previous_version_restored")
+        self.assertEqual(rolled["cause"], "error_rate")
         after = await self._ledger()
         self.assertEqual(after["best_ever"]["id"], "seeded")
         self.assertEqual(after["best_ever"]["score"], 0.5)
@@ -1221,6 +1223,62 @@ class ImprovementTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(
                         (await self.controller().tick("classification"))["state"], "rolled_back"
                     )
+
+    async def test_canary_observation_still_uses_the_lower_bound(self):
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.workflow.policy["rollout"]["mode"] = "canary"
+        self.workflow.policy["objective"]["minimum_improvement"] = 0.05
+
+        class Rollout:
+            calls = 0
+
+            async def promote(inner, *_):
+                inner.calls += 1
+
+            async def inspect(inner, *_):
+                return "promoted"
+
+        rollout, observe = Rollout(), self.workflow.observe
+
+        async def blocked(i, c, observe=observe):
+            return {
+                **await observe(i, c),
+                "control_version": i["baseline"]["artifact_version"],
+                "assignment_hash": "stable-cohort-v1",
+                "control_unit_ids": [f"control-{n}" for n in range(10)],
+                "improvement_lower_bound": 0.04,
+            }
+
+        self.workflow = replace(self.workflow, rollout=rollout, observe=blocked)
+        await self.advance_to_observation()
+        self.now += timedelta(hours=2)
+        held = await self.controller().tick("classification")
+        self.assertEqual(held["reason"], "canary_not_superior")
+        self.assertEqual(held["state"], "observing")
+        self.assertEqual(rollout.calls, 0)
+
+        self.setup_workflow(FIXTURES["scenarios"][0])
+        self.workflow.policy["rollout"]["mode"] = "canary"
+        self.workflow.policy["objective"]["minimum_improvement"] = 0.05
+        cleared = Rollout()
+        observe = self.workflow.observe
+
+        async def passing(i, c, observe=observe):
+            return {
+                **await observe(i, c),
+                "control_version": i["baseline"]["artifact_version"],
+                "assignment_hash": "stable-cohort-v1",
+                "control_unit_ids": [f"control-{n}" for n in range(10)],
+                "improvement_lower_bound": 0.06,
+            }
+
+        self.workflow = replace(self.workflow, rollout=cleared, observe=passing)
+        await self.advance_to_observation()
+        self.now += timedelta(hours=2)
+        promoted = await self.controller().tick("classification")
+        self.assertEqual(promoted["state"], "completed")
+        self.assertEqual(promoted["reason"], "canary_promoted")
+        self.assertEqual(cleared.calls, 1)
 
     async def test_disable_setting_on_apply_paths(self):
         previous = os.environ.get("LOOPITER_DISABLE")

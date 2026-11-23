@@ -20,7 +20,9 @@ import {
 import {
   appendRound,
   emptySeedLog,
+  noteCandidate,
   noteRolledBack,
+  noteTransition,
   promptHash,
   settleSeed,
   type SeedDecisionLog,
@@ -30,7 +32,8 @@ import {
   CLOCK_START,
   assertWithinCap,
 } from "./constants.js";
-import { promptPolicy } from "./policy.js";
+import { promptPolicy, watchStepMs } from "./policy.js";
+import { FOLLOW_PROPOSE_SEED, PROPOSE_SELECTION_SEED } from "./propose-bound.js";
 import { mockRewrite } from "./propose.js";
 import { PromptRegistry, fragmentOf } from "./registry.js";
 import {
@@ -85,9 +88,20 @@ export interface ArmRun {
   state: string;
   reason: string;
   detail: string | null;
-  transitions: { state: string; reason: string }[];
+  transitions: { state: string; reason: string; at?: string; cause?: string }[];
   readIds: string[];
   decisions: SeedDecisionLog | null;
+  /** Fragment returned by propose. Null when this phase did not propose. */
+  proposedFragment: string | null;
+  /** Baseline scores for the optimization rows. Reused across propose calls in one seed. */
+  baselineFeedback: BaselineFeedback | null;
+}
+
+export interface BaselineFeedback {
+  byId: Map<string, InstructionMark[]>;
+  predictionById: Map<string, string>;
+  scoreById: Map<string, number>;
+  ids: string[];
 }
 
 export function mockRunner<T extends PublicExample>(task: BenchmarkTask<T>): ModelRunner<T> {
@@ -136,8 +150,14 @@ export async function runOneShot<T extends PublicExample>(input: {
   const readIds: string[] = [];
   const registry = new PromptRegistry(input.task.baselinePrompt);
   const baselineVersion = registry.version;
-  const { fragment, ids } = await rewrite(input.task, input.split, input.runner, input.mode, null);
-  for (const id of ids) readIds.push(id);
+  const { fragment, feedback: scored } = await rewrite(
+    input.task,
+    input.split,
+    input.runner,
+    input.mode,
+    null,
+  );
+  for (const id of scored.ids) readIds.push(id);
   registry.serve(fragment);
   const heldOut = await scoreHeldOut(input.task, input.runner, registry.fragment(), input.split.heldOut, {
     arm: "one-shot",
@@ -157,6 +177,8 @@ export async function runOneShot<T extends PublicExample>(input: {
     transitions: [],
     readIds,
     decisions: null,
+    proposedFragment: fragment,
+    baselineFeedback: scored,
   };
 }
 
@@ -184,6 +206,12 @@ export async function runController<T extends PublicExample>(input: {
   initialPrompt?: string;
   /** Leave the served-prompt check to the caller that combines phases. */
   deferServedCheck?: boolean;
+  /** Leave held-out scoring to the caller that combines phases. */
+  deferHeldOut?: boolean;
+  /** Baseline optimization scores already computed for this seed. */
+  baselineFeedback?: BaselineFeedback;
+  /** Example sample for propose. The follow-up uses a different seed. */
+  exampleSeed?: number;
   decisionLog?: SeedDecisionLog;
   batchSize: number;
   observeChunk: number;
@@ -218,7 +246,11 @@ export async function runController<T extends PublicExample>(input: {
       throw new Error(`Held-out row ${row.example.id} is in the pool.`);
     pool.set(row.example.id, row.example);
   }
-  const feedback = await feedbackFor(input.task, input.split, input.runner, input.mode, "controller");
+  const feedback =
+    input.baselineFeedback ??
+    (input.fixedFragment
+      ? emptyFeedback(input.split.optimization.map((row) => row.example))
+      : await feedbackFor(input.task, input.split, input.runner, input.mode, "controller"));
   for (const id of feedback.ids) readIds.push(id);
   const clock = { now: new Date(CLOCK_START) };
   const store = new InMemoryStore();
@@ -379,6 +411,11 @@ export async function runController<T extends PublicExample>(input: {
       propose: async (examples, context) => {
         if (input.fixedFragment) {
           proposal = input.fixedFragment;
+          noteCandidate(decisionLog, {
+            id: `prompt:${promptHash(input.fixedFragment).slice(0, 12)}`,
+            promptHash: promptHash(input.fixedFragment),
+            prompt: input.fixedFragment,
+          });
           return input.fixedFragment;
         }
         watch(examples);
@@ -388,19 +425,28 @@ export async function runController<T extends PublicExample>(input: {
           if (!found) throw new Error(`Propose is missing feedback for ${row.id}.`);
           return found;
         });
+        const current = input.initialPrompt ?? input.task.baselinePrompt;
         const fragment = assertWithinCap(
           await input.runner.propose(
             {
-              current: input.initialPrompt ?? input.task.baselinePrompt,
+              current,
               rows,
               feedback: marks,
               mode: input.mode,
+              exampleSeed: input.exampleSeed ?? PROPOSE_SELECTION_SEED,
+              predictions: rows.map((row) => feedback.predictionById.get(row.id) ?? null),
+              scores: rows.map((row) => feedback.scoreById.get(row.id) ?? null),
             },
             context,
           ),
           input.task.promptCap,
         );
         proposal = fragment;
+        noteCandidate(decisionLog, {
+          id: `prompt:${promptHash(fragment).slice(0, 12)}`,
+          promptHash: promptHash(fragment),
+          prompt: fragment,
+        });
         return fragment;
       },
       scorePair: async (row, baseline, candidate, context) => {
@@ -451,16 +497,33 @@ export async function runController<T extends PublicExample>(input: {
           }
         : {}),
     });
-    const transitions: { state: string; reason: string }[] = [];
+    const transitions: { state: string; reason: string; at?: string; cause?: string }[] = [];
     let result: TickResult | undefined;
+    let rollbackCause: string | undefined;
     for (let tick = 0; tick < input.tickLimit; tick++) {
       input.runner.afterPredict?.();
       result = await controller.tick(workflow.id);
       input.runner.afterPredict?.();
-      transitions.push({ state: result.state, reason: result.reason });
+      const step = {
+        state: result.state,
+        reason: result.reason,
+        at: clock.now.toISOString(),
+        ...(result.cause ? { cause: result.cause } : {}),
+      };
+      transitions.push(step);
+      noteTransition(decisionLog, step);
+      if (result.cause) rollbackCause = result.cause;
       if (TERMINAL.has(result.state)) break;
       if (result.state === "observing")
-        clock.now = new Date(clock.now.getTime() + 7_200_000);
+        clock.now = new Date(
+          clock.now.getTime() +
+            watchStepMs({
+              productionRows: input.split.production.length,
+              observeChunk: input.observeChunk,
+              timeoutMs: policy.observation.timeoutMs,
+              minimumDurationMs: policy.observation.minimumDurationMs,
+            }),
+        );
     }
     if (!result || !TERMINAL.has(result.state))
       throw new Error(
@@ -470,7 +533,10 @@ export async function runController<T extends PublicExample>(input: {
     for (const id of result.candidateIds) {
       const candidate = await loop.getCandidate(id);
       if (!candidate) continue;
-      candidateIds.set(promptHash(fragmentOf(candidate.proposedChange)), id);
+      const text = fragmentOf(candidate.proposedChange);
+      const hashed = promptHash(text);
+      candidateIds.set(hashed, id);
+      noteCandidate(decisionLog, { id, promptHash: hashed, prompt: text });
     }
     for (const comparison of recorded) {
       const candidateId = candidateIdFor(comparison.promptHash, [...candidateIds].map(([promptHash, id]) => ({ id, promptHash })));
@@ -479,6 +545,7 @@ export async function runController<T extends PublicExample>(input: {
         promptHash: comparison.promptHash,
         split: comparison.split,
         items: comparison.items,
+        minimumImprovement: input.minimumImprovement,
         rule: {
           ...rule,
           minimumDecisive: comparison.split === "audit" ? auditDecisive : validationDecisive,
@@ -493,7 +560,8 @@ export async function runController<T extends PublicExample>(input: {
         const hashed = promptHash(fragmentOf(candidate.proposedChange));
         rolled.push(candidateIdFor(hashed, [{ id, promptHash: hashed }]));
       }
-      noteRolledBack(decisionLog, rolled.length > 0 ? rolled : result.candidateIds);
+      const undone = rolled.length > 0 ? rolled : result.candidateIds;
+      noteRolledBack(decisionLog, undone, rollbackCause);
     }
     const settled = settleSeed(decisionLog);
     if (!input.deferServedCheck) {
@@ -503,24 +571,15 @@ export async function runController<T extends PublicExample>(input: {
     }
     decisionLog.served = settled;
     const served = registry.fragment();
-    const held = await scoreHeldOut(input.task, input.runner, served, input.split.heldOut, {
-      arm: "controller",
-      split: "held-out-served",
-      planned: input.split.heldOut.length,
-    });
-    const ungated = proposal
-      ? await scoreHeldOut(input.task, input.runner, proposal, input.split.heldOut, {
-          arm: "controller",
-          split: "held-out-ungated",
-          planned: input.split.heldOut.length,
-        })
-      : null;
+    const scored = input.deferHeldOut
+      ? { held: draftOf([]), ungated: null as RateDraft | null }
+      : await scoreServedAndUngated(input.task, input.runner, served, proposal, input.split.heldOut);
     return {
       fragment: served,
       version: registry.version,
       baselineVersion,
-      heldOut: held,
-      ungated,
+      heldOut: scored.held,
+      ungated: scored.ungated,
       gates: "improvement-controller",
       state: result.state,
       reason: result.reason,
@@ -528,10 +587,43 @@ export async function runController<T extends PublicExample>(input: {
       transitions,
       readIds,
       decisions: decisionLog,
+      proposedFragment: proposal,
+      baselineFeedback: feedback,
     };
   } finally {
     await loop.close();
   }
+}
+
+async function scoreServedAndUngated<T extends PublicExample>(
+  task: BenchmarkTask<T>,
+  runner: ModelRunner<T>,
+  served: string,
+  proposal: string | null,
+  rows: Parameters<typeof scoreHeldOut<T>>[3],
+): Promise<{ held: RateDraft; ungated: RateDraft | null }> {
+  const held = await scoreHeldOut(task, runner, served, rows, {
+    arm: "controller",
+    split: "held-out-served",
+    planned: rows.length,
+  });
+  if (!proposal) return { held, ungated: null };
+  if (proposal === served) return { held, ungated: held };
+  const ungated = await scoreHeldOut(task, runner, proposal, rows, {
+    arm: "controller",
+    split: "held-out-ungated",
+    planned: rows.length,
+  });
+  return { held, ungated };
+}
+
+function emptyFeedback<T extends PublicExample>(rows: readonly T[]): BaselineFeedback {
+  return {
+    byId: new Map(rows.map((row) => [row.id, []])),
+    predictionById: new Map(),
+    scoreById: new Map(),
+    ids: rows.map((row) => row.id),
+  };
 }
 
 async function rewrite<T extends PublicExample>(
@@ -540,7 +632,7 @@ async function rewrite<T extends PublicExample>(
   runner: ModelRunner<T>,
   mode: "improve" | "harmful",
   context: CallbackContext | null,
-): Promise<{ fragment: string; ids: string[] }> {
+): Promise<{ fragment: string; feedback: BaselineFeedback }> {
   const feedback = await feedbackFor(task, split, runner, mode, "one-shot");
   const rows = split.optimization.map((row) => row.example);
   const fragment = assertWithinCap(
@@ -550,12 +642,15 @@ async function rewrite<T extends PublicExample>(
         rows,
         feedback: rows.map((row) => feedback.byId.get(row.id) ?? []),
         mode,
+        exampleSeed: PROPOSE_SELECTION_SEED,
+        predictions: rows.map((row) => feedback.predictionById.get(row.id) ?? null),
+        scores: rows.map((row) => feedback.scoreById.get(row.id) ?? null),
       },
       context,
     ),
     task.promptCap,
   );
-  return { fragment, ids: feedback.ids };
+  return { fragment, feedback };
 }
 
 async function feedbackFor<T extends PublicExample>(
@@ -564,13 +659,10 @@ async function feedbackFor<T extends PublicExample>(
   runner: ModelRunner<T>,
   mode: "improve" | "harmful",
   arm: PredictCall["arm"],
-): Promise<{ byId: Map<string, InstructionMark[]>; ids: string[] }> {
+): Promise<BaselineFeedback> {
   const rows = split.optimization.map((row) => row.example);
-  const ids = rows.map((row) => row.id);
-  if (!task.feedbackPredicts || mode === "harmful") {
-    return { byId: new Map(rows.map((row) => [row.id, []])), ids };
-  }
-  const answers = [];
+  if (!task.feedbackPredicts || mode === "harmful") return emptyFeedback(rows);
+  const answers: { response: string; row: T }[] = [];
   for (const row of rows) {
     runner.afterPredict?.();
     const answer = await runner.answer(task.baselinePrompt, row, null, {
@@ -583,10 +675,22 @@ async function feedbackFor<T extends PublicExample>(
   }
   const scores = await task.scoreMany(answers);
   const byId = new Map<string, InstructionMark[]>();
+  const predictionById = new Map<string, string>();
+  const scoreById = new Map<string, number>();
   rows.forEach((row, index) => {
-    byId.set(row.id, scores[index]?.instructions ?? []);
+    const score = scores[index];
+    const primary = score ? primaryOf(score) : 0;
+    const instructions = score?.instructions ?? [];
+    byId.set(
+      row.id,
+      instructions.length
+        ? instructions
+        : [{ id: "primary", strict: primary === 1, loose: primary === 1 }],
+    );
+    predictionById.set(row.id, answers[index]?.response ?? "");
+    scoreById.set(row.id, primary);
   });
-  return { byId, ids };
+  return { byId, predictionById, scoreById, ids: rows.map((row) => row.id) };
 }
 
 function exampleOf<T extends PublicExample>(pool: Map<string, T>, id: string): T {
@@ -654,13 +758,17 @@ async function runOneShotThenController<T extends PublicExample>(
   const fragment = input.oneShotFragment;
   if (!fragment) throw new Error("One-shot fragment is required.");
   const decisionLog = input.decisionLog ?? emptySeedLog(input.split.seed, input.task.baselinePrompt);
-  const { oneShotFragment: _fragment, ...rest } = input;
+  const { oneShotFragment: _fragment, baselineFeedback: supplied, ...rest } = input;
+  const baselineFeedback =
+    supplied ?? (await feedbackFor(input.task, input.split, input.runner, input.mode, "controller"));
   const seeded = await runController({
     ...rest,
     fixedFragment: fragment,
     auditRows: shotAudit,
     decisionLog,
+    baselineFeedback,
     deferServedCheck: true,
+    deferHeldOut: true,
     scenario: `${input.scenario}/one-shot-gate`,
   });
   const follow = await runController({
@@ -668,7 +776,10 @@ async function runOneShotThenController<T extends PublicExample>(
     initialPrompt: seeded.fragment,
     auditRows: restAudit,
     decisionLog,
+    baselineFeedback,
+    exampleSeed: FOLLOW_PROPOSE_SEED,
     deferServedCheck: true,
+    deferHeldOut: true,
     scenario: `${input.scenario}/follow`,
   });
   const prompts = new Map<string, string>([
@@ -687,25 +798,28 @@ async function runOneShotThenController<T extends PublicExample>(
       : seeded.state === "completed" || follow.state === "completed"
         ? "completed"
         : follow.state;
-  const heldOut =
-    served === follow.fragment
-      ? follow.heldOut
-      : await scoreHeldOut(input.task, input.runner, served, input.split.heldOut, {
-          arm: "controller",
-          split: "held-out-served",
-          planned: input.split.heldOut.length,
-        });
+  const ungatedPrompt = follow.proposedFragment;
+  const scored = await scoreServedAndUngated(
+    input.task,
+    input.runner,
+    served,
+    ungatedPrompt,
+    input.split.heldOut,
+  );
   return {
     ...follow,
     fragment: served,
     version: hash({ fragment: served }),
     baselineVersion: seeded.baselineVersion,
-    heldOut,
+    heldOut: scored.held,
+    ungated: scored.ungated,
     state: kept,
     reason: kept === "completed" && follow.state !== "completed" ? seeded.reason : follow.reason,
     transitions: [...seeded.transitions, ...follow.transitions],
     readIds: [...seeded.readIds, ...follow.readIds],
     decisions: decisionLog,
+    proposedFragment: ungatedPrompt,
+    baselineFeedback,
   };
 }
 

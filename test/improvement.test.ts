@@ -834,6 +834,8 @@ test("a rolled-back promotion never becomes best-ever", async () => {
   for (let i = 0; i < 4 && rolled.state !== "rolled_back"; i++)
     rolled = await controller.tick("classification");
   assert.equal(rolled.state, "rolled_back", JSON.stringify(rolled));
+  assert.equal(rolled.reason, "previous_version_restored");
+  assert.equal(rolled.cause, "error_rate");
   ledger = await retentionLedger(x);
   assert.equal(ledger.bestEver?.id, "seeded");
   assert.equal(ledger.bestEver?.score, 0.5);
@@ -1188,6 +1190,58 @@ for (const outcome of ["promoted", "not_applied", "unknown"] as const)
         "rolled_back",
       );
   });
+test("canary observation still compares its lower bound with the minimum improvement", async () => {
+  const blocked = setup();
+  blocked.workflow.policy.rollout.mode = "canary";
+  blocked.workflow.policy.objective.minimumImprovement = 0.05;
+  let blockedPromotions = 0;
+  blocked.workflow.rollout = {
+    promote: async () => {
+      blockedPromotions += 1;
+    },
+    inspect: async () => "promoted",
+  };
+  const blockedObserve = blocked.workflow.observe;
+  blocked.workflow.observe = async (input, context) => ({
+    ...(await blockedObserve(input, context)),
+    controlVersion: input.baseline.artifactVersion,
+    assignmentHash: "stable-cohort-v1",
+    controlUnitIds: Array.from({ length: 10 }, (_, index) => `control-${index}`),
+    improvementLowerBound: 0.04,
+  });
+  for (let i = 0; i < 4; i++) await blocked.controller().tick("classification");
+  blocked.advance();
+  const held = await blocked.controller().tick("classification");
+  assert.equal(held.reason, "canary_not_superior");
+  assert.equal(held.state, "observing");
+  assert.equal(blockedPromotions, 0);
+
+  const cleared = setup();
+  cleared.workflow.policy.rollout.mode = "canary";
+  cleared.workflow.policy.objective.minimumImprovement = 0.05;
+  let clearedPromotions = 0;
+  cleared.workflow.rollout = {
+    promote: async () => {
+      clearedPromotions += 1;
+    },
+    inspect: async () => "promoted",
+  };
+  const clearedObserve = cleared.workflow.observe;
+  cleared.workflow.observe = async (input, context) => ({
+    ...(await clearedObserve(input, context)),
+    controlVersion: input.baseline.artifactVersion,
+    assignmentHash: "stable-cohort-v1",
+    controlUnitIds: Array.from({ length: 10 }, (_, index) => `control-${index}`),
+    improvementLowerBound: 0.06,
+  });
+  for (let i = 0; i < 4; i++) await cleared.controller().tick("classification");
+  cleared.advance();
+  const promoted = await cleared.controller().tick("classification");
+  assert.equal(promoted.state, "completed");
+  assert.equal(promoted.reason, "canary_promoted");
+  assert.equal(clearedPromotions, 1);
+});
+
 test("honor the disable setting in all apply paths", async () => {
   const previous = process.env.LOOPITER_DISABLE;
   try {

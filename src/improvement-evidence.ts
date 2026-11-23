@@ -539,6 +539,34 @@ function cachedAcceptance(
   return decision;
 }
 
+export interface PointEstimateMargin {
+  minimumImprovement: number;
+  effect: number;
+  passed: boolean;
+  outcome: "passed" | "below_margin";
+}
+
+/**
+ * Immediate confidence acceptance checks `minimumImprovement` against the
+ * paired point estimate. The interval lower bound is a separate rule.
+ * Canary observation keeps its own lower-bound check, so this returns null there.
+ */
+export function pointEstimateMargin(
+  policy: AutonomyPolicy,
+  effect: number,
+): PointEstimateMargin | null {
+  if (policy.objective.acceptance !== "confidence") return null;
+  if ((policy.rollout?.mode ?? "immediate") !== "immediate") return null;
+  const minimumImprovement = policy.objective.minimumImprovement;
+  const passed = effect >= minimumImprovement;
+  return {
+    minimumImprovement,
+    effect,
+    passed,
+    outcome: passed ? "passed" : "below_margin",
+  };
+}
+
 export function compare(
   result: Comparison,
   rows: DatasetRow[],
@@ -636,8 +664,12 @@ export function compare(
       );
     lower = u.lowerBound;
   }
+  const margin = confidence ? pointEstimateMargin(p, improvement) : null;
+  // The interval rule is unchanged. Immediate confidence also requires the
+  // point estimate to meet minimumImprovement. Canary does not use this check.
+  const marginBlocked = Boolean(margin && confidence?.accept && !margin.passed);
   const marginPassed = confidence
-    ? confidence.accept
+    ? confidence.accept && !marginBlocked
     : (audit ? lower : improvement) > p.objective.minimumImprovement;
   const passed =
     n > 0 &&
@@ -647,7 +679,15 @@ export function compare(
   const reportedLower = confidence ? confidence.lower : Number.isFinite(lower) ? lower : null;
   return {
     passed,
-    outcome: confidence ? confidence.outcome : passed ? "accepted" : "rejected",
+    outcome: confidence
+      ? marginBlocked
+        ? "rejected"
+        : confidence.outcome
+      : passed
+        ? "accepted"
+        : "rejected",
+    margin,
+    marginBlocked,
     baseline: n ? a / n : 0,
     candidate: n ? b / n : 0,
     improvement,

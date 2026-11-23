@@ -7,7 +7,7 @@ export function promptPolicy(input: {
   taskId: string;
   promptCap: number;
   minimumImprovement: number;
-  /** Confidence-rule threshold. Defaults to 0. The fixed margin stays on `minimumImprovement`. */
+  /** Confidence-rule threshold. Defaults to 0. Immediate mode also compares the point estimate with `minimumImprovement`. */
   minimumEffect?: number;
   confidence?: number;
   bootstrapSamples?: number;
@@ -113,4 +113,33 @@ export function promptPolicy(input: {
     maximumProposalCalls: 1,
     maximumConsecutiveFailures: 3,
   };
+}
+
+/**
+ * Simulated time between watch steps.
+ *
+ * The deploy tick returns `observing` before any production row is scored, and
+ * the harness advances the clock after that tick. Observe step `k` (1-based)
+ * therefore runs at elapsed = k * step. That step must finish strictly inside
+ * `timeoutMs` and, once every row is in, at or after `minimumDurationMs`.
+ */
+export function watchStepMs(input: {
+  productionRows: number;
+  observeChunk: number;
+  timeoutMs: number;
+  minimumDurationMs: number;
+}): number {
+  const chunk = Math.max(1, Math.floor(input.observeChunk));
+  const rows = Math.max(1, Math.floor(input.productionRows));
+  const steps = Math.ceil(rows / chunk);
+  const timeout = input.timeoutMs;
+  const minimum = Math.max(0, input.minimumDurationMs);
+  if (!Number.isFinite(timeout) || timeout <= 1)
+    throw new Error("Observation timeout must be longer than one millisecond.");
+  for (let k = steps; k <= steps + steps + 2; k += 1) {
+    const latest = Math.floor((timeout - 1) / k);
+    if (latest < 1) break;
+    if (k * latest >= minimum && k * latest < timeout) return latest;
+  }
+  throw new Error("Observation timeout is too short for the production watch.");
 }

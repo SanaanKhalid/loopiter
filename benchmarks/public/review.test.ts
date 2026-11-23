@@ -43,7 +43,7 @@ test("a full autonomous plan fits the live token budget", () => {
   );
   assert.equal(longestHot.paragraphs.length, HOTPOT_PARAGRAPHS);
   assertFits(ifbenchTask, prompt, longestIf, ifbenchTask.predict.defaultValue, ifbenchTask.propose.defaultValue, true);
-  assertFits(hotpotTask, prompt, longestHot, hotpotTask.predict.defaultValue, hotpotTask.propose.defaultValue, false);
+  assertFits(hotpotTask, prompt, longestHot, hotpotTask.predict.defaultValue, hotpotTask.propose.defaultValue, true);
 });
 
 test("IFBench strict and loose match the upstream parity fixture", async () => {

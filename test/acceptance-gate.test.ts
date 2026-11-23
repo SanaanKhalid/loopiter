@@ -277,6 +277,57 @@ test("a named rollback drops that candidate and an old log still drops the lates
   assert.equal(replaySeed(legacy, rule).matched, true);
 });
 
+test("the decision log records the point-estimate margin and replay checks it", () => {
+  const gate = { ...rule, samples: 400 };
+  const below = emptySeedLog(11, "baseline");
+  appendRound(below, {
+    candidateId: "small",
+    promptHash: "small",
+    split: "validation",
+    items: pairs([...repeated(8, [0, 1]), ...repeated(192, [0, 0])]),
+    rule: gate,
+    minimumImprovement: 0.05,
+  });
+  appendRound(below, {
+    candidateId: "small",
+    promptHash: "small",
+    split: "audit",
+    items: pairs([...repeated(8, [0, 1]), ...repeated(192, [0, 0])]),
+    rule: gate,
+    minimumImprovement: 0.05,
+  });
+  assert.equal(below.rounds[0]?.decision.accept, true);
+  assert.equal(below.rounds[0]?.margin?.outcome, "below_margin");
+  assert.equal(below.rounds[0]?.margin?.passed, false);
+  assert.equal(settleSeed(below).id, "baseline");
+  assert.equal(replaySeed(below, gate).matched, true);
+  below.rounds[0]!.margin = { ...below.rounds[0]!.margin!, passed: true, outcome: "passed" };
+  assert.equal(replaySeed(below, gate).matched, false);
+
+  const at = emptySeedLog(12, "baseline");
+  const wins = pairs([...repeated(10, [0, 1]), ...repeated(190, [1, 1])]);
+  appendRound(at, {
+    candidateId: "enough",
+    promptHash: "enough",
+    split: "validation",
+    items: wins,
+    rule: gate,
+    minimumImprovement: 0.05,
+  });
+  appendRound(at, {
+    candidateId: "enough",
+    promptHash: "enough",
+    split: "audit",
+    items: wins,
+    rule: gate,
+    minimumImprovement: 0.05,
+  });
+  assert.equal(at.rounds[1]?.margin?.outcome, "passed");
+  assert.equal(at.rounds[1]?.decision.accept, true);
+  assert.equal(settleSeed(at).id, "enough");
+  assert.equal(replaySeed(at, gate).matched, true);
+});
+
 test("compare applies a noise floor only when the policy asks for that split", () => {
   const rows = Array.from({ length: 20 }, (_, index) => ({
     id: `item-${index}`,
@@ -341,41 +392,68 @@ test("compare applies a noise floor only when the policy asks for that split", (
   assert.equal(fixedResult.noiseFloor.value, null);
 });
 
-test("confidence acceptance keeps a small paired gain the fixed margin rejects", () => {
-  const cases = [
-    ...Array.from({ length: 8 }, (_, index) => ({ id: `up-${index}`, baseline: 0, candidate: 1 })),
-    ...Array.from({ length: 192 }, (_, index) => ({ id: `tie-${index}`, baseline: 0, candidate: 0 })),
-  ];
-  const comparison: Comparison = {
-    cases,
-    metrics: { accuracy: 8 / 200 },
-    estimatedServingCost: 0,
-  };
-  const rows = cases.map((row) => ({
-    id: row.id,
-    episodeId: row.id,
-    entityId: row.id,
-    occurredAt: "2026-03-15T12:00:00.000Z",
-    observedAt: "2026-03-15T13:00:00.000Z",
-    source: "verified-export",
-    input: null,
-    label: null,
-  }));
+test("immediate confidence rejects a point estimate below the margin and keeps one at the margin", () => {
+  const below = pairedCases(8, 192);
+  const at = pairedCases(10, 190);
+  const rowsFor = (cases: { id: string }[]) =>
+    cases.map((row) => ({
+      id: row.id,
+      episodeId: row.id,
+      entityId: row.id,
+      occurredAt: "2026-03-15T12:00:00.000Z",
+      observedAt: "2026-03-15T13:00:00.000Z",
+      source: "verified-export",
+      input: null,
+      label: null,
+    }));
   const fixed = policy();
-  const confidence = policy({ acceptance: "confidence", minimumEffect: 0, confidence: 0.9, bootstrapSamples: 400, bootstrapSeed: 17, minimumItems: 0 });
-  const fixedValidation = compare(comparison, rows, fixed, false);
-  const confidenceValidation = compare(comparison, rows, confidence, false);
+  const confidence = policy({
+    acceptance: "confidence",
+    minimumEffect: 0,
+    confidence: 0.9,
+    bootstrapSamples: 400,
+    bootstrapSeed: 17,
+    minimumItems: 0,
+  });
+  const fixedValidation = compare(reportOf(below), rowsFor(below), fixed, false);
+  const belowValidation = compare(reportOf(below), rowsFor(below), confidence, false);
   assert.equal(fixedValidation.passed, false);
   assert.equal(fixedValidation.outcome, "rejected");
-  assert.equal(fixedValidation.decisive, null);
-  assert.equal(fixedValidation.required, null);
-  assert.equal(confidenceValidation.passed, true);
-  assert.equal(confidenceValidation.outcome, "accepted");
-  assert.equal(confidenceValidation.decisive, 8);
-  assert.equal(confidenceValidation.required, minimumDecisiveFloor(0.9));
-  assert.equal(compare(comparison, rows, fixed, true).passed, false);
-  assert.equal(compare(comparison, rows, confidence, true).passed, true);
+  assert.equal(fixedValidation.margin, null);
+  assert.equal(belowValidation.improvement < confidence.objective.minimumImprovement, true);
+  assert.equal(belowValidation.lower !== null && belowValidation.lower > 0, true);
+  assert.equal(belowValidation.passed, false);
+  assert.equal(belowValidation.outcome, "rejected");
+  assert.equal(belowValidation.marginBlocked, true);
+  assert.equal(belowValidation.margin?.outcome, "below_margin");
+  assert.equal(belowValidation.decisive, 8);
+  assert.equal(compare(reportOf(below), rowsFor(below), confidence, true).passed, false);
+
+  const atValidation = compare(reportOf(at), rowsFor(at), confidence, false);
+  assert.equal(atValidation.improvement >= confidence.objective.minimumImprovement, true);
+  assert.equal(atValidation.lower !== null && atValidation.lower > 0, true);
+  assert.equal(atValidation.passed, true);
+  assert.equal(atValidation.outcome, "accepted");
+  assert.equal(atValidation.marginBlocked, false);
+  assert.equal(atValidation.margin?.outcome, "passed");
+  assert.equal(compare(reportOf(at), rowsFor(at), confidence, true).passed, true);
 });
+
+function pairedCases(wins: number, ties: number): { id: string; baseline: number; candidate: number }[] {
+  return [
+    ...Array.from({ length: wins }, (_, index) => ({ id: `up-${index}`, baseline: 0, candidate: 1 })),
+    ...Array.from({ length: ties }, (_, index) => ({ id: `tie-${index}`, baseline: 0, candidate: 0 })),
+  ];
+}
+
+function reportOf(cases: { id: string; baseline: number; candidate: number }[]): Comparison {
+  const wins = cases.filter((row) => row.candidate > row.baseline).length;
+  return {
+    cases,
+    metrics: { accuracy: wins / cases.length },
+    estimatedServingCost: 0,
+  };
+}
 
 test("fewer decisive items than the floor are insufficient, and one more can accept", () => {
   assert.equal(minimumDecisiveFloor(0.9), 5);

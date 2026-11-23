@@ -173,6 +173,7 @@ export async function runOfflineBenchmark<T extends PublicExample>(
       minimumImprovement,
       ...(options.minimumEffect !== undefined ? { minimumEffect: options.minimumEffect } : {}),
       oneShotFragment: oneShot.fragment,
+      ...(oneShot.baselineFeedback ? { baselineFeedback: oneShot.baselineFeedback } : {}),
       decisionLog,
       batchSize: Math.max(split.validation.length, split.audit.length),
       observeChunk: split.production.length,

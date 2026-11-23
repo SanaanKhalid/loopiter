@@ -181,11 +181,12 @@ The validation gate must reject it.
 ## Acceptance
 
 The flag `--minimum-improvement` defaults to 0.05 and is stored on the report.
-Benchmark acceptance is a paired bootstrap lower bound above `--minimum-effect`
-(default 0), at confidence 0.90. That is separate from the product default,
-which still uses the fixed margin. Audit uses the same benchmark rule. The
-ungated score is still reported. See the benchmarks README for the decision
-log and `replay.js`.
+Benchmark acceptance requires both a paired bootstrap lower bound above
+`--minimum-effect` (default 0), at confidence 0.90, and a paired point estimate
+at or above that minimum improvement. The margin is not applied to the interval
+bound. Audit uses the same rule. Canary observation is unchanged. The ungated
+score is still reported. See the benchmarks README for the decision log and
+`replay.js`.
 
 ## Commands
 

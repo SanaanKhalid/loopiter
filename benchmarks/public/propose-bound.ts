@@ -7,6 +7,8 @@ import { mulberry32, shuffle } from "../kb-qa/stats.js";
 export const PROPOSE_BYTE_BUDGET = 16_384;
 export const PROPOSE_EXAMPLE_CAP = 8;
 export const PROPOSE_SELECTION_SEED = 1402;
+/** Follow-up propose samples a different slice than the one-shot propose. */
+export const FOLLOW_PROPOSE_SEED = PROPOSE_SELECTION_SEED + 1;
 
 export function proposeLimits(env: NodeJS.ProcessEnv = process.env): {
   byteBudget: number;
@@ -30,11 +32,15 @@ export function selectProposeExamples<T>(input: {
   const limits = proposeLimits();
   const byteBudget = input.byteBudget ?? limits.byteBudget;
   const exampleCap = input.exampleCap ?? limits.exampleCap;
+  const seed = input.seed ?? PROPOSE_SELECTION_SEED;
   const indexed = input.rows.map((row, index) => ({ row, index }));
-  const failed = indexed.filter((item) => input.failed(item.row, item.index));
+  const failed = shuffle(
+    indexed.filter((item) => input.failed(item.row, item.index)),
+    mulberry32(seed),
+  );
   const rest = shuffle(
     indexed.filter((item) => !input.failed(item.row, item.index)),
-    mulberry32(input.seed ?? PROPOSE_SELECTION_SEED),
+    mulberry32(seed + 1),
   );
   const chosen: unknown[] = [];
   for (const item of [...failed, ...rest]) {

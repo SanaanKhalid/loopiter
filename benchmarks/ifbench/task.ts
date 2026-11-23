@@ -43,9 +43,10 @@ export const ifbenchTask: BenchmarkTask<IfExample> = {
   mockAnswer: (prompt, row) => scriptedAnswer(prompt, row.baselinePass, passText(row), FAIL_TEXT),
   scoreMany: async (items) => scoreItems(items),
   predictPayload: (row) => JSON.stringify({ task: row.prompt }),
-  proposePayload: (current, rows, feedback) => {
+  proposePayload: (current, rows, feedback, options) => {
     const examples = selectProposeExamples({
       rows,
+      ...(options?.seed !== undefined ? { seed: options.seed } : {}),
       failed: (_row, index) => failedFeedback(feedback[index] ?? []),
       project: (row, index) => ({
         prompt: row.prompt,

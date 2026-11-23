@@ -35,6 +35,19 @@ from .improvement_evidence import (
 from .run_caps import admit_model_call, cap_block
 
 TERMINAL = {"completed", "no_improvement", "failed", "timed_out", "rolled_back"}
+
+
+def rollback_cause(reason):
+    """The trigger that started a rollback. The terminal reason stays previous_version_restored."""
+    if reason == "observation_timeout":
+        return "watch_timeout"
+    if reason == "production_guardrail_failed":
+        return "error_rate"
+    if reason == "retention_regression":
+        return "regression"
+    return reason
+
+
 _DISABLE_OFF = {"0", "false", "no", "off"}
 
 
@@ -362,6 +375,8 @@ class ImprovementController:
         v.integer(d.get("proposal_calls"), "proposal calls", 0)
         if "step_timeouts" in d:
             v.integer(d["step_timeouts"], "step timeouts", 0)
+        if d.get("cause") is not None:
+            v.nonempty(d["cause"], "cause")
         if type(d.get("candidate_ids")) is not list:
             v.fail("integrity_error", "Invalid candidate references.")
         for cid in d["candidate_ids"]:
@@ -1169,6 +1184,8 @@ class ImprovementController:
         }
         if d.get("detail"):
             result["detail"] = _safe_detail(d["detail"])
+        if d.get("cause"):
+            result["cause"] = d["cause"]
         return result
 
     async def _advance(self, run, owner, w, paused):
@@ -1285,7 +1302,11 @@ class ImprovementController:
                     "acceptance": _acceptance_record("validation", waiting[0], waiting[1], p),
                 }
             else:
-                patch = {"state": "no_improvement", "reason": "validation_failed"}
+                blocked = any(row[1].get("margin_blocked") for row in judged)
+                patch = {
+                    "state": "no_improvement",
+                    "reason": "below_minimum_improvement" if blocked else "validation_failed",
+                }
             await self._save(rid, owner, patch)
         elif d["state"] == "selected":
             cid = d["selected_id"]
@@ -1373,7 +1394,13 @@ class ImprovementController:
                 await self._save(
                     rid,
                     owner,
-                    {"audit": audit, "state": "no_improvement", "reason": "audit_failed"},
+                    {
+                        "audit": audit,
+                        "state": "no_improvement",
+                        "reason": "below_minimum_improvement"
+                        if gates.get("margin_blocked")
+                        else "audit_failed",
+                    },
                 )
             elif self.mode != "autonomous":
                 await self._save(
@@ -1500,7 +1527,11 @@ class ImprovementController:
                 await self._save(
                     rid,
                     owner,
-                    {"state": "rolled_back", "reason": "previous_version_restored"},
+                    {
+                        "state": "rolled_back",
+                        "reason": "previous_version_restored",
+                        "cause": rollback_cause(d["reason"]),
+                    },
                     True,
                 )
             else:

@@ -14,6 +14,7 @@ import {
 import { exactMatch, tokenF1 } from "./normalize.js";
 import {
   HOTPOT_PROMPT_VERSION,
+  HOTPOT_PROPOSE_INSTRUCTIONS,
   HOTPOT_STRONG_PROMPT,
   HOTPOT_STRONG_PROMPT_VERSION,
   HOTPOT_SYSTEM_PROMPT,
@@ -33,7 +34,8 @@ export const hotpotTask: BenchmarkTask<HotpotExample> = {
   strongPrompt: HOTPOT_STRONG_PROMPT,
   fullSizes: { ...FULL_SIZES, heldOut: HOTPOT_HELDOUT_ROWS },
   smokeRows: SMOKE_ROWS,
-  feedbackPredicts: false,
+  feedbackPredicts: true,
+  proposeInstructions: HOTPOT_PROPOSE_INSTRUCTIONS,
   predict: { min: 1, max: 8192, defaultValue: 2048 },
   propose: { min: 1, max: 4096, defaultValue: 2048 },
   fixtureSizes: FIXTURE_SIZES,
@@ -49,16 +51,26 @@ export const hotpotTask: BenchmarkTask<HotpotExample> = {
       question: row.question,
       paragraphs: row.paragraphs,
     }),
-  proposePayload: (current, rows) => {
+  proposePayload: (current, rows, _feedback, options) => {
     const examples = selectProposeExamples({
       rows,
-      failed: (row) => row.baselinePass === false,
-      project: (row) => ({
+      ...(options?.seed !== undefined ? { seed: options.seed } : {}),
+      failed: (row, index) => {
+        const score = options?.scores?.[index];
+        if (typeof score === "number") return score < 1;
+        return row.baselinePass === false;
+      },
+      project: (row, index) => ({
         question: row.question,
         paragraphs: supportingParagraphs(row),
         answer: row.answer,
-        prediction: null,
-        score: row.baselinePass ? 1 : 0,
+        prediction: options?.predictions?.[index] ?? null,
+        score:
+          typeof options?.scores?.[index] === "number"
+            ? options.scores[index]
+            : row.baselinePass
+              ? 1
+              : 0,
       }),
       envelope: (chosen) => JSON.stringify({ fragment: current, examples: chosen }),
     });

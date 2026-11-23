@@ -20,6 +20,8 @@ import type { BenchmarkTask, ModelRunner, PublicExample } from "./task.js";
 import { exactMatch, normalizeAnswer, tokenF1 } from "../hotpotqa/normalize.js";
 import { HOTPOT_EVAL_SHA, HOTPOT_REVISION } from "../hotpotqa/pins.js";
 import type { HotpotExample } from "../hotpotqa/fixtures.js";
+import { row } from "../hotpotqa/fixtures.js";
+import { HOTPOT_PROPOSE_INSTRUCTIONS, HOTPOT_STRONG_PROMPT } from "../hotpotqa/prompt.js";
 import { hotpotTask } from "../hotpotqa/task.js";
 import {
   FIXTURE_SIZES,
@@ -36,7 +38,8 @@ import { resolveLimits } from "./limits.js";
 import { emptySeedLog, promptHash, readDecisionLog, replaySeed, writeDecisionLog } from "./decisions.js";
 import { runOfflineBenchmark } from "./harness.js";
 import { leakedIds, mockRunner, runController, runOneShot } from "./loop.js";
-import { promptPolicy } from "./policy.js";
+import { promptPolicy, watchStepMs } from "./policy.js";
+import { FOLLOW_PROPOSE_SEED, PROPOSE_SELECTION_SEED } from "./propose-bound.js";
 import { repoRoot } from "./paths.js";
 import {
   applyRowCounts,
@@ -332,12 +335,12 @@ test("estimate prints a per-arm plan for both datasets", () => {
   assert.equal(ifbench.arms.baseline.length, 1500);
   assert.equal(ifbench.arms["strong-prompt"].length, 1500);
   assert.equal(ifbench.arms["one-shot"].length, 2255);
-  assert.equal(ifbench.arms.controller.length, 13505);
+  assert.equal(ifbench.arms.controller.length, 12755);
   assert.equal(hotpot.arms.baseline.length, 5000);
   assert.equal(hotpot.arms["strong-prompt"].length, 5000);
-  assert.equal(hotpot.arms["one-shot"].length, 5005);
+  assert.equal(hotpot.arms["one-shot"].length, 5755);
   assert.equal(hotpot.arms.controller.length, 19755);
-  assert.match(combined.stdout, /calls: 13505/);
+  assert.match(combined.stdout, /calls: 12755/);
   assert.match(combined.stdout, /calls: 19755/);
   assert.match(combined.stdout, /strong-prompt/);
   assert.match(combined.stdout, /Predict max output tokens: 8192/);
@@ -565,7 +568,7 @@ test("the estimate uses the chosen seeds and row counts", () => {
     deployment: "gpt-5.4-mini",
   });
   assert.equal(hotpot.arms.baseline.length, 900);
-  assert.equal(hotpot.arms["one-shot"].length, 903);
+  assert.equal(hotpot.arms["one-shot"].length, 1353);
   assert.equal(hotpot.arms.controller.length, 14253);
   const ifbenchSizes = applyRowCounts(FULL_SIZES, { validationRows: 600, auditRows: 600 });
   const ifbench = planTask(ifbenchTask, {
@@ -577,7 +580,7 @@ test("the estimate uses the chosen seeds and row counts", () => {
   });
   assert.equal(ifbench.arms.baseline.length, 900);
   assert.equal(ifbench.arms["one-shot"].length, 1353);
-  assert.equal(ifbench.arms.controller.length, 17103);
+  assert.equal(ifbench.arms.controller.length, 16653);
   const text = renderTaskEstimate(
     hotpotTask,
     scrubbed({
@@ -762,6 +765,182 @@ test("a rolled-back one-shot gate keeps the accepted follow-up", async () => {
   assert.notEqual(arm.decisions?.served.id, arm.decisions?.baseline.id);
   assert.equal(replaySeed(arm.decisions!).matched, true);
 });
+
+test("the simulated watch can finish inside the observation timeout", () => {
+  const timeoutMs = 86_400_000;
+  const minimumDurationMs = 3_600_000;
+  const step = watchStepMs({
+    productionRows: 150,
+    observeChunk: 2,
+    timeoutMs,
+    minimumDurationMs,
+  });
+  const steps = Math.ceil(150 / 2);
+  assert.ok(steps * step < timeoutMs);
+  assert.ok(steps * step >= minimumDurationMs);
+});
+
+test("a good production candidate stays served and a bad one rolls back", async () => {
+  const production = 150;
+  const sizes = {
+    optimization: 8,
+    validation: 12,
+    audit: 12,
+    production,
+    heldOut: 4,
+  };
+  const pool = Array.from({ length: sizes.optimization + sizes.validation + sizes.audit + production }, (_, index) =>
+    row(`pool-${index}`, "Paris", false),
+  );
+  const heldOut = Array.from({ length: sizes.heldOut }, (_, index) => row(`held-${index}`, "Paris", false));
+  const split = buildSeededSplit({ pool, heldOut, seed: 1, sizes });
+  const good = await runController({
+    task: hotpotTask,
+    split,
+    runner: watchRunner(false),
+    mode: "improve",
+    observation: "honest",
+    minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    decisionLog: emptySeedLog(split.seed, hotpotTask.baselinePrompt),
+    batchSize: Math.max(split.validation.length, split.audit.length),
+    observeChunk: 2,
+    latencyMs: 120_000,
+    modelId: "mock",
+    scenario: "watch-promote",
+    tickLimit: 200,
+  });
+  assert.equal(good.state, "completed");
+  assert.match(good.fragment, /loopiter-mock-follow/);
+  assert.equal(good.reason.includes("observation_timeout"), false);
+  assert.equal(good.transitions.some((step) => step.reason === "observation_timeout"), false);
+  assert.equal(good.transitions.some((step) => step.reason === "previous_version_restored"), false);
+  assert.ok(good.transitions.every((step) => typeof step.at === "string"));
+  const kept = good.decisions?.candidates?.find((candidate) => candidate.prompt === good.fragment);
+  assert.ok(kept);
+  assert.equal(kept?.promptHash, promptHash(good.fragment));
+  assert.equal(good.decisions?.rounds[0]?.margin?.outcome, "passed");
+  assert.equal(replaySeed(good.decisions!).matched, true);
+
+  const bad = await runController({
+    task: hotpotTask,
+    split,
+    runner: watchRunner(true),
+    mode: "improve",
+    observation: "honest",
+    minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    decisionLog: emptySeedLog(split.seed, hotpotTask.baselinePrompt),
+    batchSize: Math.max(split.validation.length, split.audit.length),
+    observeChunk: 2,
+    latencyMs: 120_000,
+    modelId: "mock",
+    scenario: "watch-rollback",
+    tickLimit: 200,
+  });
+  assert.equal(bad.state, "rolled_back");
+  assert.equal(bad.reason, "previous_version_restored");
+  assert.equal(bad.fragment, hotpotTask.baselinePrompt);
+  assert.equal(bad.transitions.some((step) => step.cause === "error_rate"), true);
+  assert.equal(bad.transitions.some((step) => step.reason === "observation_timeout"), false);
+  assert.equal(bad.decisions?.rollbackCauses?.some((cause) => cause.cause === "error_rate"), true);
+  assert.equal(replaySeed(bad.decisions!).matched, true);
+});
+
+test("the follow-up propose starts from the served prompt and a different sample", async () => {
+  const loaded = hotpotTask.fixtures();
+  const split = buildSeededSplit({
+    pool: loaded.pool,
+    heldOut: loaded.heldOut,
+    seed: 1,
+    sizes: FIXTURE_SIZES,
+  });
+  const accepted = `${hotpotTask.baselinePrompt}\n[[accepted-prompt]]`;
+  const follow = `${hotpotTask.baselinePrompt}\n[[follow-seed]]`;
+  const seen: { current: string; seed?: number }[] = [];
+  const runner: ModelRunner<HotpotExample> = {
+    async answer(prompt, row, context) {
+      if (context) await context.meter(64, async () => ({ value: true, tokens: 32 }));
+      if (prompt === accepted || prompt === follow || prompt.includes("loopiter-mock-follow"))
+        return { text: row.answer, latencyMs: 1 };
+      return { text: row.baselinePass ? row.answer : "unknown", latencyMs: 1 };
+    },
+    async propose(request, context) {
+      if (context) await context.meter(64, async () => ({ value: true, tokens: 32 }));
+      seen.push({
+        current: request.current,
+        ...(request.exampleSeed !== undefined ? { seed: request.exampleSeed } : {}),
+      });
+      return follow;
+    },
+  };
+  const arm = await runController({
+    task: hotpotTask,
+    split,
+    runner,
+    mode: "improve",
+    observation: "honest",
+    minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    oneShotFragment: accepted,
+    decisionLog: emptySeedLog(split.seed, hotpotTask.baselinePrompt),
+    batchSize: Math.max(split.validation.length, split.audit.length),
+    observeChunk: split.production.length,
+    latencyMs: 120_000,
+    modelId: "mock",
+    scenario: "follow-seed",
+    tickLimit: 40,
+  });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.current, accepted);
+  assert.equal(seen[0]?.seed, FOLLOW_PROPOSE_SEED);
+  assert.notEqual(FOLLOW_PROPOSE_SEED, PROPOSE_SELECTION_SEED);
+  assert.equal(arm.state === "rolled_back", false);
+});
+
+test("HotpotQA propose feedback uses the baseline answer and is not the strong prompt", () => {
+  for (const line of HOTPOT_STRONG_PROMPT.split("\n"))
+    assert.equal(HOTPOT_PROPOSE_INSTRUCTIONS.includes(line), false);
+  assert.equal(hotpotTask.proposeInstructions, HOTPOT_PROPOSE_INSTRUCTIONS);
+  const rows = Array.from({ length: 20 }, (_, index) => row(`q-${index}`, "Paris", false));
+  const first = JSON.parse(
+    hotpotTask.proposePayload(hotpotTask.baselinePrompt, rows, [], {
+      seed: PROPOSE_SELECTION_SEED,
+      predictions: rows.map((item) => `guess-${item.id}`),
+      scores: rows.map(() => 0),
+    }),
+  ) as { examples: { question: string; prediction: string; score: number }[] };
+  const second = JSON.parse(
+    hotpotTask.proposePayload(hotpotTask.baselinePrompt, rows, [], {
+      seed: FOLLOW_PROPOSE_SEED,
+      predictions: rows.map((item) => `guess-${item.id}`),
+      scores: rows.map(() => 0),
+    }),
+  ) as { examples: { question: string }[] };
+  assert.ok(first.examples.length > 0);
+  assert.equal(first.examples.every((example) => example.score === 0), true);
+  assert.equal(first.examples.every((example) => example.prediction.startsWith("guess-")), true);
+  assert.notDeepEqual(
+    first.examples.map((example) => example.question),
+    second.examples.map((example) => example.question),
+  );
+});
+
+function watchRunner(failProduction: boolean): ModelRunner<HotpotExample> {
+  return {
+    async answer(prompt, row, context, site) {
+      if (context) await context.meter(64, async () => ({ value: true, tokens: 32 }));
+      if (prompt.includes("loopiter-mock-follow")) {
+        if (failProduction && site?.split === "production") return { text: "wrong", latencyMs: 1 };
+        return { text: row.answer, latencyMs: 1 };
+      }
+      return { text: row.baselinePass ? row.answer : "unknown", latencyMs: 1 };
+    },
+    async propose(request, context) {
+      if (context) await context.meter(64, async () => ({ value: true, tokens: 32 }));
+      const failed = request.scores?.some((score) => score !== null && score < 1) ?? true;
+      if (!failed) return request.current;
+      return `${request.current}\n[[loopiter-mock-follow]]`;
+    },
+  };
+}
 
 async function assertRegression<T extends PublicExample>(task: BenchmarkTask<T>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "gate-log-"));
