@@ -11,7 +11,7 @@ import {
   PRODUCT_MINIMUM_IMPROVEMENT,
   observedGainRequired,
 } from "./constants.js";
-import { emptySeedLog, writeDecisionLog, type SeedDecisionLog } from "./decisions.js";
+import { emptySeedLog, promptHash, writeDecisionLog, type SeedDecisionLog } from "./decisions.js";
 import {
   leakedIds,
   mockRunner,
@@ -116,6 +116,8 @@ export interface OfflineReport {
       baselineVersion: string;
       served: RateDraft;
       ungated: RateDraft | null;
+      servedReused: boolean;
+      ungatedReused: boolean;
       transitions: { state: string; reason: string }[];
     };
   }[];
@@ -171,6 +173,7 @@ export async function runOfflineBenchmark<T extends PublicExample>(
       mode: "improve",
       observation: "honest",
       minimumImprovement,
+      baselineHeldOut: { promptHash: promptHash(task.baselinePrompt), result: baseline },
       ...(options.minimumEffect !== undefined ? { minimumEffect: options.minimumEffect } : {}),
       oneShotFragment: oneShot.fragment,
       ...(oneShot.baselineFeedback ? { baselineFeedback: oneShot.baselineFeedback } : {}),
@@ -208,6 +211,8 @@ export async function runOfflineBenchmark<T extends PublicExample>(
       oneShot: row.oneShot.heldOut.items,
       controllerServed: row.controller.heldOut.items,
       controllerUngated: row.controller.ungated?.items ?? null,
+      servedReused: row.controller.servedReused,
+      ungatedReused: row.controller.ungatedReused,
     })),
   );
   const report: OfflineReport = {
@@ -288,6 +293,8 @@ export async function runOfflineBenchmark<T extends PublicExample>(
         baselineVersion: row.controller.baselineVersion,
         served: row.controller.heldOut,
         ungated: row.controller.ungated,
+        servedReused: row.controller.servedReused,
+        ungatedReused: row.controller.ungatedReused,
         transitions: row.controller.transitions,
       },
     })),
@@ -306,6 +313,7 @@ async function runRegression<T extends PublicExample>(
 ): Promise<RegressionEvidence> {
   const runner = mockRunner(task);
   const baseline = await scoreHeldOut(task, runner, task.baselinePrompt, split.heldOut);
+  const baselineHeldOut = { promptHash: promptHash(task.baselinePrompt), result: baseline };
   const harmful = await runController({
     task,
     split,
@@ -313,6 +321,7 @@ async function runRegression<T extends PublicExample>(
     mode: "harmful",
     observation: "honest",
     minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    baselineHeldOut,
     batchSize: Math.max(split.validation.length, split.audit.length),
     observeChunk: split.production.length,
     latencyMs: 120_000,
@@ -327,6 +336,7 @@ async function runRegression<T extends PublicExample>(
     mode: "improve",
     observation: "fail",
     minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    baselineHeldOut,
     batchSize: Math.max(split.validation.length, split.audit.length),
     observeChunk: split.production.length,
     latencyMs: 120_000,

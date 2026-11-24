@@ -33,11 +33,11 @@ import {
   observedGainRequired,
 } from "./constants.js";
 import { estimateSelection, rowCountOverrides } from "./cli.js";
-import { planTask, renderTaskEstimate } from "./estimate.js";
+import { heldOutPass, planTask, renderTaskEstimate } from "./estimate.js";
 import { resolveLimits } from "./limits.js";
 import { emptySeedLog, promptHash, readDecisionLog, replaySeed, writeDecisionLog } from "./decisions.js";
 import { runOfflineBenchmark } from "./harness.js";
-import { leakedIds, mockRunner, runController, runOneShot } from "./loop.js";
+import { leakedIds, mockRunner, runController, runOneShot, scoreHeldOut } from "./loop.js";
 import { promptPolicy, watchStepMs } from "./policy.js";
 import {
   FOLLOW_PROPOSE_SEED,
@@ -562,6 +562,40 @@ test("chosen row counts set the policy units, reservations, and budget", () => {
   assert.equal(phase.maximumRows, Math.max(4, sizes.validation, sizes.optimization));
 });
 
+test("a baseline prompt hash is not another held-out call", () => {
+  const baseline = "Answer with the city.";
+  const kept = heldOutPass({ rows: 4, prompt: baseline, baselinePrompt: baseline });
+  assert.equal(kept.calls, 0);
+  assert.equal(kept.reusedBaseline, true);
+  const other = `${baseline}\nmore`;
+  const fresh = heldOutPass({ rows: 4, prompt: other, baselinePrompt: baseline });
+  assert.equal(fresh.calls, 4);
+  assert.equal(fresh.reusedBaseline, false);
+  const again = heldOutPass({
+    rows: 4,
+    prompt: other,
+    baselinePrompt: baseline,
+    alreadyScoredPrompt: other,
+  });
+  assert.equal(again.calls, 0);
+  assert.equal(again.reusedBaseline, false);
+  const plan = planTask(hotpotTask, {
+    label: "full",
+    seeds: [1],
+    sizes: hotpotTask.fullSizes,
+    limits: resolveLimits({}, hotpotTask),
+    deployment: "gpt-5.4-mini",
+  });
+  assert.equal(
+    plan.arms.controller.filter((call) => call.stage === "held-out-served").length,
+    hotpotTask.fullSizes.heldOut,
+  );
+  assert.equal(
+    plan.arms.controller.filter((call) => call.stage === "held-out-ungated").length,
+    hotpotTask.fullSizes.heldOut,
+  );
+});
+
 test("the estimate uses the chosen seeds and row counts", () => {
   const hotpotSizes = applyRowCounts(FULL_SIZES, { validationRows: 500, auditRows: 500 });
   const hotpot = planTask(hotpotTask, {
@@ -948,6 +982,136 @@ test("HotpotQA propose feedback uses the baseline answer and is not the strong p
     second.examples.map((example) => example.question),
   );
 });
+
+test("a kept baseline reuses its held-out result and a new prompt is scored", async () => {
+  const keptSplit = reuseSplit(true);
+  const keptCounts = { served: 0, ungated: 0 };
+  const worse = `${hotpotTask.baselinePrompt}\n[[rejected]]`;
+  const keptRunner = heldOutRunner({ proposal: worse, passPrompts: [], counts: keptCounts });
+  const keptBaseline = await scoreHeldOut(hotpotTask, keptRunner, hotpotTask.baselinePrompt, keptSplit.heldOut, {
+    arm: "baseline",
+    split: "held-out",
+    planned: keptSplit.heldOut.length,
+  });
+  const kept = await runController({
+    ...controllerOptions(keptSplit, "reuse-kept"),
+    runner: keptRunner,
+    baselineHeldOut: { promptHash: promptHash(hotpotTask.baselinePrompt), result: keptBaseline },
+  });
+  assert.equal(kept.fragment, hotpotTask.baselinePrompt);
+  assert.equal(kept.servedReused, true);
+  assert.equal(kept.ungatedReused, false);
+  assert.equal(kept.heldOut, keptBaseline);
+  assert.deepEqual(kept.heldOut, keptBaseline);
+  assert.equal(keptCounts.served, 0);
+  assert.equal(keptCounts.ungated, keptSplit.heldOut.length);
+  assert.notEqual(kept.ungated, keptBaseline);
+
+  const freshSplit = reuseSplit(false);
+  const freshCounts = { served: 0, ungated: 0 };
+  const improved = `${hotpotTask.baselinePrompt}\n[[accepted]]`;
+  const freshRunner = heldOutRunner({ proposal: improved, passPrompts: [improved], counts: freshCounts });
+  const freshBaseline = await scoreHeldOut(hotpotTask, freshRunner, hotpotTask.baselinePrompt, freshSplit.heldOut, {
+    arm: "baseline",
+    split: "held-out",
+    planned: freshSplit.heldOut.length,
+  });
+  const fresh = await runController({
+    ...controllerOptions(freshSplit, "reuse-fresh"),
+    runner: freshRunner,
+    baselineHeldOut: { promptHash: promptHash(hotpotTask.baselinePrompt), result: freshBaseline },
+  });
+  assert.equal(fresh.fragment, improved);
+  assert.equal(fresh.servedReused, false);
+  assert.equal(fresh.ungatedReused, false);
+  assert.notEqual(fresh.heldOut, freshBaseline);
+  assert.equal(freshCounts.served, freshSplit.heldOut.length);
+  assert.equal(freshCounts.ungated, 0);
+  assert.equal(fresh.ungated, fresh.heldOut);
+
+  const followSplit = reuseSplit(false);
+  const followCounts = { served: 0, ungated: 0 };
+  const followRunner = heldOutRunner({
+    proposal: hotpotTask.baselinePrompt,
+    passPrompts: [improved],
+    counts: followCounts,
+  });
+  const followBaseline = await scoreHeldOut(
+    hotpotTask,
+    followRunner,
+    hotpotTask.baselinePrompt,
+    followSplit.heldOut,
+    { arm: "baseline", split: "held-out", planned: followSplit.heldOut.length },
+  );
+  const follow = await runController({
+    ...controllerOptions(followSplit, "reuse-ungated"),
+    runner: followRunner,
+    oneShotFragment: improved,
+    baselineHeldOut: { promptHash: promptHash(hotpotTask.baselinePrompt), result: followBaseline },
+  });
+  assert.equal(follow.fragment, improved);
+  assert.equal(follow.servedReused, false);
+  assert.equal(follow.ungatedReused, true);
+  assert.equal(follow.ungated, followBaseline);
+  assert.deepEqual(follow.ungated, followBaseline);
+  assert.equal(followCounts.served, followSplit.heldOut.length);
+  assert.equal(followCounts.ungated, 0);
+});
+
+function reuseSplit(baselinePass: boolean) {
+  const sizes = { optimization: 4, validation: 8, audit: 12, production: 2, heldOut: 3 };
+  const poolCount = sizes.optimization + sizes.validation + sizes.audit + sizes.production;
+  const pool = Array.from({ length: poolCount }, (_, index) => row(`pool-${index}`, "Paris", baselinePass));
+  const heldOut = Array.from({ length: sizes.heldOut }, (_, index) =>
+    row(`held-${index}`, "Paris", baselinePass),
+  );
+  return buildSeededSplit({ pool, heldOut, seed: 1, sizes });
+}
+
+function controllerOptions(
+  split: ReturnType<typeof reuseSplit>,
+  scenario: string,
+) {
+  return {
+    task: hotpotTask,
+    split,
+    mode: "improve" as const,
+    observation: "honest" as const,
+    minimumImprovement: PRODUCT_MINIMUM_IMPROVEMENT,
+    decisionLog: emptySeedLog(split.seed, hotpotTask.baselinePrompt),
+    batchSize: Math.max(split.validation.length, split.audit.length),
+    observeChunk: split.production.length,
+    latencyMs: 120_000,
+    modelId: "mock",
+    scenario,
+    tickLimit: 80,
+  };
+}
+
+function heldOutRunner(input: {
+  proposal: string;
+  passPrompts: readonly string[];
+  counts: { served: number; ungated: number };
+}): ModelRunner<HotpotExample> {
+  return {
+    async answer(prompt, row, context, site) {
+      if (context) await context.meter(64, async () => ({ value: true, tokens: 32 }));
+      if (site?.split === "held-out-served" || site?.split === "held-out-ungated") {
+        if (site.split === "held-out-served") input.counts.served += 1;
+        else input.counts.ungated += 1;
+        return { text: `noise-${input.counts.served}-${input.counts.ungated}`, latencyMs: 1 };
+      }
+      if (input.passPrompts.includes(prompt)) return { text: row.answer, latencyMs: 1 };
+      if (prompt === hotpotTask.baselinePrompt)
+        return { text: row.baselinePass ? row.answer : "unknown", latencyMs: 1 };
+      return { text: "unknown", latencyMs: 1 };
+    },
+    async propose(_request, context) {
+      if (context) await context.meter(64, async () => ({ value: true, tokens: 32 }));
+      return input.proposal;
+    },
+  };
+}
 
 function watchRunner(failProduction: boolean): ModelRunner<HotpotExample> {
   return {

@@ -111,6 +111,28 @@ export interface SeedQuestions {
   oneShot: readonly QuestionResult[];
   controllerServed: readonly QuestionResult[];
   controllerUngated: readonly QuestionResult[] | null;
+  /**
+   * Served prompt hash matched the baseline. Those questions pair as identical,
+   * so each paired difference is 0.
+   */
+  servedReused?: boolean;
+  /**
+   * Ungated prompt hash matched the baseline. The ungated arm is not a headline
+   * comparison. The same identity rule applies when a caller pairs it.
+   */
+  ungatedReused?: boolean;
+}
+
+/**
+ * Outcomes for one arm. A reused arm is the baseline result, so it pairs
+ * identically and every difference is 0.
+ */
+export function pairedArmItems(
+  baseline: readonly QuestionResult[],
+  arm: readonly QuestionResult[],
+  reused: boolean | undefined,
+): readonly QuestionResult[] {
+  return reused ? baseline : arm;
 }
 
 const COMPARISONS = [
@@ -565,7 +587,8 @@ function majority(correct: number, seeds: number): 0 | 1 {
 }
 
 function itemsOf(seed: SeedQuestions, key: QuestionKey): readonly QuestionResult[] {
-  if (key === "controllerServed") return seed.controllerServed;
+  if (key === "controllerServed")
+    return pairedArmItems(seed.baseline, seed.controllerServed, seed.servedReused);
   if (key === "strongPrompt") return seed.strongPrompt;
   if (key === "oneShot") return seed.oneShot;
   return seed.baseline;

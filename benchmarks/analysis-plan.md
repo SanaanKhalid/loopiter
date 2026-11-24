@@ -27,6 +27,14 @@ The same held-out items and the same seeds are scored for each arm.
 
 The ungated controller proposal is stored on the seed. It is not a headline arm.
 
+A served prompt whose hash matches the frozen baseline is not scored again.
+The seed reuses the baseline held-out outcomes and sets `servedReused`. Each
+paired difference versus the baseline is then zero. The ungated prompt follows
+the same rule when its hash matches, and sets `ungatedReused`. An arm scored
+on its own prompt is unchanged. A comparison whose paired differences are all
+zero has mean zero and a bootstrap interval collapsed at zero. Zero discordant
+pairs have exact McNemar p-value 1.
+
 ## Comparisons
 
 The analysis unit is the question. Only seeds that finished are used. Each

@@ -72,7 +72,7 @@ paragraphs. The baseline is scored once on the optimization rows, and that pass 
 paragraphs (the gold titles when the cache has them, otherwise paragraphs that
 contain the answer). Failures are shuffled ahead of the other rows. The one-shot sample uses seed 1402. The controller follow-up, which starts from the prompt still being served, uses the next seed. At
 most 8 examples are sent, and the JSON payload stays within 16384 bytes
-(`LOOPITER_BENCH_PROPOSE_EXAMPLES` and `LOOPITER_BENCH_PROPOSE_BYTES`). The propose instruction describes the answer form, yes/no questions, unanswerable questions, and bridge-entity misses. It is not the hand-written strong prompt. Held-out rows are still never passed to propose. The production watch advances simulated time far enough to score every production row before the observation timeout. Held-out is scored once for the served prompt and, when it differs, once for the ungated prompt.
+(`LOOPITER_BENCH_PROPOSE_EXAMPLES` and `LOOPITER_BENCH_PROPOSE_BYTES`). The propose instruction describes the answer form, yes/no questions, unanswerable questions, and bridge-entity misses. It is not the hand-written strong prompt. Held-out rows are still never passed to propose. The production watch advances simulated time far enough to score every production row before the observation timeout. Held-out is scored once per distinct prompt. A served or ungated prompt whose hash matches the frozen baseline reuses that held-out result, and the paired difference is zero.
 
 ## Artifact and generation
 

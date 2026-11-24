@@ -84,6 +84,16 @@ export interface ArmRun {
   baselineVersion: string;
   heldOut: RateDraft;
   ungated: RateDraft | null;
+  /**
+   * The served prompt hash matched the baseline prompt. `heldOut` is that
+   * baseline result, so the paired difference is zero.
+   */
+  servedReused: boolean;
+  /**
+   * The ungated prompt hash matched the baseline prompt. `ungated` is that
+   * baseline result. False when this phase did not propose.
+   */
+  ungatedReused: boolean;
   gates: "none" | "improvement-controller";
   state: string;
   reason: string;
@@ -95,6 +105,12 @@ export interface ArmRun {
   proposedFragment: string | null;
   /** Baseline scores for the optimization rows. Reused across propose calls in one seed. */
   baselineFeedback: BaselineFeedback | null;
+}
+
+/** Baseline held-out result for one seed, with the hash of the prompt that produced it. */
+export interface BaselineHeldOut {
+  promptHash: string;
+  result: RateDraft;
 }
 
 export interface BaselineFeedback {
@@ -170,6 +186,8 @@ export async function runOneShot<T extends PublicExample>(input: {
     baselineVersion,
     heldOut,
     ungated: heldOut,
+    servedReused: false,
+    ungatedReused: false,
     gates: "none",
     state: "applied",
     reason: "ungated",
@@ -208,6 +226,11 @@ export async function runController<T extends PublicExample>(input: {
   deferServedCheck?: boolean;
   /** Leave held-out scoring to the caller that combines phases. */
   deferHeldOut?: boolean;
+  /**
+   * Baseline held-out result for this seed. A served or ungated prompt whose
+   * hash matches is not scored again.
+   */
+  baselineHeldOut?: BaselineHeldOut;
   /** Baseline optimization scores already computed for this seed. */
   baselineFeedback?: BaselineFeedback;
   /** Example sample for propose. The follow-up uses a different seed. */
@@ -580,14 +603,23 @@ export async function runController<T extends PublicExample>(input: {
     decisionLog.served = settled;
     const served = registry.fragment();
     const scored = input.deferHeldOut
-      ? { held: draftOf([]), ungated: null as RateDraft | null }
-      : await scoreServedAndUngated(input.task, input.runner, served, proposal, input.split.heldOut);
+      ? { held: draftOf([]), ungated: null as RateDraft | null, servedReused: false, ungatedReused: false }
+      : await scoreServedAndUngated(
+          input.task,
+          input.runner,
+          served,
+          proposal,
+          input.split.heldOut,
+          input.baselineHeldOut,
+        );
     return {
       fragment: served,
       version: registry.version,
       baselineVersion,
       heldOut: scored.held,
       ungated: scored.ungated,
+      servedReused: scored.servedReused,
+      ungatedReused: scored.ungatedReused,
       gates: "improvement-controller",
       state: result.state,
       reason: result.reason,
@@ -609,20 +641,31 @@ async function scoreServedAndUngated<T extends PublicExample>(
   served: string,
   proposal: string | null,
   rows: Parameters<typeof scoreHeldOut<T>>[3],
-): Promise<{ held: RateDraft; ungated: RateDraft | null }> {
-  const held = await scoreHeldOut(task, runner, served, rows, {
-    arm: "controller",
-    split: "held-out-served",
-    planned: rows.length,
-  });
-  if (!proposal) return { held, ungated: null };
-  if (proposal === served) return { held, ungated: held };
+  baseline?: BaselineHeldOut,
+): Promise<{ held: RateDraft; ungated: RateDraft | null; servedReused: boolean; ungatedReused: boolean }> {
+  const baselineHash = baseline?.promptHash;
+  const servedHash = promptHash(served);
+  const servedReused = baselineHash !== undefined && servedHash === baselineHash;
+  const held =
+    servedReused && baseline
+      ? baseline.result
+      : await scoreHeldOut(task, runner, served, rows, {
+          arm: "controller",
+          split: "held-out-served",
+          planned: rows.length,
+        });
+  if (!proposal) return { held, ungated: null, servedReused, ungatedReused: false };
+  const proposalHash = promptHash(proposal);
+  const ungatedReused = baselineHash !== undefined && proposalHash === baselineHash;
+  if (ungatedReused && baseline)
+    return { held, ungated: baseline.result, servedReused, ungatedReused };
+  if (proposalHash === servedHash) return { held, ungated: held, servedReused, ungatedReused: false };
   const ungated = await scoreHeldOut(task, runner, proposal, rows, {
     arm: "controller",
     split: "held-out-ungated",
     planned: rows.length,
   });
-  return { held, ungated };
+  return { held, ungated, servedReused, ungatedReused: false };
 }
 
 function emptyFeedback<T extends PublicExample>(rows: readonly T[]): BaselineFeedback {
@@ -813,6 +856,7 @@ async function runOneShotThenController<T extends PublicExample>(
     served,
     ungatedPrompt,
     input.split.heldOut,
+    input.baselineHeldOut,
   );
   return {
     ...follow,
@@ -821,6 +865,8 @@ async function runOneShotThenController<T extends PublicExample>(
     baselineVersion: seeded.baselineVersion,
     heldOut: scored.held,
     ungated: scored.ungated,
+    servedReused: scored.servedReused,
+    ungatedReused: scored.ungatedReused,
     state: kept,
     reason: kept === "completed" && follow.state !== "completed" ? seeded.reason : follow.reason,
     transitions: [...seeded.transitions, ...follow.transitions],
