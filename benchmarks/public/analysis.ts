@@ -124,15 +124,36 @@ export interface SeedQuestions {
 }
 
 /**
- * Outcomes for one arm. A reused arm is the baseline result, so it pairs
- * identically and every difference is 0.
+ * Outcomes for one arm. A reused arm must already be the baseline result.
+ * The stored rows are checked and returned. A mismatch throws, so a wrong
+ * flag cannot be rewritten into zero differences.
  */
 export function pairedArmItems(
   baseline: readonly QuestionResult[],
   arm: readonly QuestionResult[],
   reused: boolean | undefined,
 ): readonly QuestionResult[] {
-  return reused ? baseline : arm;
+  if (!reused) return arm;
+  if (arm.length !== baseline.length)
+    throw new Error("Reused arm does not match the baseline held-out result.");
+  const byId = new Map<string, QuestionResult>();
+  for (const item of baseline) {
+    if (byId.has(item.id)) throw new Error(`Duplicate question id ${item.id}.`);
+    byId.set(item.id, item);
+  }
+  const seen = new Set<string>();
+  for (const item of arm) {
+    const reference = byId.get(item.id);
+    if (
+      !reference ||
+      seen.has(item.id) ||
+      item.correct !== reference.correct ||
+      item.failed !== reference.failed
+    )
+      throw new Error("Reused arm does not match the baseline held-out result.");
+    seen.add(item.id);
+  }
+  return arm;
 }
 
 const COMPARISONS = [

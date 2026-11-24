@@ -139,20 +139,43 @@ test("all-identical pairs collapse the interval and leave McNemar with no discor
   const noisyAnalysis = analyzeSeeds([noisy], { samples: 100, seed: 17 });
   assert.notEqual(noisyAnalysis.headline.mean, 0);
   assert.ok((noisyAnalysis.headline.mcnemar?.discordant ?? 0) > 0);
-  const reusedSeed: SeedQuestions = { ...noisy, servedReused: true, ungatedReused: true };
+  const copy = baseline.map((item) => ({ ...item }));
+  const reusedSeed: SeedQuestions = {
+    ...identical,
+    controllerServed: copy,
+    controllerUngated: copy,
+    servedReused: true,
+    ungatedReused: true,
+  };
   const reused = analyzeSeeds([reusedSeed], { samples: 100, seed: 17 });
   assert.equal(reused.headline.mean, 0);
   assert.equal(reused.headline.pairedBootstrap?.lower, 0);
   assert.equal(reused.headline.pairedBootstrap?.upper, 0);
   assert.equal(reused.headline.mcnemar?.discordant, 0);
   assert.equal(reused.headline.mcnemar?.pValue, 1);
-  const ungated = pairedArmItems(baseline, divergent, reusedSeed.ungatedReused);
-  assert.equal(ungated, baseline);
+  const ungated = pairedArmItems(baseline, copy, reusedSeed.ungatedReused);
+  assert.equal(ungated, copy);
   assert.deepEqual(
     ungated.map((item, index) => Number(item.correct) - Number(baseline[index]!.correct)),
     [0, 0, 0, 0],
   );
-  const sensitivity = promptSensitivity([{ ...noisy, servedReused: true }]);
+  assert.throws(
+    () => pairedArmItems(baseline, divergent, true),
+    /Reused arm does not match the baseline held-out result/,
+  );
+  assert.throws(
+    () => pairedArmItems(baseline, baseline.slice(0, 2), true),
+    /Reused arm does not match the baseline held-out result/,
+  );
+  assert.throws(
+    () => pairedArmItems(baseline, baseline.map((item, index) => ({ ...item, failed: index === 0 })), true),
+    /Reused arm does not match the baseline held-out result/,
+  );
+  assert.throws(
+    () => analyzeSeeds([{ ...reusedSeed, controllerServed: divergent }], { samples: 100, seed: 17 }),
+    /Reused arm does not match the baseline held-out result/,
+  );
+  const sensitivity = promptSensitivity([reusedSeed]);
   const baselineAccuracy = sensitivity.arms.find((arm) => arm.name === "baseline")?.accuracy;
   const servedAccuracy = sensitivity.arms.find((arm) => arm.name === "controller-served")?.accuracy;
   assert.equal(servedAccuracy, baselineAccuracy);
