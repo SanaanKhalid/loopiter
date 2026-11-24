@@ -133,6 +133,14 @@ rewrite, and the served controller prompt. The strong prompt is scored on the
 same held-out items and seeds. HotpotQA held-out is 1000 rows from the same
 validation shuffle. IFBench held-out stays the official test set.
 
+The controller arm scores a held-out prompt once. When the served prompt hash
+matches the frozen baseline, that seed reuses the baseline held-out result and
+records `servedReused`. The ungated prompt does the same when its hash matches,
+and records `ungatedReused`. A reused arm pairs identically with the baseline,
+so the paired difference on each question is zero. A prompt that differs is
+scored on its own. The call plan still counts a candidate that differs from
+the baseline, which is the larger case. The benchmark harness is Node-only.
+
 # Offline benchmark
 
 Phase 0 compares a **frozen baseline** (no improvement) with an **autonomous candidate**

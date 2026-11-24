@@ -59,7 +59,7 @@ import {
 } from "./item-failures.js";
 import { PREDICT_NAME, PROPOSE_INSTRUCTIONS, PROPOSE_NAME } from "./instructions.js";
 import { deploymentOf, resolveLimits } from "./limits.js";
-import { emptySeedLog, writeDecisionLog, type SeedDecisionLog } from "./decisions.js";
+import { emptySeedLog, promptHash, writeDecisionLog, type SeedDecisionLog } from "./decisions.js";
 import { runController, runOneShot, scoreHeldOut, type RateDraft } from "./loop.js";
 import {
   assertPoolCoversSeeds,
@@ -156,6 +156,10 @@ export interface PublicLiveReport {
     oneShot: RateDraft;
     controllerServed: RateDraft;
     controllerUngated: RateDraft | null;
+    /** Served prompt hash matched the baseline. The paired difference is zero. */
+    servedReused: boolean;
+    /** Ungated prompt hash matched the baseline. The paired difference is zero. */
+    ungatedReused: boolean;
     controllerState: string;
     controllerReason: string;
     controllerDetail: string | null;
@@ -383,6 +387,7 @@ export async function runLiveTask<T extends PublicExample>(
           mode: "improve",
           observation: "honest",
           minimumImprovement: options.minimumImprovement,
+          baselineHeldOut: { promptHash: promptHash(task.baselinePrompt), result: baseline },
           ...(oneShot.baselineFeedback ? { baselineFeedback: oneShot.baselineFeedback } : {}),
           ...(options.minimumEffect !== undefined ? { minimumEffect: options.minimumEffect } : {}),
           oneShotFragment: oneShot.fragment,
@@ -410,6 +415,8 @@ export async function runLiveTask<T extends PublicExample>(
           oneShot: oneShot.heldOut,
           controllerServed: controller.heldOut,
           controllerUngated: controller.ungated,
+          servedReused: controller.servedReused,
+          ungatedReused: controller.ungatedReused,
           controllerState: controller.state,
           controllerReason: neverProposed ? "never_proposed" : controller.reason,
           controllerDetail: controller.detail,
@@ -436,6 +443,8 @@ export async function runLiveTask<T extends PublicExample>(
           oneShot: oneShot?.heldOut ?? emptyDraft(),
           controllerServed: controller?.heldOut ?? emptyDraft(),
           controllerUngated: controller?.ungated ?? null,
+          servedReused: controller?.servedReused ?? false,
+          ungatedReused: controller?.ungatedReused ?? false,
           controllerState: "failed",
           controllerReason: recordedFailure.code,
           controllerDetail: recordedFailure.message,
@@ -681,6 +690,8 @@ function buildReport<T extends PublicExample>(
           oneShot: row.oneShot.items,
           controllerServed: row.controllerServed.items,
           controllerUngated: row.controllerUngated?.items ?? null,
+          servedReused: row.servedReused,
+          ungatedReused: row.ungatedReused,
         })),
       );
     } catch (error) {
@@ -789,6 +800,8 @@ export async function writeHeldOutQuestions(
           oneShot: row.oneShot.items,
           controllerServed: row.controllerServed.items,
           controllerUngated: row.controllerUngated?.items ?? null,
+          servedReused: row.servedReused,
+          ungatedReused: row.ungatedReused,
         })),
       },
       null,

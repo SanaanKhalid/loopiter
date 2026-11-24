@@ -378,6 +378,8 @@ function seedRow(seed: number, ids: string[]): PublicLiveReport["perSeed"][numbe
     oneShot: draft,
     controllerServed: draft,
     controllerUngated: draft,
+    servedReused: false,
+    ungatedReused: false,
     controllerState: "completed",
     controllerReason: "completed",
     controllerDetail: null,

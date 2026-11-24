@@ -34,6 +34,7 @@ import {
   failureKindForReason,
   headlineVerdict,
   holmAdjusted,
+  pairedArmItems,
   pairedBootstrapInterval,
   promptSensitivity,
   type SeedQuestions,
@@ -103,6 +104,83 @@ test("the headline rule applies the pre-registered order", () => {
     headlineVerdict({ lower: -1, upper: -1, mean: -1, pValue: 1 }).verdict,
     "no_difference",
   );
+});
+
+test("all-identical pairs collapse the interval and leave McNemar with no discordant pairs", () => {
+  const questions = (flags: boolean[]): QuestionResult[] =>
+    flags.map((correct, index) => ({ id: `q${index}`, correct, failed: false }));
+  const baseline = questions([true, false, true, false]);
+  const identical: SeedQuestions = {
+    seed: 1,
+    baseline,
+    strongPrompt: baseline,
+    oneShot: baseline,
+    controllerServed: baseline,
+    controllerUngated: baseline,
+  };
+  const flat = analyzeSeeds([identical], { samples: 100, seed: 17 });
+  assert.equal(flat.headline.mean, 0);
+  assert.equal(flat.headline.pairedBootstrap?.lower, 0);
+  assert.equal(flat.headline.pairedBootstrap?.upper, 0);
+  assert.equal(flat.headline.mcnemar?.discordant, 0);
+  assert.equal(flat.headline.mcnemar?.concordant, 4);
+  assert.equal(flat.headline.mcnemar?.pValue, 1);
+  assert.equal(flat.headline.verdict, "safe_never_regresses");
+  assert.equal(pairedBootstrapInterval([0, 0, 0, 0], { samples: 100, seed: 17 }).lower, 0);
+  assert.equal(exactMcNemar(0, 0).pValue, 1);
+
+  const divergent = questions([false, false, false, false]);
+  const noisy: SeedQuestions = {
+    ...identical,
+    controllerServed: divergent,
+    controllerUngated: divergent,
+    servedReused: false,
+  };
+  const noisyAnalysis = analyzeSeeds([noisy], { samples: 100, seed: 17 });
+  assert.notEqual(noisyAnalysis.headline.mean, 0);
+  assert.ok((noisyAnalysis.headline.mcnemar?.discordant ?? 0) > 0);
+  const copy = baseline.map((item) => ({ ...item }));
+  const reusedSeed: SeedQuestions = {
+    ...identical,
+    controllerServed: copy,
+    controllerUngated: copy,
+    servedReused: true,
+    ungatedReused: true,
+  };
+  const reused = analyzeSeeds([reusedSeed], { samples: 100, seed: 17 });
+  assert.equal(reused.headline.mean, 0);
+  assert.equal(reused.headline.pairedBootstrap?.lower, 0);
+  assert.equal(reused.headline.pairedBootstrap?.upper, 0);
+  assert.equal(reused.headline.mcnemar?.discordant, 0);
+  assert.equal(reused.headline.mcnemar?.pValue, 1);
+  const ungated = pairedArmItems(baseline, copy, reusedSeed.ungatedReused);
+  assert.equal(ungated, copy);
+  assert.deepEqual(
+    ungated.map((item, index) => Number(item.correct) - Number(baseline[index]!.correct)),
+    [0, 0, 0, 0],
+  );
+  assert.throws(
+    () => pairedArmItems(baseline, divergent, true),
+    /Reused arm does not match the baseline held-out result/,
+  );
+  assert.throws(
+    () => pairedArmItems(baseline, baseline.slice(0, 2), true),
+    /Reused arm does not match the baseline held-out result/,
+  );
+  assert.throws(
+    () => pairedArmItems(baseline, baseline.map((item, index) => ({ ...item, failed: index === 0 })), true),
+    /Reused arm does not match the baseline held-out result/,
+  );
+  assert.throws(
+    () => analyzeSeeds([{ ...reusedSeed, controllerServed: divergent }], { samples: 100, seed: 17 }),
+    /Reused arm does not match the baseline held-out result/,
+  );
+  const sensitivity = promptSensitivity([reusedSeed]);
+  const baselineAccuracy = sensitivity.arms.find((arm) => arm.name === "baseline")?.accuracy;
+  const servedAccuracy = sensitivity.arms.find((arm) => arm.name === "controller-served")?.accuracy;
+  assert.equal(servedAccuracy, baselineAccuracy);
+  assert.equal(sensitivity.score, 0);
+  assert.notEqual(promptSensitivity([noisy]).score, 0);
 });
 
 test("pooled pairs, prompt sensitivity, and failure buckets use the plan", () => {

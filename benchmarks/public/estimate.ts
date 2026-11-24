@@ -10,6 +10,7 @@ import {
 } from "../kb-qa/live.js";
 import { formatArm, planCall, requestBody, type PlannedCall } from "./bodies.js";
 import { FOLLOW_MARKER, FULL_SEEDS, appendMarker } from "./constants.js";
+import { promptHash } from "./decisions.js";
 import { PROPOSE_INSTRUCTIONS, PROPOSE_NAME, PREDICT_NAME } from "./instructions.js";
 import { PROPOSE_SELECTION_SEED } from "./propose-bound.js";
 import { deploymentOf, readMaxTpm, resolveLimits } from "./limits.js";
@@ -21,6 +22,28 @@ export interface ArmPlan {
   seeds: number[];
   sizes: SplitSizes;
   arms: Record<"baseline" | "strong-prompt" | "one-shot" | "controller", PlannedCall[]>;
+}
+
+/**
+ * Held-out predict calls for one controller prompt.
+ * A hash that matches the baseline is not called: that arm reuses the baseline
+ * result, and its paired difference is 0. A hash that matches a prompt already
+ * scored in this seed is not called again either.
+ */
+export function heldOutPass(input: {
+  rows: number;
+  prompt: string;
+  baselinePrompt: string;
+  alreadyScoredPrompt?: string;
+}): { calls: number; reusedBaseline: boolean } {
+  const hashed = promptHash(input.prompt);
+  if (hashed === promptHash(input.baselinePrompt)) return { calls: 0, reusedBaseline: true };
+  if (
+    input.alreadyScoredPrompt !== undefined &&
+    hashed === promptHash(input.alreadyScoredPrompt)
+  )
+    return { calls: 0, reusedBaseline: false };
+  return { calls: input.rows, reusedBaseline: false };
 }
 
 export function planTask<T extends PublicExample>(
@@ -104,8 +127,34 @@ export function planTask<T extends PublicExample>(
     pushPredict(arms.controller, "controller", "audit", seed, input.sizes.audit, predictBaseline, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "audit", seed, input.sizes.audit, predictCandidate, input.limits.predictMaxOutputTokens);
     pushPredict(arms.controller, "controller", "production", seed, input.sizes.production, predictCandidate, input.limits.predictMaxOutputTokens);
-    pushPredict(arms.controller, "controller", "held-out-served", seed, input.sizes.heldOut, predictCandidate, input.limits.predictMaxOutputTokens);
-    pushPredict(arms.controller, "controller", "held-out-ungated", seed, input.sizes.heldOut, predictCandidate, input.limits.predictMaxOutputTokens);
+    // The stand-in differs from the baseline, so both passes are counted.
+    // That is the larger case. heldOutPass drops a pass whose hash matches
+    // the baseline, and a caller can mark a prompt already scored.
+    const heldOut = heldOutPass({
+      rows: input.sizes.heldOut,
+      prompt: standIn,
+      baselinePrompt: task.baselinePrompt,
+    });
+    if (heldOut.calls > 0) {
+      pushPredict(
+        arms.controller,
+        "controller",
+        "held-out-served",
+        seed,
+        heldOut.calls,
+        predictCandidate,
+        input.limits.predictMaxOutputTokens,
+      );
+      pushPredict(
+        arms.controller,
+        "controller",
+        "held-out-ungated",
+        seed,
+        heldOut.calls,
+        predictCandidate,
+        input.limits.predictMaxOutputTokens,
+      );
+    }
   }
   return { label: input.label, seeds: [...input.seeds], sizes: input.sizes, arms };
 }
@@ -143,6 +192,7 @@ export function renderTaskEstimate<T extends PublicExample>(
     `Propose max output tokens: ${limits.proposeMaxOutputTokens}`,
     `Reasoning effort: ${limits.reasoningEffort ?? "omitted"}`,
     "Arms: frozen baseline, strong prompt, one-shot rewrite with no gates, and the autonomous ImprovementController.",
+    "A controller held-out pass whose prompt hash matches the frozen baseline reuses that result. The paired difference is then zero. This plan counts a candidate that differs from the baseline.",
     "Input tokens repeat one checked-in fixture row up to the split size. Output tokens are the max_output_tokens bound. This is a call plan, not a measured score.",
     `Projection rounds each call to micro-USD. TPM pacing reserves bytes/4 plus the output bound against ${Math.round(PACE_HEADROOM * 100)}% of LOOPITER_BENCH_MAX_TPM. When LOOPITER_BENCH_MAX_RPM is set, requests are also spaced to 90% of that rolling minute. Unset leaves request pacing off.`,
     "",
